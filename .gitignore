@@ -49,3 +49,4 @@ Thumbs.db
 *.bak
 *.tmp
 *.temp
+node_modules
