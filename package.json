@@ -1,0 +1,12 @@
+{
+  "name": "atlax-minddock",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "dev": "echo \"Run app-specific dev commands\"",
+    "build": "echo \"Run monorepo build\"",
+    "lint": "echo \"Add linter configuration\"",
+    "test": "echo \"Add test configuration\""
+  }
+}
