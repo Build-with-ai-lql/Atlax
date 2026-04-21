@@ -1,6 +1,9 @@
 'use client'
 
-import type { InboxEntry, EntryStatus } from '@/lib/repository'
+import { groupSuggestionsByType } from '@atlax/domain'
+
+import type { InboxEntry } from '@/lib/repository'
+import type { EntryStatus } from '@/lib/types'
 
 const STATUS_CONFIG: Record<EntryStatus, { label: string; color: string; bg: string }> = {
   pending: { label: '待处理', color: 'text-yellow-700', bg: 'bg-yellow-100' },
@@ -44,13 +47,8 @@ export default function InboxEntryCard({
   onRestore,
   actionLoading,
 }: InboxEntryCardProps) {
-  const isLoading = actionLoading === entry.id!
-
-  const category = entry.suggestions.find((s) => s.type === 'category')
-  const tags = entry.suggestions.filter((s) => s.type === 'tag')
-  const actions = entry.suggestions.filter((s) => s.type === 'action')
-  const projects = entry.suggestions.filter((s) => s.type === 'project')
-
+  const isLoading = actionLoading === entry.id
+  const { category, tags, actions, projects } = groupSuggestionsByType(entry.suggestions)
   const hasSuggestions = entry.suggestions.length > 0
 
   return (
@@ -125,7 +123,7 @@ export default function InboxEntryCard({
       <div className="mt-3 flex gap-2">
         {entry.status === 'pending' && (
           <button
-            onClick={() => onSuggest(entry.id!)}
+            onClick={() => onSuggest(entry.id)}
             disabled={isLoading}
             className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
           >
@@ -136,14 +134,14 @@ export default function InboxEntryCard({
         {entry.status === 'suggested' && (
           <>
             <button
-              onClick={() => onArchive(entry.id!)}
+              onClick={() => onArchive(entry.id)}
               disabled={isLoading}
               className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50"
             >
               {isLoading ? '处理中...' : '接受归档'}
             </button>
             <button
-              onClick={() => onIgnore(entry.id!)}
+              onClick={() => onIgnore(entry.id)}
               disabled={isLoading}
               className="px-3 py-1 text-sm bg-gray-400 text-white rounded hover:bg-gray-500 disabled:opacity-50"
             >
@@ -154,7 +152,7 @@ export default function InboxEntryCard({
 
         {entry.status === 'ignored' && (
           <button
-            onClick={() => onRestore(entry.id!)}
+            onClick={() => onRestore(entry.id)}
             disabled={isLoading}
             className="px-3 py-1 text-sm bg-yellow-500 text-white rounded hover:bg-yellow-600 disabled:opacity-50"
           >

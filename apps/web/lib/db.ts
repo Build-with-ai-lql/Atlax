@@ -1,7 +1,8 @@
 import Dexie, { type EntityTable } from 'dexie'
-import type { EntryStatus, SuggestionItem, SourceType } from './types'
 
-export interface InboxEntry {
+import type { EntryStatus, SourceType, SuggestionItem } from './types'
+
+export interface InboxEntryRecord {
   id?: number
   rawText: string
   sourceType: SourceType
@@ -11,8 +12,12 @@ export interface InboxEntry {
   createdAt: Date
 }
 
+export interface PersistedInboxEntry extends InboxEntryRecord {
+  id: number
+}
+
 const db = new Dexie('AtlaxDB') as Dexie & {
-  inboxEntries: EntityTable<InboxEntry, 'id'>
+  inboxEntries: EntityTable<InboxEntryRecord, 'id'>
 }
 
 db.version(1).stores({

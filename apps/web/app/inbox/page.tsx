@@ -1,14 +1,17 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useState, useCallback } from 'react'
+
 import {
-  listInboxEntries,
-  suggestEntry,
   archiveEntry,
+  listInboxEntries,
   ignoreEntry,
   restoreEntry,
+  suggestEntry,
   type InboxEntry,
 } from '@/lib/repository'
+
 import InboxEntryCard from './_components/InboxEntryCard'
 
 export default function InboxPage() {
@@ -27,7 +30,7 @@ export default function InboxPage() {
     try {
       const data = await listInboxEntries()
       setEntries(data)
-    } catch (e) {
+    } catch {
       setError('加载失败，请重试')
     } finally {
       setLoading(false)
@@ -38,29 +41,39 @@ export default function InboxPage() {
     try {
       const updated = await listInboxEntries()
       setEntries(updated)
-    } catch (e) {
+    } catch {
       setError('刷新失败，请重试')
     }
   }
 
+  const replaceEntry = useCallback((updatedEntry: InboxEntry) => {
+    setEntries((currentEntries) =>
+      currentEntries.map((entry) => (entry.id === updatedEntry.id ? updatedEntry : entry))
+    )
+  }, [])
+
   const wrapAction = useCallback(
-    async (id: number, action: () => Promise<unknown>, actionName: string) => {
+    async (id: number, action: () => Promise<InboxEntry | null>, actionName: string) => {
       if (actionLoading !== null) return
       setActionLoading(id)
       setError(null)
       try {
         const result = await action()
-        if (result === null || result === false) {
+        if (!result) {
           setError(`${actionName}失败：当前状态不允许此操作`)
+          await refreshList()
+          return
         }
-      } catch (e) {
-        setError(`${actionName}失败：${e instanceof Error ? e.message : '未知错误'}`)
+
+        replaceEntry(result)
+      } catch (error) {
+        setError(`${actionName}失败：${error instanceof Error ? error.message : '未知错误'}`)
+        await refreshList()
       } finally {
         setActionLoading(null)
-        await refreshList()
       }
     },
-    [actionLoading]
+    [actionLoading, replaceEntry]
   )
 
   const handleSuggest = async (id: number) => {
@@ -96,9 +109,9 @@ export default function InboxPage() {
         ) : entries.length === 0 ? (
           <div className="text-center py-8">
             <p className="text-gray-500 mb-4">暂无待整理内容</p>
-            <a href="/capture" className="text-blue-500 hover:underline">
+            <Link href="/capture" className="text-blue-500 hover:underline">
               开始记录 →
-            </a>
+            </Link>
           </div>
         ) : (
           <div className="space-y-4">
@@ -117,9 +130,9 @@ export default function InboxPage() {
         )}
 
         <div className="mt-8 flex gap-4">
-          <a href="/capture" className="text-blue-500 hover:underline">
+          <Link href="/capture" className="text-blue-500 hover:underline">
             继续记录 →
-          </a>
+          </Link>
           <button
             onClick={loadEntries}
             className="text-gray-500 hover:underline"

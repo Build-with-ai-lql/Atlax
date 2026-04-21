@@ -1,6 +1,8 @@
 'use client'
 
+import Link from 'next/link'
 import { useState } from 'react'
+
 import { createInboxEntry } from '@/lib/repository'
 
 export default function CapturePage() {
@@ -48,9 +50,9 @@ export default function CapturePage() {
         </div>
       </form>
 
-      <a href="/inbox" className="mt-8 text-blue-500 hover:underline">
+      <Link href="/inbox" className="mt-8 text-blue-500 hover:underline">
         查看 Inbox →
-      </a>
+      </Link>
     </main>
   )
 }
