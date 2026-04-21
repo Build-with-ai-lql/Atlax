@@ -4,6 +4,8 @@ export type EntryStatus = 'pending' | 'suggested' | 'archived' | 'ignored'
 
 export type SuggestionType = 'category' | 'tag' | 'action' | 'project'
 
+export type EntryType = 'note' | 'meeting' | 'idea' | 'task' | 'reading'
+
 export interface SuggestionItem {
   id: string
   type: SuggestionType
@@ -47,4 +49,25 @@ export interface ResolvedTags {
   suggested: string[]
   userSelected: string[]
   final: string[]
+}
+
+export interface Entry {
+  id: number
+  sourceInboxEntryId: number
+  title: string
+  content: string
+  type: EntryType
+  tags: string[]
+  project: string | null
+  actions: string[]
+  createdAt: Date
+  archivedAt: Date
+}
+
+export interface ArchiveInput {
+  inboxEntryId: number
+  rawText: string
+  suggestions: SuggestionItem[]
+  userTags: string[]
+  createdAt: Date
 }

@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useState, useCallback } from 'react'
 
+import { getCurrentUser } from '@/lib/auth'
 import {
   archiveEntry,
   listInboxEntries,
@@ -24,11 +25,16 @@ export default function InboxPage() {
     loadEntries()
   }, [])
 
+  const getUserId = () => {
+    const user = getCurrentUser()
+    return user?.id ?? ''
+  }
+
   const loadEntries = async () => {
     setLoading(true)
     setError(null)
     try {
-      const data = await listInboxEntries()
+      const data = await listInboxEntries(getUserId())
       setEntries(data)
     } catch {
       setError('加载失败，请重试')
@@ -39,7 +45,7 @@ export default function InboxPage() {
 
   const refreshList = async () => {
     try {
-      const updated = await listInboxEntries()
+      const updated = await listInboxEntries(getUserId())
       setEntries(updated)
     } catch {
       setError('刷新失败，请重试')
@@ -77,19 +83,19 @@ export default function InboxPage() {
   )
 
   const handleSuggest = async (id: number) => {
-    await wrapAction(id, () => suggestEntry(id), '生成建议')
+    await wrapAction(id, () => suggestEntry(getUserId(), id), '生成建议')
   }
 
   const handleArchive = async (id: number) => {
-    await wrapAction(id, () => archiveEntry(id), '归档')
+    await wrapAction(id, () => archiveEntry(getUserId(), id), '归档')
   }
 
   const handleIgnore = async (id: number) => {
-    await wrapAction(id, () => ignoreEntry(id), '忽略')
+    await wrapAction(id, () => ignoreEntry(getUserId(), id), '忽略')
   }
 
   const handleRestore = async (id: number) => {
-    await wrapAction(id, () => restoreEntry(id), '恢复')
+    await wrapAction(id, () => restoreEntry(getUserId(), id), '恢复')
   }
 
   return (

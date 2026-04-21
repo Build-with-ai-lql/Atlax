@@ -1,19 +1,43 @@
 'use client'
 
-import type { InboxEntry } from '@/lib/repository'
+import type { InboxEntry, StoredEntry } from '@/lib/repository'
 
 import type { ViewType } from './Sidebar'
-import InboxListItem from './InboxListItem'
+import EntriesFilterBar from './EntriesFilterBar'
+import EntryListItem from './EntryListItem'
 import EmptyState from './EmptyState'
+import InboxListItem from './InboxListItem'
+import QuickInputBar from './QuickInputBar'
+import ReviewPanel from './ReviewPanel'
 
 interface MainPanelProps {
   activeView: ViewType
   entries: InboxEntry[]
+  archivedEntries: StoredEntry[]
   selectedEntryId: number | null
+  selectedArchivedEntryId: number | null
   onSelectEntry: (id: number) => void
+  onSelectArchivedEntry: (id: number) => void
   loading: boolean
   error: string | null
   onRetry: () => void
+  onCapture: (text: string) => Promise<void>
+  onExpandEditor: () => void
+  filterType: string | null
+  filterTag: string | null
+  filterProject: string | null
+  onFilterType: (type: string | null) => void
+  onFilterTag: (tag: string | null) => void
+  onFilterProject: (project: string | null) => void
+  reviewStats: {
+    totalEntries: number
+    pendingCount: number
+    suggestedCount: number
+    archivedCount: number
+    ignoredCount: number
+    tagCount: number
+  }
+  onGotoInbox: () => void
 }
 
 const VIEW_TITLES: Record<ViewType, string> = {
@@ -25,25 +49,84 @@ const VIEW_TITLES: Record<ViewType, string> = {
 export default function MainPanel({
   activeView,
   entries,
+  archivedEntries,
   selectedEntryId,
+  selectedArchivedEntryId,
   onSelectEntry,
+  onSelectArchivedEntry,
   loading,
   error,
   onRetry,
+  onCapture,
+  onExpandEditor,
+  filterType,
+  filterTag,
+  filterProject,
+  onFilterType,
+  onFilterTag,
+  onFilterProject,
+  reviewStats,
+  onGotoInbox,
 }: MainPanelProps) {
+  const availableTypes = Array.from(new Set(archivedEntries.map((e) => e.type)))
+  const availableTags = Array.from(new Set(archivedEntries.flatMap((e) => e.tags)))
+  const availableProjects = Array.from(new Set(archivedEntries.map((e) => e.project).filter(Boolean))) as string[]
+
   if (activeView === 'entries') {
+    let filtered = archivedEntries
+    if (filterType) {
+      filtered = filtered.filter((e) => e.type === filterType)
+    }
+    if (filterTag) {
+      filtered = filtered.filter((e) => e.tags.includes(filterTag))
+    }
+    if (filterProject) {
+      filtered = filtered.filter((e) => e.project === filterProject)
+    }
+
     return (
       <div className="w-[360px] flex-shrink-0 border-r border-gray-200 flex flex-col">
         <div className="h-14 flex items-center px-5 border-b border-gray-200">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
             {VIEW_TITLES.entries}
           </h2>
+          <span className="ml-auto text-xs text-gray-400">
+            {filtered.length}{filterType || filterTag || filterProject ? ' / ' + archivedEntries.length : ''} 条
+          </span>
         </div>
-        <EmptyState
-          title="Entries"
-          description="归档后的内容会出现在这里"
-          hint="Phase 2.3 将实现完整归档与 Entries 浏览"
+        <EntriesFilterBar
+          filterType={filterType}
+          filterTag={filterTag}
+          filterProject={filterProject}
+          availableTypes={availableTypes}
+          availableTags={availableTags}
+          availableProjects={availableProjects}
+          onFilterType={onFilterType}
+          onFilterTag={onFilterTag}
+          onFilterProject={onFilterProject}
         />
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="p-8 text-center text-gray-400 text-sm">加载中…</div>
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              title="Entries"
+              description={archivedEntries.length === 0 ? "归档后的内容会出现在这里" : "没有符合筛选条件的内容"}
+              hint={archivedEntries.length === 0 ? "在 Inbox 中接受归档后，内容将自动出现在此列表" : "尝试调整筛选条件"}
+            />
+          ) : (
+            <div className="p-2 space-y-0.5">
+              {filtered.map((entry) => (
+                <EntryListItem
+                  key={entry.id}
+                  entry={entry}
+                  isSelected={selectedArchivedEntryId === entry.id}
+                  onSelect={onSelectArchivedEntry}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     )
   }
@@ -56,10 +139,11 @@ export default function MainPanel({
             {VIEW_TITLES.review}
           </h2>
         </div>
-        <EmptyState
-          title="Review"
-          description="定期回顾帮助你激活沉没的知识"
-          hint="Phase 2.5 将实现完整 Review 功能"
+        <ReviewPanel
+          stats={reviewStats}
+          recentEntries={archivedEntries.slice(0, 5)}
+          onSelectEntry={onSelectArchivedEntry}
+          onGotoInbox={onGotoInbox}
         />
       </div>
     )
@@ -103,6 +187,7 @@ export default function MainPanel({
           </div>
         )}
       </div>
+      <QuickInputBar onSubmit={onCapture} onExpand={onExpandEditor} />
     </div>
   )
 }

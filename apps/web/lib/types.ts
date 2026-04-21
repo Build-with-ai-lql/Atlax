@@ -1,5 +1,8 @@
 export type {
+  ArchiveInput,
   ArchiveIntent,
+  Entry,
+  EntryType,
   EntryStatus,
   GroupedSuggestions,
   ResolvedTags,

@@ -1,11 +1,15 @@
 'use client'
 
+import type { LocalUser } from '@/lib/auth'
+
 export type ViewType = 'inbox' | 'entries' | 'review'
 
 interface SidebarProps {
   activeView: ViewType
   onViewChange: (view: ViewType) => void
   inboxCount: number
+  user: LocalUser | null
+  onLogout: () => void
 }
 
 const NAV_ITEMS: { key: ViewType; label: string; icon: string }[] = [
@@ -14,7 +18,7 @@ const NAV_ITEMS: { key: ViewType; label: string; icon: string }[] = [
   { key: 'review', label: 'Review', icon: '📊' },
 ]
 
-export default function Sidebar({ activeView, onViewChange, inboxCount }: SidebarProps) {
+export default function Sidebar({ activeView, onViewChange, inboxCount, user, onLogout }: SidebarProps) {
   return (
     <aside className="w-56 flex-shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col">
       <div className="h-14 flex items-center px-5 border-b border-gray-200">
@@ -41,8 +45,30 @@ export default function Sidebar({ activeView, onViewChange, inboxCount }: Sideba
           </button>
         ))}
       </nav>
-      <div className="p-4 border-t border-gray-200">
-        <p className="text-xs text-gray-400">Phase 2 Demo</p>
+      <div className="p-3 border-t border-gray-200">
+        {user && (
+          <div className="flex items-center gap-2 px-2 py-1.5">
+            <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+              <span className="text-xs font-medium text-blue-700">
+                {user.name.charAt(0).toUpperCase()}
+              </span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-700 truncate">{user.name}</p>
+            </div>
+            <button
+              onClick={onLogout}
+              className="text-gray-400 hover:text-red-500 transition-colors flex-shrink-0"
+              title="退出登录"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+            </button>
+          </div>
+        )}
       </div>
     </aside>
   )

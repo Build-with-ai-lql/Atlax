@@ -1,24 +1,29 @@
 import {
+  buildEntryFromArchive,
   canTransition,
   createTag,
   dedupeTagNames,
   generateSuggestions,
+  makeTagId,
   normalizeTagName,
   type EntryStatus,
   type SourceType,
-  type SuggestionItem,
 } from '@atlax/domain'
 
 import {
+  entriesTable,
   inboxEntries,
   tagsTable,
+  type EntryRecord,
   type InboxEntryRecord,
+  type PersistedEntry,
   type PersistedInboxEntry,
   type PersistedTag,
   type TagRecord,
 } from './db'
 
 export type { PersistedInboxEntry as InboxEntry }
+export type { PersistedEntry as StoredEntry }
 export type { PersistedTag as StoredTag }
 
 function toPersistedInboxEntry(entry: InboxEntryRecord | undefined): PersistedInboxEntry | null {
@@ -44,13 +49,32 @@ function toPersistedTag(tag: TagRecord | undefined): PersistedTag | null {
   }
 }
 
+function toPersistedEntry(entry: EntryRecord | undefined): PersistedEntry | null {
+  if (!entry || typeof entry.id !== 'number') {
+    return null
+  }
+
+  return {
+    ...entry,
+    id: entry.id,
+  }
+}
+
 async function getPersistedInboxEntry(id: number): Promise<PersistedInboxEntry | null> {
   const entry = await inboxEntries.get(id)
   return toPersistedInboxEntry(entry)
 }
 
-export async function createInboxEntry(rawText: string, sourceType: SourceType = 'text'): Promise<number> {
+async function getInboxEntryForUser(userId: string, id: number): Promise<PersistedInboxEntry | null> {
+  const entry = await getPersistedInboxEntry(id)
+  if (!entry) return null
+  if (entry.userId !== userId) return null
+  return entry
+}
+
+export async function createInboxEntry(userId: string, rawText: string, sourceType: SourceType = 'text'): Promise<number> {
   const id = await inboxEntries.add({
+    userId,
     rawText,
     sourceType,
     status: 'pending',
@@ -62,8 +86,8 @@ export async function createInboxEntry(rawText: string, sourceType: SourceType =
   return id as number
 }
 
-export async function listInboxEntries(): Promise<PersistedInboxEntry[]> {
-  const entries = await inboxEntries.orderBy('createdAt').reverse().toArray()
+export async function listInboxEntries(userId: string): Promise<PersistedInboxEntry[]> {
+  const entries = await inboxEntries.where('userId').equals(userId).reverse().sortBy('createdAt')
 
   return entries.flatMap((entry) => {
     const persistedEntry = toPersistedInboxEntry(entry)
@@ -71,21 +95,87 @@ export async function listInboxEntries(): Promise<PersistedInboxEntry[]> {
   })
 }
 
-export async function listEntriesByStatus(status: EntryStatus): Promise<PersistedInboxEntry[]> {
-  const entries = await inboxEntries.where('status').equals(status).reverse().sortBy('createdAt')
+export async function listEntriesByStatus(userId: string, status: EntryStatus): Promise<PersistedInboxEntry[]> {
+  const all = await inboxEntries.where('userId').equals(userId).toArray()
+  const filtered = all.filter((e) => e.status === status)
 
-  return entries.flatMap((entry) => {
+  return filtered.flatMap((entry) => {
     const persistedEntry = toPersistedInboxEntry(entry)
     return persistedEntry ? [persistedEntry] : []
   })
 }
 
-export async function countInboxEntries(): Promise<number> {
-  return inboxEntries.count()
+export async function countInboxEntries(userId: string): Promise<number> {
+  return inboxEntries.where('userId').equals(userId).count()
 }
 
-export async function suggestEntry(id: number): Promise<PersistedInboxEntry | null> {
-  const entry = await getPersistedInboxEntry(id)
+export async function listArchivedEntries(userId: string): Promise<PersistedEntry[]> {
+  const all = await entriesTable.where('userId').equals(userId).reverse().sortBy('archivedAt')
+
+  return all.flatMap((entry) => {
+    const persistedEntry = toPersistedEntry(entry)
+    return persistedEntry ? [persistedEntry] : []
+  })
+}
+
+export async function listArchivedEntriesByType(userId: string, type: string): Promise<PersistedEntry[]> {
+  const all = await entriesTable.where('userId').equals(userId).and((e) => e.type === type).reverse().sortBy('archivedAt')
+  return all.flatMap((entry) => {
+    const persistedEntry = toPersistedEntry(entry)
+    return persistedEntry ? [persistedEntry] : []
+  })
+}
+
+export async function listArchivedEntriesByTag(userId: string, tag: string): Promise<PersistedEntry[]> {
+  const normalized = normalizeTagName(tag).toLowerCase()
+  const all = await entriesTable.where('userId').equals(userId).and((e) =>
+    e.tags.some((t: string) => normalizeTagName(t).toLowerCase() === normalized)
+  ).reverse().sortBy('archivedAt')
+  return all.flatMap((entry) => {
+    const persistedEntry = toPersistedEntry(entry)
+    return persistedEntry ? [persistedEntry] : []
+  })
+}
+
+export async function listArchivedEntriesByProject(userId: string, project: string): Promise<PersistedEntry[]> {
+  const all = await entriesTable.where('userId').equals(userId).and((e) => e.project === project).reverse().sortBy('archivedAt')
+  return all.flatMap((entry) => {
+    const persistedEntry = toPersistedEntry(entry)
+    return persistedEntry ? [persistedEntry] : []
+  })
+}
+
+export async function getWorkspaceStats(userId: string): Promise<{
+  totalEntries: number
+  pendingCount: number
+  suggestedCount: number
+  archivedCount: number
+  ignoredCount: number
+  tagCount: number
+}> {
+  const [allInbox, allEntries, allTags] = await Promise.all([
+    inboxEntries.where('userId').equals(userId).toArray(),
+    entriesTable.where('userId').equals(userId).count(),
+    tagsTable.where('userId').equals(userId).count(),
+  ])
+
+  return {
+    totalEntries: allEntries,
+    pendingCount: allInbox.filter((e) => e.status === 'pending').length,
+    suggestedCount: allInbox.filter((e) => e.status === 'suggested').length,
+    archivedCount: allInbox.filter((e) => e.status === 'archived').length,
+    ignoredCount: allInbox.filter((e) => e.status === 'ignored').length,
+    tagCount: allTags,
+  }
+}
+
+export async function getEntryByInboxId(userId: string, inboxEntryId: number): Promise<PersistedEntry | null> {
+  const entry = await entriesTable.where('userId').equals(userId).and((e) => e.sourceInboxEntryId === inboxEntryId).first()
+  return toPersistedEntry(entry)
+}
+
+export async function suggestEntry(userId: string, id: number): Promise<PersistedInboxEntry | null> {
+  const entry = await getInboxEntryForUser(userId, id)
   if (!entry) return null
   if (!canTransition(entry.status, 'suggested')) return null
 
@@ -99,22 +189,63 @@ export async function suggestEntry(id: number): Promise<PersistedInboxEntry | nu
   return getPersistedInboxEntry(id)
 }
 
-export async function archiveEntry(id: number, selectedSuggestions?: SuggestionItem[]): Promise<PersistedInboxEntry | null> {
-  const entry = await getPersistedInboxEntry(id)
+export async function archiveEntry(userId: string, id: number): Promise<PersistedInboxEntry | null> {
+  const entry = await getInboxEntryForUser(userId, id)
   if (!entry) return null
   if (!canTransition(entry.status, 'archived')) return null
 
+  const built = buildEntryFromArchive(
+    {
+      inboxEntryId: id,
+      rawText: entry.rawText,
+      suggestions: entry.suggestions,
+      userTags: entry.userTags,
+      createdAt: entry.createdAt,
+    },
+    0,
+  )
+
+  const existing = await getEntryByInboxId(userId, id)
+  if (existing) {
+    await entriesTable.update(existing.id, {
+      title: built.title,
+      content: built.content,
+      type: built.type,
+      tags: built.tags,
+      project: built.project,
+      actions: built.actions,
+      archivedAt: built.archivedAt,
+    })
+    await inboxEntries.update(id, {
+      status: 'archived',
+      processedAt: new Date(),
+    })
+    return getPersistedInboxEntry(id)
+  }
+
+  await entriesTable.add({
+    userId,
+    sourceInboxEntryId: id,
+    title: built.title,
+    content: built.content,
+    type: built.type,
+    tags: built.tags,
+    project: built.project,
+    actions: built.actions,
+    createdAt: built.createdAt,
+    archivedAt: built.archivedAt,
+  })
+
   await inboxEntries.update(id, {
     status: 'archived',
-    suggestions: selectedSuggestions ?? entry.suggestions,
     processedAt: new Date(),
   })
 
   return getPersistedInboxEntry(id)
 }
 
-export async function ignoreEntry(id: number): Promise<PersistedInboxEntry | null> {
-  const entry = await getPersistedInboxEntry(id)
+export async function ignoreEntry(userId: string, id: number): Promise<PersistedInboxEntry | null> {
+  const entry = await getInboxEntryForUser(userId, id)
   if (!entry) return null
   if (!canTransition(entry.status, 'ignored')) return null
 
@@ -126,8 +257,8 @@ export async function ignoreEntry(id: number): Promise<PersistedInboxEntry | nul
   return getPersistedInboxEntry(id)
 }
 
-export async function restoreEntry(id: number): Promise<PersistedInboxEntry | null> {
-  const entry = await getPersistedInboxEntry(id)
+export async function restoreEntry(userId: string, id: number): Promise<PersistedInboxEntry | null> {
+  const entry = await getInboxEntryForUser(userId, id)
   if (!entry) return null
   if (!canTransition(entry.status, 'pending')) return null
 
@@ -140,8 +271,21 @@ export async function restoreEntry(id: number): Promise<PersistedInboxEntry | nu
   return getPersistedInboxEntry(id)
 }
 
-export async function updateEntryTags(id: number, userTags: string[]): Promise<PersistedInboxEntry | null> {
-  const entry = await getPersistedInboxEntry(id)
+export async function reopenEntry(userId: string, id: number): Promise<PersistedInboxEntry | null> {
+  const entry = await getInboxEntryForUser(userId, id)
+  if (!entry) return null
+  if (!canTransition(entry.status, 'pending')) return null
+
+  await inboxEntries.update(id, {
+    status: 'pending',
+    processedAt: null,
+  })
+
+  return getPersistedInboxEntry(id)
+}
+
+export async function updateEntryTags(userId: string, id: number, userTags: string[]): Promise<PersistedInboxEntry | null> {
+  const entry = await getInboxEntryForUser(userId, id)
   if (!entry) return null
 
   await inboxEntries.update(id, {
@@ -151,28 +295,28 @@ export async function updateEntryTags(id: number, userTags: string[]): Promise<P
   return getPersistedInboxEntry(id)
 }
 
-export async function addTagToEntry(id: number, tagName: string): Promise<PersistedInboxEntry | null> {
-  const entry = await getPersistedInboxEntry(id)
+export async function addTagToEntry(userId: string, id: number, tagName: string): Promise<PersistedInboxEntry | null> {
+  const entry = await getInboxEntryForUser(userId, id)
   if (!entry) return null
 
   const normalized = normalizeTagName(tagName)
   if (!normalized) return entry
 
   const newTags = dedupeTagNames([...entry.userTags, normalized])
-  return updateEntryTags(id, newTags)
+  return updateEntryTags(userId, id, newTags)
 }
 
-export async function removeTagFromEntry(id: number, tagName: string): Promise<PersistedInboxEntry | null> {
-  const entry = await getPersistedInboxEntry(id)
+export async function removeTagFromEntry(userId: string, id: number, tagName: string): Promise<PersistedInboxEntry | null> {
+  const entry = await getInboxEntryForUser(userId, id)
   if (!entry) return null
 
   const normalized = normalizeTagName(tagName)
   const newTags = entry.userTags.filter((t) => normalizeTagName(t).toLowerCase() !== normalized.toLowerCase())
-  return updateEntryTags(id, newTags)
+  return updateEntryTags(userId, id, newTags)
 }
 
-export async function listTags(): Promise<PersistedTag[]> {
-  const tags = await tagsTable.orderBy('name').toArray()
+export async function listTags(userId: string): Promise<PersistedTag[]> {
+  const tags = await tagsTable.where('userId').equals(userId).sortBy('name')
 
   return tags.flatMap((tag) => {
     const persistedTag = toPersistedTag(tag)
@@ -180,28 +324,37 @@ export async function listTags(): Promise<PersistedTag[]> {
   })
 }
 
-export async function createStoredTag(name: string): Promise<PersistedTag | null> {
+async function findTagByName(userId: string, name: string): Promise<PersistedTag | null> {
+  const normalized = normalizeTagName(name).toLowerCase()
+  const tag = await tagsTable.where('userId').equals(userId).and((t) => normalizeTagName(t.name).toLowerCase() === normalized).first()
+  return toPersistedTag(tag)
+}
+
+function makeUserScopedTagId(userId: string, name: string): string {
+  return `${userId}_${makeTagId(name)}`
+}
+
+export async function createStoredTag(userId: string, name: string): Promise<PersistedTag | null> {
   const tag = createTag(name)
   if (!tag) return null
 
-  const existing = await tagsTable.get(tag.id)
-  if (existing) return toPersistedTag(existing)
+  const existing = await findTagByName(userId, name)
+  if (existing) return existing
 
+  const scopedId = makeUserScopedTagId(userId, name)
   await tagsTable.add({
-    id: tag.id,
+    id: scopedId,
+    userId,
     name: tag.name,
     createdAt: tag.createdAt,
   })
 
-  return toPersistedTag(await tagsTable.get(tag.id))
+  return toPersistedTag(await tagsTable.get(scopedId))
 }
 
-export async function getOrCreateTag(name: string): Promise<PersistedTag | null> {
-  const tag = createTag(name)
-  if (!tag) return null
+export async function getOrCreateTag(userId: string, name: string): Promise<PersistedTag | null> {
+  const existing = await findTagByName(userId, name)
+  if (existing) return existing
 
-  const existing = await tagsTable.get(tag.id)
-  if (existing) return toPersistedTag(existing)
-
-  return createStoredTag(name)
+  return createStoredTag(userId, name)
 }

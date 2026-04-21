@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useState } from 'react'
 
+import { getCurrentUser } from '@/lib/auth'
 import { createInboxEntry } from '@/lib/repository'
 
 export default function CapturePage() {
@@ -14,9 +15,12 @@ export default function CapturePage() {
     e.preventDefault()
     if (!text.trim()) return
 
+    const user = getCurrentUser()
+    if (!user) return
+
     setSaving(true)
     try {
-      await createInboxEntry(text.trim())
+      await createInboxEntry(user.id, text.trim())
       setText('')
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)

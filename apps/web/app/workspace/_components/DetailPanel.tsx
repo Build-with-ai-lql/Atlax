@@ -2,7 +2,7 @@
 
 import { extractSuggestedTagNames, groupSuggestionsByType } from '@atlax/domain'
 
-import type { InboxEntry, StoredTag } from '@/lib/repository'
+import type { InboxEntry, StoredEntry, StoredTag } from '@/lib/repository'
 import type { EntryStatus } from '@/lib/types'
 
 import type { ViewType } from './Sidebar'
@@ -16,11 +16,19 @@ const STATUS_CONFIG: Record<EntryStatus, { label: string; color: string; bg: str
   ignored: { label: '已忽略', color: 'text-gray-600', bg: 'bg-gray-50 border-gray-200' },
 }
 
+const TYPE_LABELS: Record<string, string> = {
+  note: '笔记',
+  meeting: '会议',
+  idea: '想法',
+  task: '任务',
+  reading: '阅读',
+}
+
 const VIEW_EMPTY_HINTS: Record<Exclude<ViewType, 'inbox'>, { title: string; description: string; hint: string }> = {
   entries: {
     title: 'Entries',
-    description: '归档后的知识单元会在这里展示详情',
-    hint: 'Phase 2.4 将实现完整归档与 Entry 详情',
+    description: '选择左侧条目查看归档详情',
+    hint: 'Phase 2.5 将实现完整 Entries 浏览与筛选',
   },
   review: {
     title: 'Review',
@@ -32,11 +40,13 @@ const VIEW_EMPTY_HINTS: Record<Exclude<ViewType, 'inbox'>, { title: string; desc
 interface DetailPanelProps {
   activeView: ViewType
   entry: InboxEntry | null
+  archivedEntry: StoredEntry | null
   existingTags: StoredTag[]
   onSuggest: (id: number) => Promise<void>
   onArchive: (id: number) => Promise<void>
   onIgnore: (id: number) => Promise<void>
   onRestore: (id: number) => Promise<void>
+  onReopen: (inboxEntryId: number) => Promise<void>
   onAddTag: (id: number, tagName: string) => Promise<void>
   onRemoveTag: (id: number, tagName: string) => Promise<void>
   actionLoading: boolean
@@ -45,15 +55,101 @@ interface DetailPanelProps {
 export default function DetailPanel({
   activeView,
   entry,
+  archivedEntry,
   existingTags,
   onSuggest,
   onArchive,
   onIgnore,
   onRestore,
+  onReopen,
   onAddTag,
   onRemoveTag,
   actionLoading,
 }: DetailPanelProps) {
+  if (activeView === 'entries') {
+    if (!archivedEntry) {
+      return (
+        <div className="flex-1 flex items-center justify-center bg-gray-50/50">
+          <EmptyState
+            title={VIEW_EMPTY_HINTS.entries.title}
+            description={VIEW_EMPTY_HINTS.entries.description}
+            hint={VIEW_EMPTY_HINTS.entries.hint}
+          />
+        </div>
+      )
+    }
+
+    return (
+      <div className="flex-1 overflow-y-auto bg-white">
+        <div className="max-w-2xl mx-auto p-6">
+          <div className="flex items-center justify-between mb-6">
+            <span className="px-3 py-1 rounded-full text-xs font-medium border bg-green-50 border-green-200 text-green-700">
+              {TYPE_LABELS[archivedEntry.type] ?? archivedEntry.type}
+            </span>
+            <span className="text-xs text-gray-400">
+              归档于 {new Date(archivedEntry.archivedAt).toLocaleString('zh-CN')}
+            </span>
+          </div>
+
+          <h2 className="text-lg font-semibold text-gray-900 mb-3">
+            {archivedEntry.title}
+          </h2>
+
+          <div className="mb-6">
+            <p className="text-gray-800 whitespace-pre-wrap leading-relaxed text-[15px]">
+              {archivedEntry.content}
+            </p>
+          </div>
+
+          {archivedEntry.tags.length > 0 && (
+            <div className="mb-4">
+              <span className="text-xs text-gray-400 mb-2 block">标签</span>
+              <div className="flex flex-wrap gap-1.5">
+                {archivedEntry.tags.map((tag) => (
+                  <span key={tag} className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {archivedEntry.project && (
+            <div className="mb-4">
+              <span className="text-xs text-gray-400 mb-2 block">项目</span>
+              <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">
+                {archivedEntry.project}
+              </span>
+            </div>
+          )}
+
+          {archivedEntry.actions.length > 0 && (
+            <div>
+              <span className="text-xs text-gray-400 mb-2 block">动作</span>
+              <div className="flex flex-wrap gap-1.5">
+                {archivedEntry.actions.map((action) => (
+                  <span key={action} className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs">
+                    {action}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-6 mt-6 border-t border-gray-100">
+            <button
+              onClick={() => onReopen(archivedEntry.sourceInboxEntryId)}
+              disabled={actionLoading}
+              className="px-4 py-2 text-sm font-medium bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-colors"
+            >
+              {actionLoading ? '处理中…' : '重新整理'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (activeView !== 'inbox') {
     const hint = VIEW_EMPTY_HINTS[activeView]
     return (
