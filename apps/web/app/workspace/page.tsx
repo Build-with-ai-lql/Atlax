@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { getCurrentUser, logoutUser, type LocalUser } from '@/lib/auth'
 import {
@@ -21,6 +21,7 @@ import {
   type StoredEntry,
   type StoredTag,
 } from '@/lib/repository'
+import type { EntryStatus } from '@/lib/types'
 
 import AuthGate from './_components/AuthGate'
 import type { ViewType } from './_components/Sidebar'
@@ -45,6 +46,7 @@ export default function WorkspacePage() {
   const [filterType, setFilterType] = useState<string | null>(null)
   const [filterTag, setFilterTag] = useState<string | null>(null)
   const [filterProject, setFilterProject] = useState<string | null>(null)
+  const [filterStatus, setFilterStatus] = useState<EntryStatus | null>(null)
   const [reviewStats, setReviewStats] = useState({
     totalEntries: 0,
     pendingCount: 0,
@@ -60,56 +62,10 @@ export default function WorkspacePage() {
     setAuthChecked(true)
   }, [])
 
-  useEffect(() => {
-    if (user) {
-      loadEntries()
-    }
-  }, [user])
+  const userId = user?.id ?? ''
 
-  const handleAuthenticated = () => {
-    setUser(getCurrentUser())
-  }
-
-  const handleLogout = () => {
-    logoutUser()
-    setUser(null)
-    setEntries([])
-    setArchivedEntries([])
-    setExistingTags([])
-    setSelectedEntryId(null)
-    setSelectedArchivedEntryId(null)
-    setFilterType(null)
-    setFilterTag(null)
-    setFilterProject(null)
-  }
-
-  if (!authChecked) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-gray-50">
-        <p className="text-gray-400 text-sm">加载中…</p>
-      </div>
-    )
-  }
-
-  if (!user) {
-    return <AuthGate onAuthenticated={handleAuthenticated} />
-  }
-
-  const userId = user.id
-
-  const selectedEntry = activeView === 'inbox'
-    ? entries.find((e) => e.id === selectedEntryId) ?? null
-    : null
-
-  const selectedArchivedEntry = activeView === 'entries'
-    ? archivedEntries.find((e) => e.id === selectedArchivedEntryId) ?? null
-    : null
-
-  const pendingCount = entries.filter(
-    (e) => e.status === 'pending' || e.status === 'suggested'
-  ).length
-
-  const loadEntries = async () => {
+  const loadEntries = useCallback(async () => {
+    if (!userId) return
     setLoading(true)
     setError(null)
     try {
@@ -128,7 +84,55 @@ export default function WorkspacePage() {
     } finally {
       setLoading(false)
     }
+  }, [userId])
+
+  useEffect(() => {
+    if (user) {
+      loadEntries()
+    }
+  }, [user, loadEntries])
+
+  const handleAuthenticated = () => {
+    setUser(getCurrentUser())
   }
+
+  const handleLogout = () => {
+    logoutUser()
+    setUser(null)
+    setEntries([])
+    setArchivedEntries([])
+    setExistingTags([])
+    setSelectedEntryId(null)
+    setSelectedArchivedEntryId(null)
+    setFilterType(null)
+    setFilterTag(null)
+    setFilterProject(null)
+    setFilterStatus(null)
+  }
+
+  if (!authChecked) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50">
+        <p className="text-gray-400 text-sm">加载中…</p>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <AuthGate onAuthenticated={handleAuthenticated} />
+  }
+
+  const selectedEntry = activeView === 'inbox'
+    ? entries.find((e) => e.id === selectedEntryId) ?? null
+    : null
+
+  const selectedArchivedEntry = activeView === 'entries'
+    ? archivedEntries.find((e) => e.id === selectedArchivedEntryId) ?? null
+    : null
+
+  const pendingCount = entries.filter(
+    (e) => e.status === 'pending' || e.status === 'suggested'
+  ).length
 
   const refreshList = async (): Promise<InboxEntry[]> => {
     try {
@@ -303,9 +307,11 @@ export default function WorkspacePage() {
           filterType={filterType}
           filterTag={filterTag}
           filterProject={filterProject}
+          filterStatus={filterStatus}
           onFilterType={setFilterType}
           onFilterTag={setFilterTag}
           onFilterProject={setFilterProject}
+          onFilterStatus={setFilterStatus}
           reviewStats={reviewStats}
           onGotoInbox={handleGotoInbox}
         />

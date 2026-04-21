@@ -1,6 +1,7 @@
 'use client'
 
 import type { InboxEntry, StoredEntry } from '@/lib/repository'
+import type { EntryStatus } from '@/lib/types'
 
 import type { ViewType } from './Sidebar'
 import EntriesFilterBar from './EntriesFilterBar'
@@ -26,9 +27,11 @@ interface MainPanelProps {
   filterType: string | null
   filterTag: string | null
   filterProject: string | null
+  filterStatus: EntryStatus | null
   onFilterType: (type: string | null) => void
   onFilterTag: (tag: string | null) => void
   onFilterProject: (project: string | null) => void
+  onFilterStatus: (status: EntryStatus | null) => void
   reviewStats: {
     totalEntries: number
     pendingCount: number
@@ -62,9 +65,11 @@ export default function MainPanel({
   filterType,
   filterTag,
   filterProject,
+  filterStatus,
   onFilterType,
   onFilterTag,
   onFilterProject,
+  onFilterStatus,
   reviewStats,
   onGotoInbox,
 }: MainPanelProps) {
@@ -72,8 +77,22 @@ export default function MainPanel({
   const availableTags = Array.from(new Set(archivedEntries.flatMap((e) => e.tags)))
   const availableProjects = Array.from(new Set(archivedEntries.map((e) => e.project).filter(Boolean))) as string[]
 
+  const inboxStatusMap = new Map<number, EntryStatus>()
+  for (const ie of entries) {
+    inboxStatusMap.set(ie.id, ie.status)
+  }
+
+  const getEntryStatus = (entry: StoredEntry): EntryStatus => {
+    return inboxStatusMap.get(entry.sourceInboxEntryId) ?? 'archived'
+  }
+
+  const availableStatuses = Array.from(new Set(archivedEntries.map(getEntryStatus)))
+
   if (activeView === 'entries') {
     let filtered = archivedEntries
+    if (filterStatus) {
+      filtered = filtered.filter((e) => getEntryStatus(e) === filterStatus)
+    }
     if (filterType) {
       filtered = filtered.filter((e) => e.type === filterType)
     }
@@ -91,19 +110,22 @@ export default function MainPanel({
             {VIEW_TITLES.entries}
           </h2>
           <span className="ml-auto text-xs text-gray-400">
-            {filtered.length}{filterType || filterTag || filterProject ? ' / ' + archivedEntries.length : ''} 条
+            {filtered.length}{filterType || filterTag || filterProject || filterStatus ? ' / ' + archivedEntries.length : ''} 条
           </span>
         </div>
         <EntriesFilterBar
           filterType={filterType}
           filterTag={filterTag}
           filterProject={filterProject}
+          filterStatus={filterStatus}
           availableTypes={availableTypes}
           availableTags={availableTags}
           availableProjects={availableProjects}
+          availableStatuses={availableStatuses}
           onFilterType={onFilterType}
           onFilterTag={onFilterTag}
           onFilterProject={onFilterProject}
+          onFilterStatus={onFilterStatus}
         />
         <div className="flex-1 overflow-y-auto">
           {loading ? (

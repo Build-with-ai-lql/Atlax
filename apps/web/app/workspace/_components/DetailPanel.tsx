@@ -1,5 +1,7 @@
 'use client'
 
+import { useState } from 'react'
+
 import { extractSuggestedTagNames, groupSuggestionsByType } from '@atlax/domain'
 
 import type { InboxEntry, StoredEntry, StoredTag } from '@/lib/repository'
@@ -66,6 +68,7 @@ export default function DetailPanel({
   onRemoveTag,
   actionLoading,
 }: DetailPanelProps) {
+  const [relationsExpanded, setRelationsExpanded] = useState(false)
   if (activeView === 'entries') {
     if (!archivedEntry) {
       return (
@@ -135,6 +138,44 @@ export default function DetailPanel({
               </div>
             </div>
           )}
+
+          <div className="mt-4 pt-4 border-t border-gray-100">
+            <button
+              onClick={() => setRelationsExpanded((prev) => !prev)}
+              className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+              </svg>
+              关联关系
+              <svg className={`w-3 h-3 transition-transform ${relationsExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {relationsExpanded && (
+              <div className="mt-3 p-3 bg-indigo-50/50 border border-indigo-100 rounded-lg">
+                <p className="text-xs text-indigo-500 mb-2">此条目的关联内容</p>
+                <div className="space-y-1.5">
+                  {archivedEntry.tags.map((tag) => (
+                    <div key={tag} className="flex items-center gap-2 text-xs text-gray-600">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-300 flex-shrink-0" />
+                      <span>标签：{tag}</span>
+                    </div>
+                  ))}
+                  {archivedEntry.project && (
+                    <div className="flex items-center gap-2 text-xs text-gray-600">
+                      <span className="w-1.5 h-1.5 rounded-full bg-purple-300 flex-shrink-0" />
+                      <span>项目：{archivedEntry.project}</span>
+                    </div>
+                  )}
+                  {archivedEntry.tags.length === 0 && !archivedEntry.project && (
+                    <p className="text-xs text-gray-400">暂无关联关系</p>
+                  )}
+                </div>
+                <p className="text-[10px] text-gray-300 mt-3">关系图谱与智能关联将在后续版本中实现</p>
+              </div>
+            )}
+          </div>
 
           <div className="flex gap-2 pt-6 mt-6 border-t border-gray-100">
             <button

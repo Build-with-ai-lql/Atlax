@@ -21,16 +21,12 @@ export default function InboxPage() {
   const [actionLoading, setActionLoading] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    loadEntries()
-  }, [])
-
   const getUserId = () => {
     const user = getCurrentUser()
     return user?.id ?? ''
   }
 
-  const loadEntries = async () => {
+  const loadEntries = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -41,16 +37,20 @@ export default function InboxPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  const refreshList = async () => {
+  useEffect(() => {
+    loadEntries()
+  }, [loadEntries])
+
+  const refreshList = useCallback(async () => {
     try {
       const updated = await listInboxEntries(getUserId())
       setEntries(updated)
     } catch {
       setError('刷新失败，请重试')
     }
-  }
+  }, [])
 
   const replaceEntry = useCallback((updatedEntry: InboxEntry) => {
     setEntries((currentEntries) =>
@@ -79,7 +79,7 @@ export default function InboxPage() {
         setActionLoading(null)
       }
     },
-    [actionLoading, replaceEntry]
+    [actionLoading, replaceEntry, refreshList]
   )
 
   const handleSuggest = async (id: number) => {
