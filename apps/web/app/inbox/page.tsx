@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import {
   listInboxEntries,
   suggestEntry,
@@ -15,6 +15,7 @@ export default function InboxPage() {
   const [entries, setEntries] = useState<InboxEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     loadEntries()
@@ -22,42 +23,60 @@ export default function InboxPage() {
 
   const loadEntries = async () => {
     setLoading(true)
-    const data = await listInboxEntries()
-    setEntries(data)
-    setLoading(false)
+    setError(null)
+    try {
+      const data = await listInboxEntries()
+      setEntries(data)
+    } catch (e) {
+      setError('加载失败，请重试')
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const refreshEntry = async (id: number) => {
-    const updated = await listInboxEntries()
-    setEntries(updated)
+  const refreshList = async () => {
+    try {
+      const updated = await listInboxEntries()
+      setEntries(updated)
+    } catch (e) {
+      setError('刷新失败，请重试')
+    }
   }
+
+  const wrapAction = useCallback(
+    async (id: number, action: () => Promise<unknown>, actionName: string) => {
+      if (actionLoading !== null) return
+      setActionLoading(id)
+      setError(null)
+      try {
+        const result = await action()
+        if (result === null || result === false) {
+          setError(`${actionName}失败：当前状态不允许此操作`)
+        }
+      } catch (e) {
+        setError(`${actionName}失败：${e instanceof Error ? e.message : '未知错误'}`)
+      } finally {
+        setActionLoading(null)
+        await refreshList()
+      }
+    },
+    [actionLoading]
+  )
 
   const handleSuggest = async (id: number) => {
-    setActionLoading(id)
-    await suggestEntry(id)
-    setActionLoading(null)
-    await refreshEntry(id)
+    await wrapAction(id, () => suggestEntry(id), '生成建议')
   }
 
   const handleArchive = async (id: number) => {
-    setActionLoading(id)
-    await archiveEntry(id)
-    setActionLoading(null)
-    await refreshEntry(id)
+    await wrapAction(id, () => archiveEntry(id), '归档')
   }
 
   const handleIgnore = async (id: number) => {
-    setActionLoading(id)
-    await ignoreEntry(id)
-    setActionLoading(null)
-    await refreshEntry(id)
+    await wrapAction(id, () => ignoreEntry(id), '忽略')
   }
 
   const handleRestore = async (id: number) => {
-    setActionLoading(id)
-    await restoreEntry(id)
-    setActionLoading(null)
-    await refreshEntry(id)
+    await wrapAction(id, () => restoreEntry(id), '恢复')
   }
 
   return (
@@ -65,6 +84,12 @@ export default function InboxPage() {
       <div className="max-w-2xl mx-auto">
         <h1 className="text-3xl font-bold mb-6">Inbox</h1>
         <p className="text-gray-600 mb-8">待整理的内容</p>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
+            {error}
+          </div>
+        )}
 
         {loading ? (
           <div className="text-center py-8 text-gray-500">加载中...</div>

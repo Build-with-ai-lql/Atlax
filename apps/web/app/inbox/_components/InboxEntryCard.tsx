@@ -51,6 +51,8 @@ export default function InboxEntryCard({
   const actions = entry.suggestions.filter((s) => s.type === 'action')
   const projects = entry.suggestions.filter((s) => s.type === 'project')
 
+  const hasSuggestions = entry.suggestions.length > 0
+
   return (
     <div className="p-4 border rounded-lg">
       <div className="flex items-start justify-between gap-2">
@@ -62,54 +64,60 @@ export default function InboxEntryCard({
         {formatDate(entry.createdAt)}
       </div>
 
-      {entry.status === 'suggested' && entry.suggestions.length > 0 && (
+      {entry.status === 'suggested' && (
         <div className="mt-3 p-3 bg-blue-50 rounded border border-blue-100">
-          {category && (
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-xs font-medium text-blue-600 uppercase tracking-wide">分类</span>
-              <span className="px-2 py-0.5 bg-blue-600 text-white rounded text-sm font-medium">
-                {category.label}
-              </span>
-            </div>
-          )}
-
-          {tags.length > 0 && (
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-xs font-medium text-blue-600 uppercase tracking-wide">标签</span>
-              <div className="flex flex-wrap gap-1">
-                {tags.map((tag) => (
-                  <span key={tag.id} className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">
-                    {tag.label}
+          {!hasSuggestions ? (
+            <p className="text-sm text-blue-600">暂无建议，请尝试刷新</p>
+          ) : (
+            <>
+              {category && (
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs font-medium text-blue-600 uppercase tracking-wide">分类</span>
+                  <span className="px-2 py-0.5 bg-blue-600 text-white rounded text-sm font-medium">
+                    {category.label}
                   </span>
-                ))}
-              </div>
-            </div>
-          )}
+                </div>
+              )}
 
-          {actions.length > 0 && (
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-xs font-medium text-blue-600 uppercase tracking-wide">动作</span>
-              <div className="flex flex-wrap gap-1">
-                {actions.map((action) => (
-                  <span key={action.id} className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs">
-                    {action.label}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+              {tags.length > 0 && (
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs font-medium text-blue-600 uppercase tracking-wide">标签</span>
+                  <div className="flex flex-wrap gap-1">
+                    {tags.map((tag) => (
+                      <span key={tag.id} className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">
+                        {tag.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-          {projects.length > 0 && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-blue-600 uppercase tracking-wide">项目</span>
-              <div className="flex flex-wrap gap-1">
-                {projects.map((project) => (
-                  <span key={project.id} className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">
-                    {project.label}
-                  </span>
-                ))}
-              </div>
-            </div>
+              {actions.length > 0 && (
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs font-medium text-blue-600 uppercase tracking-wide">动作</span>
+                  <div className="flex flex-wrap gap-1">
+                    {actions.map((action) => (
+                      <span key={action.id} className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs">
+                        {action.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {projects.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-blue-600 uppercase tracking-wide">项目</span>
+                  <div className="flex flex-wrap gap-1">
+                    {projects.map((project) => (
+                      <span key={project.id} className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">
+                        {project.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
