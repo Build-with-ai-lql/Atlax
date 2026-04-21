@@ -1,11 +1,20 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { listInboxEntries, type InboxEntry } from '@/lib/repository'
+import {
+  listInboxEntries,
+  suggestEntry,
+  archiveEntry,
+  ignoreEntry,
+  restoreEntry,
+  type InboxEntry,
+} from '@/lib/repository'
+import InboxEntryCard from './_components/InboxEntryCard'
 
 export default function InboxPage() {
   const [entries, setEntries] = useState<InboxEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [actionLoading, setActionLoading] = useState<number | null>(null)
 
   useEffect(() => {
     loadEntries()
@@ -18,13 +27,37 @@ export default function InboxPage() {
     setLoading(false)
   }
 
-  const formatDate = (date: Date) => {
-    return new Date(date).toLocaleString('zh-CN', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
+  const refreshEntry = async (id: number) => {
+    const updated = await listInboxEntries()
+    setEntries(updated)
+  }
+
+  const handleSuggest = async (id: number) => {
+    setActionLoading(id)
+    await suggestEntry(id)
+    setActionLoading(null)
+    await refreshEntry(id)
+  }
+
+  const handleArchive = async (id: number) => {
+    setActionLoading(id)
+    await archiveEntry(id)
+    setActionLoading(null)
+    await refreshEntry(id)
+  }
+
+  const handleIgnore = async (id: number) => {
+    setActionLoading(id)
+    await ignoreEntry(id)
+    setActionLoading(null)
+    await refreshEntry(id)
+  }
+
+  const handleRestore = async (id: number) => {
+    setActionLoading(id)
+    await restoreEntry(id)
+    setActionLoading(null)
+    await refreshEntry(id)
   }
 
   return (
@@ -45,15 +78,15 @@ export default function InboxPage() {
         ) : (
           <div className="space-y-4">
             {entries.map((entry) => (
-              <div
+              <InboxEntryCard
                 key={entry.id}
-                className="p-4 border rounded-lg hover:bg-gray-50"
-              >
-                <p className="text-gray-800 whitespace-pre-wrap">{entry.rawText}</p>
-                <div className="mt-2 text-sm text-gray-500">
-                  {formatDate(entry.createdAt)}
-                </div>
-              </div>
+                entry={entry}
+                onSuggest={handleSuggest}
+                onArchive={handleArchive}
+                onIgnore={handleIgnore}
+                onRestore={handleRestore}
+                actionLoading={actionLoading}
+              />
             ))}
           </div>
         )}
