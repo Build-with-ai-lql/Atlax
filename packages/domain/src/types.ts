@@ -36,3 +36,15 @@ export interface GroupedSuggestions {
   actions: SuggestionItem[]
   projects: SuggestionItem[]
 }
+
+export interface Tag {
+  id: string
+  name: string
+  createdAt: Date
+}
+
+export interface ResolvedTags {
+  suggested: string[]
+  userSelected: string[]
+  final: string[]
+}

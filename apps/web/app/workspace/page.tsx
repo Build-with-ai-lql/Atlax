@@ -3,13 +3,18 @@
 import { useEffect, useState, useCallback } from 'react'
 
 import {
+  addTagToEntry,
   archiveEntry,
   createInboxEntry,
+  createStoredTag,
   ignoreEntry,
   listInboxEntries,
+  listTags,
+  removeTagFromEntry,
   restoreEntry,
   suggestEntry,
   type InboxEntry,
+  type StoredTag,
 } from '@/lib/repository'
 
 import type { ViewType } from './_components/Sidebar'
@@ -21,6 +26,7 @@ import Sidebar from './_components/Sidebar'
 export default function WorkspacePage() {
   const [activeView, setActiveView] = useState<ViewType>('inbox')
   const [entries, setEntries] = useState<InboxEntry[]>([])
+  const [existingTags, setExistingTags] = useState<StoredTag[]>([])
   const [selectedEntryId, setSelectedEntryId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
@@ -43,7 +49,9 @@ export default function WorkspacePage() {
     setError(null)
     try {
       const data = await listInboxEntries()
+      const tags = await listTags()
       setEntries(data)
+      setExistingTags(tags)
     } catch {
       setError('加载失败，请重试')
     } finally {
@@ -54,7 +62,9 @@ export default function WorkspacePage() {
   const refreshList = useCallback(async (): Promise<InboxEntry[]> => {
     try {
       const data = await listInboxEntries()
+      const tags = await listTags()
       setEntries(data)
+      setExistingTags(tags)
       setError(null)
       return data
     } catch {
@@ -126,6 +136,17 @@ export default function WorkspacePage() {
     await wrapAction(() => restoreEntry(id))
   }
 
+  const handleAddTag = async (id: number, tagName: string) => {
+    await wrapAction(async () => {
+      await createStoredTag(tagName)
+      return addTagToEntry(id, tagName)
+    })
+  }
+
+  const handleRemoveTag = async (id: number, tagName: string) => {
+    await wrapAction(() => removeTagFromEntry(id, tagName))
+  }
+
   return (
     <div className="flex h-screen bg-white overflow-hidden">
       <Sidebar
@@ -158,10 +179,13 @@ export default function WorkspacePage() {
           <DetailPanel
             activeView={activeView}
             entry={selectedEntry}
+            existingTags={existingTags}
             onSuggest={handleSuggest}
             onArchive={handleArchive}
             onIgnore={handleIgnore}
             onRestore={handleRestore}
+            onAddTag={handleAddTag}
+            onRemoveTag={handleRemoveTag}
             actionLoading={actionLoading}
           />
         </div>

@@ -1,14 +1,25 @@
 import {
   canTransition,
+  createTag,
+  dedupeTagNames,
   generateSuggestions,
+  normalizeTagName,
   type EntryStatus,
   type SourceType,
   type SuggestionItem,
 } from '@atlax/domain'
 
-import { inboxEntries, type InboxEntryRecord, type PersistedInboxEntry } from './db'
+import {
+  inboxEntries,
+  tagsTable,
+  type InboxEntryRecord,
+  type PersistedInboxEntry,
+  type PersistedTag,
+  type TagRecord,
+} from './db'
 
 export type { PersistedInboxEntry as InboxEntry }
+export type { PersistedTag as StoredTag }
 
 function toPersistedInboxEntry(entry: InboxEntryRecord | undefined): PersistedInboxEntry | null {
   if (!entry || typeof entry.id !== 'number') {
@@ -18,6 +29,18 @@ function toPersistedInboxEntry(entry: InboxEntryRecord | undefined): PersistedIn
   return {
     ...entry,
     id: entry.id,
+    userTags: entry.userTags ?? [],
+  }
+}
+
+function toPersistedTag(tag: TagRecord | undefined): PersistedTag | null {
+  if (!tag || !tag.id) {
+    return null
+  }
+
+  return {
+    ...tag,
+    id: tag.id,
   }
 }
 
@@ -32,6 +55,7 @@ export async function createInboxEntry(rawText: string, sourceType: SourceType =
     sourceType,
     status: 'pending',
     suggestions: [],
+    userTags: [],
     processedAt: null,
     createdAt: new Date(),
   })
@@ -114,4 +138,70 @@ export async function restoreEntry(id: number): Promise<PersistedInboxEntry | nu
   })
 
   return getPersistedInboxEntry(id)
+}
+
+export async function updateEntryTags(id: number, userTags: string[]): Promise<PersistedInboxEntry | null> {
+  const entry = await getPersistedInboxEntry(id)
+  if (!entry) return null
+
+  await inboxEntries.update(id, {
+    userTags,
+  })
+
+  return getPersistedInboxEntry(id)
+}
+
+export async function addTagToEntry(id: number, tagName: string): Promise<PersistedInboxEntry | null> {
+  const entry = await getPersistedInboxEntry(id)
+  if (!entry) return null
+
+  const normalized = normalizeTagName(tagName)
+  if (!normalized) return entry
+
+  const newTags = dedupeTagNames([...entry.userTags, normalized])
+  return updateEntryTags(id, newTags)
+}
+
+export async function removeTagFromEntry(id: number, tagName: string): Promise<PersistedInboxEntry | null> {
+  const entry = await getPersistedInboxEntry(id)
+  if (!entry) return null
+
+  const normalized = normalizeTagName(tagName)
+  const newTags = entry.userTags.filter((t) => normalizeTagName(t).toLowerCase() !== normalized.toLowerCase())
+  return updateEntryTags(id, newTags)
+}
+
+export async function listTags(): Promise<PersistedTag[]> {
+  const tags = await tagsTable.orderBy('name').toArray()
+
+  return tags.flatMap((tag) => {
+    const persistedTag = toPersistedTag(tag)
+    return persistedTag ? [persistedTag] : []
+  })
+}
+
+export async function createStoredTag(name: string): Promise<PersistedTag | null> {
+  const tag = createTag(name)
+  if (!tag) return null
+
+  const existing = await tagsTable.get(tag.id)
+  if (existing) return toPersistedTag(existing)
+
+  await tagsTable.add({
+    id: tag.id,
+    name: tag.name,
+    createdAt: tag.createdAt,
+  })
+
+  return toPersistedTag(await tagsTable.get(tag.id))
+}
+
+export async function getOrCreateTag(name: string): Promise<PersistedTag | null> {
+  const tag = createTag(name)
+  if (!tag) return null
+
+  const existing = await tagsTable.get(tag.id)
+  if (existing) return toPersistedTag(existing)
+
+  return createStoredTag(name)
 }

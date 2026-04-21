@@ -1,12 +1,13 @@
 'use client'
 
-import { groupSuggestionsByType } from '@atlax/domain'
+import { extractSuggestedTagNames, groupSuggestionsByType } from '@atlax/domain'
 
-import type { InboxEntry } from '@/lib/repository'
+import type { InboxEntry, StoredTag } from '@/lib/repository'
 import type { EntryStatus } from '@/lib/types'
 
 import type { ViewType } from './Sidebar'
 import EmptyState from './EmptyState'
+import TagEditor from './TagEditor'
 
 const STATUS_CONFIG: Record<EntryStatus, { label: string; color: string; bg: string }> = {
   pending: { label: '待处理', color: 'text-yellow-700', bg: 'bg-yellow-50 border-yellow-200' },
@@ -19,7 +20,7 @@ const VIEW_EMPTY_HINTS: Record<Exclude<ViewType, 'inbox'>, { title: string; desc
   entries: {
     title: 'Entries',
     description: '归档后的知识单元会在这里展示详情',
-    hint: 'Phase 2.3 将实现完整归档与 Entry 详情',
+    hint: 'Phase 2.4 将实现完整归档与 Entry 详情',
   },
   review: {
     title: 'Review',
@@ -31,20 +32,26 @@ const VIEW_EMPTY_HINTS: Record<Exclude<ViewType, 'inbox'>, { title: string; desc
 interface DetailPanelProps {
   activeView: ViewType
   entry: InboxEntry | null
+  existingTags: StoredTag[]
   onSuggest: (id: number) => Promise<void>
   onArchive: (id: number) => Promise<void>
   onIgnore: (id: number) => Promise<void>
   onRestore: (id: number) => Promise<void>
+  onAddTag: (id: number, tagName: string) => Promise<void>
+  onRemoveTag: (id: number, tagName: string) => Promise<void>
   actionLoading: boolean
 }
 
 export default function DetailPanel({
   activeView,
   entry,
+  existingTags,
   onSuggest,
   onArchive,
   onIgnore,
   onRestore,
+  onAddTag,
+  onRemoveTag,
   actionLoading,
 }: DetailPanelProps) {
   if (activeView !== 'inbox') {
@@ -72,6 +79,7 @@ export default function DetailPanel({
 
   const statusConfig = STATUS_CONFIG[entry.status]
   const grouped = groupSuggestionsByType(entry.suggestions)
+  const suggestedTags = extractSuggestedTagNames(grouped)
 
   return (
     <div className="flex-1 overflow-y-auto bg-white">
@@ -91,61 +99,55 @@ export default function DetailPanel({
           </p>
         </div>
 
-        {entry.status === 'suggested' && entry.suggestions.length > 0 && (
-          <div className="mb-8 p-4 bg-slate-50 rounded-xl border border-slate-200">
-            <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">
-              系统建议
-            </h4>
+        <div className="mb-8 p-4 bg-slate-50 rounded-xl border border-slate-200">
+          <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">
+            整理区
+          </h4>
 
-            {grouped.category && (
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs text-gray-400 w-10 flex-shrink-0">分类</span>
-                <span className="px-2.5 py-0.5 bg-blue-600 text-white rounded text-sm font-medium">
-                  {grouped.category.label}
-                </span>
-              </div>
-            )}
+          {grouped.category && (
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xs text-gray-400 w-10 flex-shrink-0">分类</span>
+              <span className="px-2.5 py-0.5 bg-blue-600 text-white rounded text-sm font-medium">
+                {grouped.category.label}
+              </span>
+            </div>
+          )}
 
-            {grouped.tags.length > 0 && (
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs text-gray-400 w-10 flex-shrink-0">标签</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {grouped.tags.map((tag) => (
-                    <span key={tag.id} className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">
-                      {tag.label}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
+          <TagEditor
+            suggestedTags={suggestedTags}
+            userTags={entry.userTags ?? []}
+            existingTags={existingTags}
+            onAddTag={(name) => onAddTag(entry.id, name)}
+            onRemoveTag={(name) => onRemoveTag(entry.id, name)}
+            disabled={actionLoading}
+          />
 
-            {grouped.actions.length > 0 && (
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs text-gray-400 w-10 flex-shrink-0">动作</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {grouped.actions.map((action) => (
-                    <span key={action.id} className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs">
-                      {action.label}
-                    </span>
-                  ))}
-                </div>
+          {grouped.actions.length > 0 && (
+            <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-100">
+              <span className="text-xs text-gray-400 w-10 flex-shrink-0">动作</span>
+              <div className="flex flex-wrap gap-1.5">
+                {grouped.actions.map((action) => (
+                  <span key={action.id} className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs">
+                    {action.label}
+                  </span>
+                ))}
               </div>
-            )}
+            </div>
+          )}
 
-            {grouped.projects.length > 0 && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-400 w-10 flex-shrink-0">项目</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {grouped.projects.map((project) => (
-                    <span key={project.id} className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">
-                      {project.label}
-                    </span>
-                  ))}
-                </div>
+          {grouped.projects.length > 0 && (
+            <div className="flex items-center gap-2 mt-3">
+              <span className="text-xs text-gray-400 w-10 flex-shrink-0">项目</span>
+              <div className="flex flex-wrap gap-1.5">
+                {grouped.projects.map((project) => (
+                  <span key={project.id} className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">
+                    {project.label}
+                  </span>
+                ))}
               </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
 
         <div className="flex gap-2 pt-2">
           {entry.status === 'pending' && (
