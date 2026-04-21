@@ -2,7 +2,7 @@ export type SourceType = 'text' | 'voice'
 
 export type EntryStatus = 'pending' | 'suggested' | 'archived' | 'ignored'
 
-export type SuggestionType = 'category' | 'action' | 'project'
+export type SuggestionType = 'category' | 'tag' | 'action' | 'project'
 
 export interface SuggestionItem {
   id: string
