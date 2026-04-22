@@ -8,6 +8,7 @@ const STATUS_DOT: Record<EntryStatus, string> = {
   suggested: 'bg-blue-400',
   archived: 'bg-green-400',
   ignored: 'bg-gray-300',
+  reopened: 'bg-orange-400',
 }
 
 interface DockListItemProps {

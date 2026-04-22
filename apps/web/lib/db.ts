@@ -119,6 +119,29 @@ db.version(7).stores({
   entries: '++id, userId, sourceDockItemId, type, archivedAt',
 })
 
+db.version(8).stores({
+  dockItems: '++id, userId, rawText, sourceType, status, createdAt',
+  tags: 'id, userId, name, [userId+name]',
+  entries: '++id, userId, sourceDockItemId, type, archivedAt',
+}).upgrade((tx) => {
+  tx.table('dockItems').toCollection().modify((item: Record<string, unknown>) => {
+    if (!item.userId) item.userId = '_legacy'
+    if (!item.sourceType) item.sourceType = 'text'
+    if (!item.status) item.status = 'pending'
+    if (!Array.isArray(item.suggestions)) item.suggestions = []
+    if (!Array.isArray(item.userTags)) item.userTags = []
+  })
+  tx.table('entries').toCollection().modify((entry: Record<string, unknown>) => {
+    if (!entry.userId) entry.userId = '_legacy'
+    if (!entry.sourceDockItemId && entry.sourceDockItemId !== 0) {
+      entry.sourceDockItemId = 0
+    }
+  })
+  tx.table('tags').toCollection().modify((tag: Record<string, unknown>) => {
+    if (!tag.userId) tag.userId = '_legacy'
+  })
+})
+
 export { db }
 export const dockItemsTable = db.table('dockItems')
 export const tagsTable = db.table('tags')

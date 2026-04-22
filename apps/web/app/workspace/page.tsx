@@ -54,6 +54,7 @@ export default function WorkspacePage() {
     suggestedCount: 0,
     archivedCount: 0,
     ignoredCount: 0,
+    reopenedCount: 0,
     tagCount: 0,
   })
 

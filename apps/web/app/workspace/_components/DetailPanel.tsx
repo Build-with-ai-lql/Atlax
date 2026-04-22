@@ -16,6 +16,7 @@ const STATUS_CONFIG: Record<EntryStatus, { label: string; color: string; bg: str
   suggested: { label: '已建议', color: 'text-blue-700', bg: 'bg-blue-50 border-blue-200' },
   archived: { label: '已归档', color: 'text-green-700', bg: 'bg-green-50 border-green-200' },
   ignored: { label: '已忽略', color: 'text-gray-600', bg: 'bg-gray-50 border-gray-200' },
+  reopened: { label: '重新整理', color: 'text-orange-700', bg: 'bg-orange-50 border-orange-200' },
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -490,6 +491,15 @@ export default function DetailPanel({
               className="px-4 py-2 text-sm font-medium bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 disabled:opacity-50 transition-colors"
             >
               {actionLoading ? '恢复中…' : '恢复到 Dock'}
+            </button>
+          )}
+          {item.status === 'reopened' && (
+            <button
+              onClick={() => onSuggest(item.id)}
+              disabled={actionLoading}
+              className="px-4 py-2 text-sm font-medium bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-colors"
+            >
+              {actionLoading ? '生成中…' : '重新生成建议'}
             </button>
           )}
           {item.status === 'archived' && (

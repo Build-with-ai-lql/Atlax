@@ -38,6 +38,7 @@ interface MainPanelProps {
     suggestedCount: number
     archivedCount: number
     ignoredCount: number
+    reopenedCount: number
     tagCount: number
   }
   onGotoDock: () => void

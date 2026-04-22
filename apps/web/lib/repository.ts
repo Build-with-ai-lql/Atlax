@@ -151,6 +151,7 @@ export async function getWorkspaceStats(userId: string): Promise<{
   suggestedCount: number
   archivedCount: number
   ignoredCount: number
+  reopenedCount: number
   tagCount: number
 }> {
   const [allDockItems, allEntries, allTags] = await Promise.all([
@@ -165,6 +166,7 @@ export async function getWorkspaceStats(userId: string): Promise<{
     suggestedCount: allDockItems.filter((i) => i.status === 'suggested').length,
     archivedCount: allDockItems.filter((i) => i.status === 'archived').length,
     ignoredCount: allDockItems.filter((i) => i.status === 'ignored').length,
+    reopenedCount: allDockItems.filter((i) => i.status === 'reopened').length,
     tagCount: allTags,
   }
 }
@@ -274,10 +276,10 @@ export async function restoreItem(userId: string, id: number): Promise<Persisted
 export async function reopenItem(userId: string, id: number): Promise<PersistedDockItem | null> {
   const item = await getDockItemForUser(userId, id)
   if (!item) return null
-  if (!canTransition(item.status, 'pending')) return null
+  if (!canTransition(item.status, 'reopened')) return null
 
   await dockItemsTable.update(id, {
-    status: 'pending',
+    status: 'reopened',
     processedAt: null,
   })
 

@@ -1,6 +1,6 @@
-export type SourceType = 'text' | 'voice'
+export type SourceType = 'text' | 'voice' | 'import'
 
-export type EntryStatus = 'pending' | 'suggested' | 'archived' | 'ignored'
+export type EntryStatus = 'pending' | 'suggested' | 'archived' | 'ignored' | 'reopened'
 
 export type SuggestionType = 'category' | 'tag' | 'action' | 'project'
 
