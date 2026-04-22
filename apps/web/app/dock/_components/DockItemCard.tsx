@@ -10,6 +10,7 @@ const STATUS_CONFIG: Record<EntryStatus, { label: string; color: string; bg: str
   suggested: { label: '已建议', color: 'text-blue-700', bg: 'bg-blue-100' },
   archived: { label: '已归档', color: 'text-green-700', bg: 'bg-green-100' },
   ignored: { label: '已忽略', color: 'text-gray-600', bg: 'bg-gray-100' },
+  reopened: { label: '重新整理', color: 'text-orange-700', bg: 'bg-orange-100' },
 }
 
 function StatusBadge({ status }: { status: EntryStatus }) {
@@ -160,6 +161,16 @@ export default function DockItemCard({
             className="px-3 py-1 text-sm bg-yellow-500 text-white rounded hover:bg-yellow-600 disabled:opacity-50"
           >
             {isLoading ? '恢复中...' : '恢复'}
+          </button>
+        )}
+
+        {item.status === 'reopened' && (
+          <button
+            onClick={() => onSuggest(item.id)}
+            disabled={isLoading}
+            className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
+          >
+            {isLoading ? '生成中...' : '重新生成建议'}
           </button>
         )}
 

@@ -47,6 +47,33 @@ export interface PersistedEntry extends EntryRecord {
   id: number
 }
 
+const FALLBACK_USER_ID = '_legacy'
+
+export function runV8Upgrade(tx: {
+  table: (name: string) => {
+    toCollection: () => {
+      modify: (fn: (r: Record<string, unknown>) => void) => void
+    }
+  }
+}): void {
+  tx.table('dockItems').toCollection().modify((item: Record<string, unknown>) => {
+    if (!item.userId) item.userId = FALLBACK_USER_ID
+    if (!item.sourceType) item.sourceType = 'text'
+    if (!item.status) item.status = 'pending'
+    if (!Array.isArray(item.suggestions)) item.suggestions = []
+    if (!Array.isArray(item.userTags)) item.userTags = []
+  })
+  tx.table('entries').toCollection().modify((entry: Record<string, unknown>) => {
+    if (!entry.userId) entry.userId = FALLBACK_USER_ID
+    if (!entry.sourceDockItemId && entry.sourceDockItemId !== 0) {
+      entry.sourceDockItemId = 0
+    }
+  })
+  tx.table('tags').toCollection().modify((tag: Record<string, unknown>) => {
+    if (!tag.userId) tag.userId = FALLBACK_USER_ID
+  })
+}
+
 const db = new Dexie('AtlaxDB') as Dexie & {
   dockItems: EntityTable<DockItemRecord, 'id'>
   tags: EntityTable<TagRecord, 'id'>
@@ -87,15 +114,14 @@ db.version(5).stores({
   tags: 'id, userId, name',
   entries: '++id, userId, sourceDockItemId, type, archivedAt',
 }).upgrade((tx) => {
-  const fallbackUserId = '_legacy'
   tx.table('dockItems').toCollection().modify((item: Record<string, unknown>) => {
-    item.userId = item.userId ?? fallbackUserId
+    item.userId = item.userId ?? FALLBACK_USER_ID
   })
   tx.table('tags').toCollection().modify((tag: Record<string, unknown>) => {
-    tag.userId = tag.userId ?? fallbackUserId
+    tag.userId = tag.userId ?? FALLBACK_USER_ID
   })
   tx.table('entries').toCollection().modify((entry: Record<string, unknown>) => {
-    entry.userId = entry.userId ?? fallbackUserId
+    entry.userId = entry.userId ?? FALLBACK_USER_ID
   })
 })
 
@@ -104,11 +130,10 @@ db.version(6).stores({
   tags: 'id, userId, name, [userId+name]',
   entries: '++id, userId, sourceDockItemId, type, archivedAt',
 }).upgrade((tx) => {
-  const fallbackUserId = '_legacy'
   tx.table('tags').toCollection().modify((tag: Record<string, unknown>) => {
     const oldId = tag.id as string
-    if (oldId && !oldId.startsWith(fallbackUserId + '_')) {
-      tag.id = `${tag.userId ?? fallbackUserId}_${oldId}`
+    if (oldId && !oldId.startsWith(FALLBACK_USER_ID + '_')) {
+      tag.id = `${tag.userId ?? FALLBACK_USER_ID}_${oldId}`
     }
   })
 })
@@ -123,24 +148,7 @@ db.version(8).stores({
   dockItems: '++id, userId, rawText, sourceType, status, createdAt',
   tags: 'id, userId, name, [userId+name]',
   entries: '++id, userId, sourceDockItemId, type, archivedAt',
-}).upgrade((tx) => {
-  tx.table('dockItems').toCollection().modify((item: Record<string, unknown>) => {
-    if (!item.userId) item.userId = '_legacy'
-    if (!item.sourceType) item.sourceType = 'text'
-    if (!item.status) item.status = 'pending'
-    if (!Array.isArray(item.suggestions)) item.suggestions = []
-    if (!Array.isArray(item.userTags)) item.userTags = []
-  })
-  tx.table('entries').toCollection().modify((entry: Record<string, unknown>) => {
-    if (!entry.userId) entry.userId = '_legacy'
-    if (!entry.sourceDockItemId && entry.sourceDockItemId !== 0) {
-      entry.sourceDockItemId = 0
-    }
-  })
-  tx.table('tags').toCollection().modify((tag: Record<string, unknown>) => {
-    if (!tag.userId) tag.userId = '_legacy'
-  })
-})
+}).upgrade(runV8Upgrade)
 
 export { db }
 export const dockItemsTable = db.table('dockItems')

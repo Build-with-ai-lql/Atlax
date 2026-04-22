@@ -102,15 +102,35 @@ describe('repository', () => {
       expect(unwrap(await archiveItem(USER_A, id)).status).toBe('archived')
     })
 
-    it('archived -> reopen -> re-archive', async () => {
+    it('archived -> reopen -> suggest -> re-archive', async () => {
       const id = await createDockItem(USER_A, '测试内容')
       await suggestItem(USER_A, id)
       await archiveItem(USER_A, id)
 
-      expect(unwrap(await reopenItem(USER_A, id)).status).toBe('pending')
+      const reopened = unwrap(await reopenItem(USER_A, id))
+      expect(reopened.status).toBe('reopened')
 
       await suggestItem(USER_A, id)
       expect(unwrap(await archiveItem(USER_A, id)).status).toBe('archived')
+    })
+
+    it('supports import sourceType', async () => {
+      await createDockItem(USER_A, '导入的内容', 'import')
+      const item = await listDockItems(USER_A)
+      expect(item[0].sourceType).toBe('import')
+    })
+
+    it('reopened state flow', async () => {
+      const id = await createDockItem(USER_A, '内容')
+      await suggestItem(USER_A, id)
+      await archiveItem(USER_A, id)
+
+      const reopened = unwrap(await reopenItem(USER_A, id))
+      expect(reopened.status).toBe('reopened')
+
+      await suggestItem(USER_A, id)
+      const ignored = unwrap(await ignoreItem(USER_A, id))
+      expect(ignored.status).toBe('ignored')
     })
 
     it('blocks invalid transitions', async () => {
@@ -291,8 +311,20 @@ describe('repository', () => {
       expect(stats.suggestedCount).toBe(1)
       expect(stats.archivedCount).toBe(1)
       expect(stats.ignoredCount).toBe(1)
+      expect(stats.reopenedCount).toBe(0)
       expect(stats.totalEntries).toBe(1)
       expect(stats.tagCount).toBe(1)
+    })
+
+    it('counts reopened items', async () => {
+      const id = await createDockItem(USER_A, '内容')
+      await suggestItem(USER_A, id)
+      await archiveItem(USER_A, id)
+      await reopenItem(USER_A, id)
+
+      const stats = await getWorkspaceStats(USER_A)
+      expect(stats.reopenedCount).toBe(1)
+      expect(stats.archivedCount).toBe(0)
     })
   })
 

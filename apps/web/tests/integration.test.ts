@@ -79,7 +79,7 @@ describe('e2e main flow', () => {
     expect(updatedEntry.content).toBe('更新后的会议内容')
 
     const reopened = unwrap(await reopenItem(USER_ID, itemId))
-    expect(reopened.status).toBe('pending')
+    expect(reopened.status).toBe('reopened')
 
     const existingEntry = await getEntryByDockItemId(USER_ID, itemId)
     expect(existingEntry).not.toBeNull()
@@ -115,6 +115,6 @@ describe('e2e main flow', () => {
     await reopenItem(USER_ID, ids[0])
     const afterReopen = await listDockItems(USER_ID)
     const pendingItem = afterReopen.find((i) => i.id === ids[0])
-    expect(pendingItem?.status).toBe('pending')
+    expect(pendingItem?.status).toBe('reopened')
   })
 })
