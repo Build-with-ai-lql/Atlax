@@ -29,13 +29,13 @@ const TYPE_LABELS: Record<string, string> = {
 const VIEW_EMPTY_HINTS: Record<Exclude<ViewType, 'inbox'>, { title: string; description: string; hint: string }> = {
   entries: {
     title: 'Entries',
-    description: '选择左侧条目查看归档详情',
-    hint: 'Phase 2.5 将实现完整 Entries 浏览与筛选',
+    description: '选择左侧归档条目查看详情',
+    hint: '可按类型、状态、标签、项目筛选，点击条目查看详情与关联关系',
   },
   review: {
     title: 'Review',
-    description: '选中条目的回顾与激活信息会在这里展示',
-    hint: 'Phase 2.5 将实现完整 Review 功能',
+    description: '知识库概览与最近归档内容',
+    hint: '查看统计、浏览最近归档，或回到 Inbox 继续整理',
   },
 }
 
@@ -208,7 +208,7 @@ export default function DetailPanel({
     return (
       <div className="flex-1 flex items-center justify-center bg-gray-50/50">
         <div className="text-center">
-          <p className="text-gray-300 text-sm">选择左侧条目查看详情</p>
+          <p className="text-gray-300 text-sm">选择左侧条目查看详情与整理建议</p>
         </div>
       </div>
     )

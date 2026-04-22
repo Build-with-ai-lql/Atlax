@@ -193,8 +193,8 @@ export default function MainPanel({
           </div>
         ) : entries.length === 0 ? (
           <div className="p-8 text-center">
-            <p className="text-gray-400 text-sm">暂无待整理内容</p>
-            <p className="text-gray-300 text-xs mt-1">在下方输入框记录你的想法</p>
+            <p className="text-gray-400 text-sm">Inbox 为空</p>
+            <p className="text-gray-300 text-xs mt-1">在下方输入框快速记录，或点击展开按钮写长内容</p>
           </div>
         ) : (
           <div className="p-2 space-y-0.5">
