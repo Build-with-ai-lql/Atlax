@@ -51,6 +51,7 @@ export default function WorkspacePage() {
   const [filterTag, setFilterTag] = useState<string | null>(null)
   const [filterProject, setFilterProject] = useState<string | null>(null)
   const [filterStatus, setFilterStatus] = useState<EntryStatus | null>(null)
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<Record<number, string[]>>({})
   const [reviewStats, setReviewStats] = useState({
     totalEntries: 0,
     pendingCount: 0,
@@ -178,8 +179,12 @@ export default function WorkspacePage() {
     }
   }
 
-  const handleChatSubmitToDock = async (text: string) => {
+  const handleChatSubmitToDock = async (text: string, chatTags: string[]) => {
     const id = await createDockItem(userId, text, 'chat')
+    for (const tag of chatTags) {
+      await createStoredTag(userId, tag)
+      await addTagToItem(userId, id, tag)
+    }
     recordEvent({ type: 'chat_guided_capture_created', dockItemId: id, rawText: text })
     await refreshList()
   }
@@ -294,6 +299,13 @@ export default function WorkspacePage() {
     await wrapAction(() => removeTagFromItem(userId, id, tagName))
   }
 
+  const handleDismissSuggestion = (itemId: number, tagName: string) => {
+    setDismissedSuggestions((prev) => ({
+      ...prev,
+      [itemId]: [...(prev[itemId] ?? []), tagName],
+    }))
+  }
+
   const handleUpdateEntry = async (entryId: number, updates: { tags?: string[]; project?: string | null; content?: string; title?: string }) => {
     const result = await updateArchivedEntry(userId, entryId, updates)
     if (result) {
@@ -359,6 +371,7 @@ export default function WorkspacePage() {
               item={selectedItem}
               archivedEntry={selectedArchivedEntry}
               existingTags={existingTags}
+              dismissedSuggestions={selectedItem ? (dismissedSuggestions[selectedItem.id] ?? []) : []}
               onSuggest={handleSuggest}
               onArchive={handleArchive}
               onIgnore={handleIgnore}
@@ -366,6 +379,9 @@ export default function WorkspacePage() {
               onReopen={handleReopen}
               onAddTag={handleAddTag}
               onRemoveTag={handleRemoveTag}
+              onDismissSuggestion={(tagName) => {
+                if (selectedItem) handleDismissSuggestion(selectedItem.id, tagName)
+              }}
               onUpdateEntry={handleUpdateEntry}
               actionLoading={actionLoading}
             />

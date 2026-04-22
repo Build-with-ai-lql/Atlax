@@ -4,32 +4,51 @@ import { useState } from 'react'
 
 import { dedupeTagNames, normalizeTagName, resolveTags } from '@atlax/domain'
 
+import type { SuggestionItem } from '@atlax/domain'
 import type { StoredTag } from '@/lib/repository'
 
 interface TagEditorProps {
   suggestedTags: string[]
+  suggestedTagDetails?: SuggestionItem[]
   userTags: string[]
   existingTags: StoredTag[]
+  dismissedSuggestions?: string[]
   onAddTag: (tagName: string) => Promise<void>
   onRemoveTag: (tagName: string) => Promise<void>
+  onDismissSuggestion?: (tagName: string) => void
   disabled: boolean
 }
 
 export default function TagEditor({
   suggestedTags,
+  suggestedTagDetails,
   userTags,
   existingTags,
+  dismissedSuggestions = [],
   onAddTag,
   onRemoveTag,
+  onDismissSuggestion,
   disabled,
 }: TagEditorProps) {
   const [inputValue, setInputValue] = useState('')
   const [adding, setAdding] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
 
+  const dismissedSet = new Set(dismissedSuggestions.map((t) => t.toLowerCase()))
   const resolved = resolveTags(suggestedTags, userTags)
   const userSet = new Set(userTags.map((t) => t.toLowerCase()))
-  const suggestedOnly = dedupeTagNames(suggestedTags.filter((t) => !userSet.has(t.toLowerCase())))
+  const suggestedOnly = dedupeTagNames(
+    suggestedTags.filter((t) => !userSet.has(t.toLowerCase()) && !dismissedSet.has(t.toLowerCase()))
+  )
+
+  const reasonMap = new Map<string, string>()
+  if (suggestedTagDetails) {
+    for (const detail of suggestedTagDetails) {
+      if (detail.type === 'tag' && detail.reason) {
+        reasonMap.set(detail.label.toLowerCase(), detail.reason)
+      }
+    }
+  }
 
   const availableExistingTags = existingTags.filter(
     (tag) => !userSet.has(tag.name.toLowerCase())
@@ -101,19 +120,38 @@ export default function TagEditor({
       )}
 
       {suggestedOnly.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {suggestedOnly.map((tag) => (
-            <button
-              key={tag}
-              onClick={() => handleAcceptSuggestion(tag)}
-              disabled={disabled}
-              className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-200 rounded text-xs hover:bg-blue-100 disabled:opacity-50 transition-colors"
-            >
-              <span className="text-blue-400">建议</span>
-              {tag}
-              <span className="text-blue-400">+</span>
-            </button>
-          ))}
+        <div className="space-y-1.5">
+          {suggestedOnly.map((tag) => {
+            const reason = reasonMap.get(tag.toLowerCase())
+            return (
+              <div key={tag} className="flex items-center gap-1.5">
+                <button
+                  onClick={() => handleAcceptSuggestion(tag)}
+                  disabled={disabled}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-200 rounded text-xs hover:bg-blue-100 disabled:opacity-50 transition-colors"
+                >
+                  <span className="text-blue-400">建议</span>
+                  {tag}
+                  <span className="text-blue-400">+</span>
+                </button>
+                {reason && (
+                  <span className="text-[10px] text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded" title={reason}>
+                    {reason}
+                  </span>
+                )}
+                {onDismissSuggestion && (
+                  <button
+                    onClick={() => onDismissSuggestion(tag)}
+                    disabled={disabled}
+                    className="text-gray-300 hover:text-gray-500 text-xs disabled:opacity-50"
+                    title="忽略此建议"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -158,18 +196,22 @@ export default function TagEditor({
         <div className="pt-2 border-t border-gray-100">
           <p className="text-xs text-gray-400 mb-1">最终标签（归档时使用）</p>
           <div className="flex flex-wrap gap-1">
-            {resolved.final.map((tag) => (
-              <span
-                key={tag}
-                className={`px-2 py-0.5 rounded text-xs ${
-                  userSet.has(tag.toLowerCase())
-                    ? 'bg-green-50 text-green-600'
-                    : 'bg-blue-50 text-blue-500'
-                }`}
-              >
-                {tag}
-              </span>
-            ))}
+            {resolved.final.map((tag) => {
+              const isDismissed = dismissedSet.has(tag.toLowerCase())
+              if (isDismissed) return null
+              return (
+                <span
+                  key={tag}
+                  className={`px-2 py-0.5 rounded text-xs ${
+                    userSet.has(tag.toLowerCase())
+                      ? 'bg-green-50 text-green-600'
+                      : 'bg-blue-50 text-blue-500'
+                  }`}
+                >
+                  {tag}
+                </span>
+              )
+            })}
           </div>
         </div>
       )}

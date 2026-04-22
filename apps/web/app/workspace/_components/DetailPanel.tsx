@@ -45,6 +45,7 @@ interface DetailPanelProps {
   item: DockItem | null
   archivedEntry: StoredEntry | null
   existingTags: StoredTag[]
+  dismissedSuggestions: string[]
   onSuggest: (id: number) => Promise<void>
   onArchive: (id: number) => Promise<void>
   onIgnore: (id: number) => Promise<void>
@@ -52,6 +53,7 @@ interface DetailPanelProps {
   onReopen: (dockItemId: number) => Promise<void>
   onAddTag: (id: number, tagName: string) => Promise<void>
   onRemoveTag: (id: number, tagName: string) => Promise<void>
+  onDismissSuggestion: (tagName: string) => void
   onUpdateEntry: (entryId: number, updates: { tags?: string[]; project?: string | null; content?: string; title?: string }) => Promise<void>
   actionLoading: boolean
 }
@@ -325,6 +327,7 @@ export default function DetailPanel({
   item,
   archivedEntry,
   existingTags,
+  dismissedSuggestions,
   onSuggest,
   onArchive,
   onIgnore,
@@ -332,6 +335,7 @@ export default function DetailPanel({
   onReopen,
   onAddTag,
   onRemoveTag,
+  onDismissSuggestion,
   onUpdateEntry,
   actionLoading,
 }: DetailPanelProps) {
@@ -420,10 +424,13 @@ export default function DetailPanel({
 
           <TagEditor
             suggestedTags={suggestedTags}
+            suggestedTagDetails={grouped.tags}
             userTags={item.userTags ?? []}
             existingTags={existingTags}
+            dismissedSuggestions={dismissedSuggestions}
             onAddTag={(name) => onAddTag(item.id, name)}
             onRemoveTag={(name) => onRemoveTag(item.id, name)}
+            onDismissSuggestion={onDismissSuggestion}
             disabled={actionLoading}
           />
 

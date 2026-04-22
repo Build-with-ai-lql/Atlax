@@ -2,13 +2,15 @@
 
 import { useState } from 'react'
 
+import { dedupeTagNames, normalizeTagName } from '@atlax/domain'
+
 import type { LocalUser } from '@/lib/auth'
 
-type ChatStep = 'input' | 'confirm' | 'done'
+type ChatStep = 'input' | 'confirm' | 'tag' | 'done'
 
 interface ChatPanelProps {
   user: LocalUser
-  onSubmitToDock: (text: string) => Promise<void>
+  onSubmitToDock: (text: string, tags: string[]) => Promise<void>
   onSwitchToClassic: () => void
 }
 
@@ -16,6 +18,8 @@ export default function ChatPanel({ user, onSubmitToDock, onSwitchToClassic }: C
   const [step, setStep] = useState<ChatStep>('input')
   const [inputText, setInputText] = useState('')
   const [supplementText, setSupplementText] = useState('')
+  const [tagInput, setTagInput] = useState('')
+  const [tags, setTags] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
 
   const handleInitialSubmit = () => {
@@ -24,14 +28,29 @@ export default function ChatPanel({ user, onSubmitToDock, onSwitchToClassic }: C
     setStep('confirm')
   }
 
-  const handleConfirm = async () => {
+  const handleConfirm = () => {
+    setStep('tag')
+  }
+
+  const handleAddTag = () => {
+    const normalized = normalizeTagName(tagInput)
+    if (!normalized) return
+    setTags(dedupeTagNames([...tags, normalized]))
+    setTagInput('')
+  }
+
+  const handleRemoveTag = (tag: string) => {
+    setTags(tags.filter((t) => t !== tag))
+  }
+
+  const handleSubmitToDock = async () => {
     const finalText = supplementText.trim()
       ? `${inputText.trim()}\n\n补充：${supplementText.trim()}`
       : inputText.trim()
 
     setSubmitting(true)
     try {
-      await onSubmitToDock(finalText)
+      await onSubmitToDock(finalText, tags)
       setStep('done')
     } catch {
       setSubmitting(false)
@@ -42,11 +61,9 @@ export default function ChatPanel({ user, onSubmitToDock, onSwitchToClassic }: C
     setStep('input')
     setInputText('')
     setSupplementText('')
+    setTagInput('')
+    setTags([])
     setSubmitting(false)
-  }
-
-  const handleGoToDock = () => {
-    onSwitchToClassic()
   }
 
   return (
@@ -102,7 +119,7 @@ export default function ChatPanel({ user, onSubmitToDock, onSwitchToClassic }: C
             <div className="text-center mb-6">
               <p className="text-sm text-gray-600">确认你的内容</p>
               <p className="text-xs text-gray-400 mt-1">
-                可以补充更多上下文，或直接确认入 Dock
+                可以补充更多上下文，或直接继续
               </p>
             </div>
             <div className="bg-gray-50 rounded-lg p-4 mb-4">
@@ -124,12 +141,69 @@ export default function ChatPanel({ user, onSubmitToDock, onSwitchToClassic }: C
                 </button>
                 <button
                   onClick={handleConfirm}
-                  disabled={submitting}
-                  className="flex-1 py-2.5 bg-blue-500 text-white text-sm font-medium rounded-lg hover:bg-blue-600 disabled:opacity-40 transition-colors"
+                  className="flex-1 py-2.5 bg-blue-500 text-white text-sm font-medium rounded-lg hover:bg-blue-600 transition-colors"
                 >
-                  {submitting ? '提交中…' : '确认入 Dock'}
+                  添加标签
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {step === 'tag' && (
+          <div className="w-full max-w-lg">
+            <div className="text-center mb-6">
+              <p className="text-sm text-gray-600">添加标签</p>
+              <p className="text-xs text-gray-400 mt-1">
+                为这条内容打上标签，方便后续整理和检索
+              </p>
+            </div>
+            {tags.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-4">
+                {tags.map((tag) => (
+                  <span key={tag} className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">
+                    {tag}
+                    <button
+                      onClick={() => handleRemoveTag(tag)}
+                      className="text-green-500 hover:text-green-700"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2 mb-6">
+              <input
+                type="text"
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddTag() } }}
+                placeholder="输入标签后回车添加…"
+                className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                onClick={handleAddTag}
+                disabled={!normalizeTagName(tagInput)}
+                className="px-4 py-2 text-sm bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 disabled:opacity-50 transition-colors"
+              >
+                添加
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setStep('confirm')}
+                className="flex-1 py-2.5 border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                返回
+              </button>
+              <button
+                onClick={handleSubmitToDock}
+                disabled={submitting}
+                className="flex-1 py-2.5 bg-blue-500 text-white text-sm font-medium rounded-lg hover:bg-blue-600 disabled:opacity-40 transition-colors"
+              >
+                {submitting ? '提交中…' : tags.length > 0 ? `确认入 Dock（${tags.length} 个标签）` : '确认入 Dock'}
+              </button>
             </div>
           </div>
         )}
@@ -144,6 +218,15 @@ export default function ChatPanel({ user, onSubmitToDock, onSwitchToClassic }: C
             <p className="text-sm text-gray-700 font-medium mb-1">
               已加入 Dock
             </p>
+            {tags.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 justify-center mb-2">
+                {tags.map((tag) => (
+                  <span key={tag} className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
             <p className="text-xs text-gray-400 mb-6">
               内容已写入待整理列表，可在 Classic 模式中查看和整理
             </p>
@@ -155,7 +238,7 @@ export default function ChatPanel({ user, onSubmitToDock, onSwitchToClassic }: C
                 继续记录
               </button>
               <button
-                onClick={handleGoToDock}
+                onClick={onSwitchToClassic}
                 className="flex-1 py-2.5 bg-blue-500 text-white text-sm font-medium rounded-lg hover:bg-blue-600 transition-colors"
               >
                 去 Dock 查看
