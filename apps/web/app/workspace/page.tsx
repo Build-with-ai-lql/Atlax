@@ -23,8 +23,10 @@ import {
   type StoredTag,
 } from '@/lib/repository'
 import type { EntryStatus } from '@/lib/types'
+import { recordEvent, type AppMode } from '@/lib/events'
 
 import AuthGate from './_components/AuthGate'
+import ChatPanel from './_components/ChatPanel'
 import type { ViewType } from './_components/Sidebar'
 import DetailPanel from './_components/DetailPanel'
 import ExpandedEditor from './_components/ExpandedEditor'
@@ -34,6 +36,7 @@ import Sidebar from './_components/Sidebar'
 export default function WorkspacePage() {
   const [user, setUser] = useState<LocalUser | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
+  const [mode, setMode] = useState<AppMode>('classic')
   const [activeView, setActiveView] = useState<ViewType>('dock')
   const [items, setItems] = useState<DockItem[]>([])
   const [archivedEntries, setArchivedEntries] = useState<StoredEntry[]>([])
@@ -110,6 +113,12 @@ export default function WorkspacePage() {
     setFilterTag(null)
     setFilterProject(null)
     setFilterStatus(null)
+  }
+
+  const handleModeChange = (newMode: AppMode) => {
+    if (newMode === mode) return
+    recordEvent({ type: 'mode_switched', from: mode, to: newMode })
+    setMode(newMode)
   }
 
   if (!authChecked) {
@@ -288,6 +297,8 @@ export default function WorkspacePage() {
         onViewChange={handleViewChange}
         dockCount={pendingCount}
         user={user}
+        mode={mode}
+        onModeChange={handleModeChange}
         onLogout={handleLogout}
       />
       <div className="flex-1 flex min-w-0">
@@ -302,45 +313,51 @@ export default function WorkspacePage() {
             </button>
           </div>
         )}
-        <MainPanel
-          activeView={activeView}
-          items={items}
-          archivedEntries={archivedEntries}
-          selectedItemId={selectedItemId}
-          selectedArchivedEntryId={selectedArchivedEntryId}
-          onSelectItem={handleSelectItem}
-          onSelectArchivedEntry={handleSelectArchivedEntry}
-          loading={loading}
-          error={error}
-          onRetry={loadItems}
-          onCapture={handleCapture}
-          onExpandEditor={() => setExpandedEditorOpen(true)}
-          filterType={filterType}
-          filterTag={filterTag}
-          filterProject={filterProject}
-          filterStatus={filterStatus}
-          onFilterType={setFilterType}
-          onFilterTag={setFilterTag}
-          onFilterProject={setFilterProject}
-          onFilterStatus={setFilterStatus}
-          reviewStats={reviewStats}
-          onGotoDock={handleGotoDock}
-        />
-        <DetailPanel
-          activeView={activeView}
-          item={selectedItem}
-          archivedEntry={selectedArchivedEntry}
-          existingTags={existingTags}
-          onSuggest={handleSuggest}
-          onArchive={handleArchive}
-          onIgnore={handleIgnore}
-          onRestore={handleRestore}
-          onReopen={handleReopen}
-          onAddTag={handleAddTag}
-          onRemoveTag={handleRemoveTag}
-          onUpdateEntry={handleUpdateEntry}
-          actionLoading={actionLoading}
-        />
+        {mode === 'chat' ? (
+          <ChatPanel user={user} />
+        ) : (
+          <>
+            <MainPanel
+              activeView={activeView}
+              items={items}
+              archivedEntries={archivedEntries}
+              selectedItemId={selectedItemId}
+              selectedArchivedEntryId={selectedArchivedEntryId}
+              onSelectItem={handleSelectItem}
+              onSelectArchivedEntry={handleSelectArchivedEntry}
+              loading={loading}
+              error={error}
+              onRetry={loadItems}
+              onCapture={handleCapture}
+              onExpandEditor={() => setExpandedEditorOpen(true)}
+              filterType={filterType}
+              filterTag={filterTag}
+              filterProject={filterProject}
+              filterStatus={filterStatus}
+              onFilterType={setFilterType}
+              onFilterTag={setFilterTag}
+              onFilterProject={setFilterProject}
+              onFilterStatus={setFilterStatus}
+              reviewStats={reviewStats}
+              onGotoDock={handleGotoDock}
+            />
+            <DetailPanel
+              activeView={activeView}
+              item={selectedItem}
+              archivedEntry={selectedArchivedEntry}
+              existingTags={existingTags}
+              onSuggest={handleSuggest}
+              onArchive={handleArchive}
+              onIgnore={handleIgnore}
+              onRestore={handleRestore}
+              onReopen={handleReopen}
+              onAddTag={handleAddTag}
+              onRemoveTag={handleRemoveTag}
+              onUpdateEntry={handleUpdateEntry}
+              actionLoading={actionLoading}
+            />
+          </>
+        )}
       </div>
       {expandedEditorOpen && (
         <ExpandedEditor

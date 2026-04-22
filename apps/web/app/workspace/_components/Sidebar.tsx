@@ -1,6 +1,9 @@
 'use client'
 
 import type { LocalUser } from '@/lib/auth'
+import type { AppMode } from '@/lib/events'
+
+import ModeSwitch from './ModeSwitch'
 
 export type ViewType = 'dock' | 'entries' | 'review'
 
@@ -9,6 +12,8 @@ interface SidebarProps {
   onViewChange: (view: ViewType) => void
   dockCount: number
   user: LocalUser | null
+  mode: AppMode
+  onModeChange: (mode: AppMode) => void
   onLogout: () => void
 }
 
@@ -18,11 +23,14 @@ const NAV_ITEMS: { key: ViewType; label: string; icon: string }[] = [
   { key: 'review', label: 'Review', icon: '📊' },
 ]
 
-export default function Sidebar({ activeView, onViewChange, dockCount, user, onLogout }: SidebarProps) {
+export default function Sidebar({ activeView, onViewChange, dockCount, user, mode, onModeChange, onLogout }: SidebarProps) {
   return (
     <aside className="w-56 flex-shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col">
       <div className="h-14 flex items-center px-5 border-b border-gray-200">
         <span className="text-lg font-bold tracking-tight text-gray-900">Atlax</span>
+      </div>
+      <div className="px-3 pt-3 pb-1">
+        <ModeSwitch mode={mode} onModeChange={onModeChange} />
       </div>
       <nav className="flex-1 p-3 space-y-1">
         {NAV_ITEMS.map((item) => (
