@@ -1,0 +1,213 @@
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { db } from '@/lib/db'
+import {
+  addTagToItem,
+  archiveItem,
+  createDockItem,
+  ignoreItem,
+  listArchivedEntries,
+  reopenItem,
+  restoreItem,
+  suggestItem,
+  updateArchivedEntry,
+} from '@/lib/repository'
+
+const USER_ID = 'user_archive_test'
+
+async function cleanAll() {
+  await db.table('dockItems').clear()
+  await db.table('entries').clear()
+  await db.table('tags').clear()
+}
+
+function unwrap<T>(value: T | null | undefined): T {
+  expect(value).not.toBeNull()
+  expect(value).not.toBeUndefined()
+  return value as T
+}
+
+describe('full state flow', () => {
+  afterEach(cleanAll)
+
+  it('pending -> suggested -> archived', async () => {
+    const id = await createDockItem(USER_ID, '明天下午3点产品评审会议')
+
+    const suggested = unwrap(await suggestItem(USER_ID, id))
+    expect(suggested.status).toBe('suggested')
+
+    const archived = unwrap(await archiveItem(USER_ID, id))
+    expect(archived.status).toBe('archived')
+
+    const entries = await listArchivedEntries(USER_ID)
+    expect(entries).toHaveLength(1)
+    expect(entries[0].sourceDockItemId).toBe(id)
+  })
+
+  it('pending -> suggested -> ignored -> pending', async () => {
+    const id = await createDockItem(USER_ID, '测试忽略恢复')
+
+    const suggested = unwrap(await suggestItem(USER_ID, id))
+    expect(suggested.status).toBe('suggested')
+
+    const ignored = unwrap(await ignoreItem(USER_ID, id))
+    expect(ignored.status).toBe('ignored')
+
+    const restored = unwrap(await restoreItem(USER_ID, id))
+    expect(restored.status).toBe('pending')
+    expect(restored.suggestions).toEqual([])
+  })
+
+  it('pending -> suggested -> archived -> reopened', async () => {
+    const id = await createDockItem(USER_ID, '测试重新整理')
+
+    await suggestItem(USER_ID, id)
+    await archiveItem(USER_ID, id)
+
+    const reopened = unwrap(await reopenItem(USER_ID, id))
+    expect(reopened.status).toBe('reopened')
+    expect(reopened.suggestions).toEqual([])
+  })
+})
+
+describe('reopen and re-archive', () => {
+  afterEach(cleanAll)
+
+  it('reopened item can be suggested and archived again', async () => {
+    const id = await createDockItem(USER_ID, '重新整理后再次归档')
+
+    await suggestItem(USER_ID, id)
+    await archiveItem(USER_ID, id)
+    await reopenItem(USER_ID, id)
+
+    const suggested2 = unwrap(await suggestItem(USER_ID, id))
+    expect(suggested2.status).toBe('suggested')
+    expect(suggested2.suggestions.length).toBeGreaterThan(0)
+
+    const archived2 = unwrap(await archiveItem(USER_ID, id))
+    expect(archived2.status).toBe('archived')
+
+    const entries = await listArchivedEntries(USER_ID)
+    expect(entries).toHaveLength(1)
+    expect(entries[0].sourceDockItemId).toBe(id)
+  })
+
+  it('reopened item can be ignored', async () => {
+    const id = await createDockItem(USER_ID, '重新整理后忽略')
+
+    await suggestItem(USER_ID, id)
+    await archiveItem(USER_ID, id)
+    await reopenItem(USER_ID, id)
+
+    const ignored = unwrap(await ignoreItem(USER_ID, id))
+    expect(ignored.status).toBe('ignored')
+  })
+
+  it('reopen clears suggestions for fresh start', async () => {
+    const id = await createDockItem(USER_ID, '重新整理清空建议')
+
+    const suggested = unwrap(await suggestItem(USER_ID, id))
+    expect(suggested.suggestions.length).toBeGreaterThan(0)
+
+    await archiveItem(USER_ID, id)
+    const reopened = unwrap(await reopenItem(USER_ID, id))
+    expect(reopened.suggestions).toEqual([])
+  })
+})
+
+describe('edit archived entry consistency', () => {
+  afterEach(cleanAll)
+
+  it('editing entry tags syncs to dockItem', async () => {
+    const id = await createDockItem(USER_ID, '编辑后同步标签')
+    await addTagToItem(USER_ID, id, '初始标签')
+    await suggestItem(USER_ID, id)
+    await archiveItem(USER_ID, id)
+
+    const entries = await listArchivedEntries(USER_ID)
+    const entry = unwrap(entries[0])
+
+    await updateArchivedEntry(USER_ID, entry.id, {
+      tags: ['新标签1', '新标签2'],
+    })
+
+    const updatedEntries = await listArchivedEntries(USER_ID)
+    expect(updatedEntries[0].tags).toEqual(['新标签1', '新标签2'])
+  })
+
+  it('editing entry content persists', async () => {
+    const id = await createDockItem(USER_ID, '编辑内容测试')
+    await suggestItem(USER_ID, id)
+    await archiveItem(USER_ID, id)
+
+    const entries = await listArchivedEntries(USER_ID)
+    const entry = unwrap(entries[0])
+
+    await updateArchivedEntry(USER_ID, entry.id, {
+      content: '更新后的内容',
+      title: '更新后的标题',
+    })
+
+    const updatedEntries = await listArchivedEntries(USER_ID)
+    expect(updatedEntries[0].content).toBe('更新后的内容')
+    expect(updatedEntries[0].title).toBe('更新后的标题')
+  })
+
+  it('editing entry project persists', async () => {
+    const id = await createDockItem(USER_ID, '编辑项目测试')
+    await suggestItem(USER_ID, id)
+    await archiveItem(USER_ID, id)
+
+    const entries = await listArchivedEntries(USER_ID)
+    const entry = unwrap(entries[0])
+
+    await updateArchivedEntry(USER_ID, entry.id, {
+      project: '新项目',
+    })
+
+    const updatedEntries = await listArchivedEntries(USER_ID)
+    expect(updatedEntries[0].project).toBe('新项目')
+  })
+})
+
+describe('chat and text source consistency in archive flow', () => {
+  afterEach(cleanAll)
+
+  it('chat item follows same archive flow as text', async () => {
+    const id = await createDockItem(USER_ID, 'Chat 来源归档测试', 'chat')
+
+    const suggested = unwrap(await suggestItem(USER_ID, id))
+    expect(suggested.status).toBe('suggested')
+
+    const archived = unwrap(await archiveItem(USER_ID, id))
+    expect(archived.status).toBe('archived')
+
+    const entries = await listArchivedEntries(USER_ID)
+    expect(entries).toHaveLength(1)
+  })
+
+  it('chat item can be reopened and re-archived', async () => {
+    const id = await createDockItem(USER_ID, 'Chat 重新整理测试', 'chat')
+
+    await suggestItem(USER_ID, id)
+    await archiveItem(USER_ID, id)
+    await reopenItem(USER_ID, id)
+
+    const suggested2 = unwrap(await suggestItem(USER_ID, id))
+    expect(suggested2.status).toBe('suggested')
+
+    const archived2 = unwrap(await archiveItem(USER_ID, id))
+    expect(archived2.status).toBe('archived')
+  })
+
+  it('chat item can be ignored and restored', async () => {
+    const id = await createDockItem(USER_ID, 'Chat 忽略恢复测试', 'chat')
+
+    await suggestItem(USER_ID, id)
+    const ignored = unwrap(await ignoreItem(USER_ID, id))
+    expect(ignored.status).toBe('ignored')
+
+    const restored = unwrap(await restoreItem(USER_ID, id))
+    expect(restored.status).toBe('pending')
+  })
+})

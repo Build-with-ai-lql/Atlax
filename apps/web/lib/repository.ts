@@ -280,6 +280,7 @@ export async function reopenItem(userId: string, id: number): Promise<PersistedD
 
   await dockItemsTable.update(id, {
     status: 'reopened',
+    suggestions: [],
     processedAt: null,
   })
 
@@ -377,6 +378,15 @@ export async function updateArchivedEntry(
 
   if (Object.keys(patch).length > 0) {
     await entriesTable.update(entryId, patch)
+  }
+
+  if (updates.tags !== undefined && entry.sourceDockItemId) {
+    const dockItem = await getPersistedDockItem(entry.sourceDockItemId)
+    if (dockItem && dockItem.userId === userId) {
+      await dockItemsTable.update(entry.sourceDockItemId, {
+        userTags: updates.tags,
+      })
+    }
   }
 
   return toPersistedEntry(await entriesTable.get(entryId))
