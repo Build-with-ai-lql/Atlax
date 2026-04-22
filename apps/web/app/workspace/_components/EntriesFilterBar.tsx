@@ -30,6 +30,7 @@ const STATUS_LABELS: Record<string, string> = {
   suggested: '已建议',
   archived: '已归档',
   ignored: '已忽略',
+  reopened: '重新整理',
 }
 
 export default function EntriesFilterBar({
