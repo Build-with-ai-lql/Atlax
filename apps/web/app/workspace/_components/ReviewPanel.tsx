@@ -13,10 +13,10 @@ interface ReviewPanelProps {
   }
   recentEntries: StoredEntry[]
   onSelectEntry: (id: number) => void
-  onGotoInbox: () => void
+  onGotoDock: () => void
 }
 
-export default function ReviewPanel({ stats, recentEntries, onSelectEntry, onGotoInbox }: ReviewPanelProps) {
+export default function ReviewPanel({ stats, recentEntries, onSelectEntry, onGotoDock }: ReviewPanelProps) {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <h2 className="text-lg font-semibold text-gray-900 mb-5">知识库概览</h2>
@@ -39,17 +39,17 @@ export default function ReviewPanel({ stats, recentEntries, onSelectEntry, onGot
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-semibold text-gray-700">最近归档</h3>
         <button
-          onClick={onGotoInbox}
+          onClick={onGotoDock}
           className="text-xs text-blue-500 hover:text-blue-700 font-medium"
         >
-          去 Inbox 整理 →
+          去 Dock 整理 →
         </button>
       </div>
 
       {recentEntries.length === 0 ? (
         <div className="text-center py-8 bg-gray-50 rounded-xl border border-gray-100">
           <p className="text-sm text-gray-400">还没有归档内容</p>
-          <p className="text-xs text-gray-300 mt-1">在 Inbox 中接受归档后，内容会出现在这里</p>
+          <p className="text-xs text-gray-300 mt-1">在 Dock 中接受归档后，内容会出现在这里</p>
         </div>
       ) : (
         <div className="space-y-2">

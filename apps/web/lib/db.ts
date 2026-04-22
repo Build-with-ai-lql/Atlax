@@ -2,7 +2,7 @@ import Dexie, { type EntityTable } from 'dexie'
 
 import type { EntryStatus, SourceType, SuggestionItem } from '@atlax/domain'
 
-export interface InboxEntryRecord {
+export interface DockItemRecord {
   id?: number
   userId: string
   rawText: string
@@ -14,7 +14,7 @@ export interface InboxEntryRecord {
   createdAt: Date
 }
 
-export interface PersistedInboxEntry extends InboxEntryRecord {
+export interface PersistedDockItem extends DockItemRecord {
   id: number
 }
 
@@ -32,7 +32,7 @@ export interface PersistedTag extends TagRecord {
 export interface EntryRecord {
   id?: number
   userId: string
-  sourceInboxEntryId: number
+  sourceDockItemId: number
   title: string
   content: string
   type: string
@@ -48,48 +48,48 @@ export interface PersistedEntry extends EntryRecord {
 }
 
 const db = new Dexie('AtlaxDB') as Dexie & {
-  inboxEntries: EntityTable<InboxEntryRecord, 'id'>
+  dockItems: EntityTable<DockItemRecord, 'id'>
   tags: EntityTable<TagRecord, 'id'>
   entries: EntityTable<EntryRecord, 'id'>
 }
 
 db.version(1).stores({
-  inboxEntries: '++id, rawText, sourceType, createdAt',
+  dockItems: '++id, rawText, sourceType, createdAt',
 })
 
 db.version(2).stores({
-  inboxEntries: '++id, rawText, sourceType, status, createdAt',
+  dockItems: '++id, rawText, sourceType, status, createdAt',
 }).upgrade((tx) => {
-  tx.table('inboxEntries').toCollection().modify((entry: Record<string, unknown>) => {
-    entry.status = entry.status ?? 'pending'
-    entry.suggestions = entry.suggestions ?? []
-    entry.processedAt = entry.processedAt ?? null
+  tx.table('dockItems').toCollection().modify((item: Record<string, unknown>) => {
+    item.status = item.status ?? 'pending'
+    item.suggestions = item.suggestions ?? []
+    item.processedAt = item.processedAt ?? null
   })
 })
 
 db.version(3).stores({
-  inboxEntries: '++id, rawText, sourceType, status, createdAt',
+  dockItems: '++id, rawText, sourceType, status, createdAt',
   tags: 'id, name',
 }).upgrade((tx) => {
-  tx.table('inboxEntries').toCollection().modify((entry: Record<string, unknown>) => {
-    entry.userTags = entry.userTags ?? []
+  tx.table('dockItems').toCollection().modify((item: Record<string, unknown>) => {
+    item.userTags = item.userTags ?? []
   })
 })
 
 db.version(4).stores({
-  inboxEntries: '++id, rawText, sourceType, status, createdAt',
+  dockItems: '++id, rawText, sourceType, status, createdAt',
   tags: 'id, name',
-  entries: '++id, sourceInboxEntryId, type, archivedAt',
+  entries: '++id, sourceDockItemId, type, archivedAt',
 })
 
 db.version(5).stores({
-  inboxEntries: '++id, userId, rawText, sourceType, status, createdAt',
+  dockItems: '++id, userId, rawText, sourceType, status, createdAt',
   tags: 'id, userId, name',
-  entries: '++id, userId, sourceInboxEntryId, type, archivedAt',
+  entries: '++id, userId, sourceDockItemId, type, archivedAt',
 }).upgrade((tx) => {
   const fallbackUserId = '_legacy'
-  tx.table('inboxEntries').toCollection().modify((entry: Record<string, unknown>) => {
-    entry.userId = entry.userId ?? fallbackUserId
+  tx.table('dockItems').toCollection().modify((item: Record<string, unknown>) => {
+    item.userId = item.userId ?? fallbackUserId
   })
   tx.table('tags').toCollection().modify((tag: Record<string, unknown>) => {
     tag.userId = tag.userId ?? fallbackUserId
@@ -100,9 +100,9 @@ db.version(5).stores({
 })
 
 db.version(6).stores({
-  inboxEntries: '++id, userId, rawText, sourceType, status, createdAt',
+  dockItems: '++id, userId, rawText, sourceType, status, createdAt',
   tags: 'id, userId, name, [userId+name]',
-  entries: '++id, userId, sourceInboxEntryId, type, archivedAt',
+  entries: '++id, userId, sourceDockItemId, type, archivedAt',
 }).upgrade((tx) => {
   const fallbackUserId = '_legacy'
   tx.table('tags').toCollection().modify((tag: Record<string, unknown>) => {
@@ -113,7 +113,13 @@ db.version(6).stores({
   })
 })
 
+db.version(7).stores({
+  dockItems: '++id, userId, rawText, sourceType, status, createdAt',
+  tags: 'id, userId, name, [userId+name]',
+  entries: '++id, userId, sourceDockItemId, type, archivedAt',
+})
+
 export { db }
-export const inboxEntries = db.table('inboxEntries')
+export const dockItemsTable = db.table('dockItems')
 export const tagsTable = db.table('tags')
 export const entriesTable = db.table('entries')

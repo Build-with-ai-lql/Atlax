@@ -49,7 +49,7 @@ export default function ExpandedEditor({ onSubmit, onClose }: ExpandedEditorProp
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="在这里写长笔记、长文章、结构化记录…&#10;&#10;按 Esc 关闭，完成后点击下方按钮保存到 Inbox"
+            placeholder={'在这里写长笔记、长文章、结构化记录…\n\n按 Esc 关闭，完成后点击下方按钮保存到 Dock'}
             className="w-full h-64 resize-y px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent placeholder:text-gray-400"
             autoFocus
           />
@@ -57,7 +57,7 @@ export default function ExpandedEditor({ onSubmit, onClose }: ExpandedEditorProp
 
         <div className="flex items-center justify-between px-5 py-3 border-t border-gray-200">
           <span className="text-xs text-gray-400">
-            {text.length > 0 ? `${text.length} 字` : '内容将保存到 Inbox'}
+            {text.length > 0 ? `${text.length} 字` : '内容将保存到 Dock'}
           </span>
           <div className="flex gap-2">
             <button
@@ -71,7 +71,7 @@ export default function ExpandedEditor({ onSubmit, onClose }: ExpandedEditorProp
               disabled={!text.trim() || submitting}
               className="px-5 py-2 text-sm font-medium bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              {submitting ? '保存中…' : '保存到 Inbox'}
+              {submitting ? '保存中…' : '保存到 Dock'}
             </button>
           </div>
         </div>

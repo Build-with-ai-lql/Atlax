@@ -11,17 +11,18 @@ export interface SuggestionItem {
   type: SuggestionType
   label: string
   confidence: number
+  reason?: string
 }
 
 export interface SuggestionResult {
-  entryId: number
+  dockItemId: number
   suggestions: SuggestionItem[]
   generatedAt: Date
   engineVersion: string
 }
 
 export interface ArchiveIntent {
-  entryId: number
+  dockItemId: number
   selectedSuggestions: SuggestionItem[]
   archivedAt: Date
 }
@@ -53,7 +54,7 @@ export interface ResolvedTags {
 
 export interface Entry {
   id: number
-  sourceInboxEntryId: number
+  sourceDockItemId: number
   title: string
   content: string
   type: EntryType
@@ -65,7 +66,7 @@ export interface Entry {
 }
 
 export interface ArchiveInput {
-  inboxEntryId: number
+  dockItemId: number
   rawText: string
   suggestions: SuggestionItem[]
   userTags: string[]

@@ -2,7 +2,7 @@
 
 import { groupSuggestionsByType } from '@atlax/domain'
 
-import type { InboxEntry } from '@/lib/repository'
+import type { DockItem } from '@/lib/repository'
 import type { EntryStatus } from '@/lib/types'
 
 const STATUS_CONFIG: Record<EntryStatus, { label: string; color: string; bg: string }> = {
@@ -30,8 +30,8 @@ function formatDate(date: Date): string {
   })
 }
 
-interface InboxEntryCardProps {
-  entry: InboxEntry
+interface DockItemCardProps {
+  item: DockItem
   onSuggest: (id: number) => Promise<void>
   onArchive: (id: number) => Promise<void>
   onIgnore: (id: number) => Promise<void>
@@ -39,30 +39,30 @@ interface InboxEntryCardProps {
   actionLoading: number | null
 }
 
-export default function InboxEntryCard({
-  entry,
+export default function DockItemCard({
+  item,
   onSuggest,
   onArchive,
   onIgnore,
   onRestore,
   actionLoading,
-}: InboxEntryCardProps) {
-  const isLoading = actionLoading === entry.id
-  const { category, tags, actions, projects } = groupSuggestionsByType(entry.suggestions)
-  const hasSuggestions = entry.suggestions.length > 0
+}: DockItemCardProps) {
+  const isLoading = actionLoading === item.id
+  const { category, tags, actions, projects } = groupSuggestionsByType(item.suggestions)
+  const hasSuggestions = item.suggestions.length > 0
 
   return (
     <div className="p-4 border rounded-lg">
       <div className="flex items-start justify-between gap-2">
-        <p className="text-gray-800 whitespace-pre-wrap flex-1">{entry.rawText}</p>
-        <StatusBadge status={entry.status} />
+        <p className="text-gray-800 whitespace-pre-wrap flex-1">{item.rawText}</p>
+        <StatusBadge status={item.status} />
       </div>
 
       <div className="mt-2 text-sm text-gray-500">
-        {formatDate(entry.createdAt)}
+        {formatDate(item.createdAt)}
       </div>
 
-      {entry.status === 'suggested' && (
+      {item.status === 'suggested' && (
         <div className="mt-3 p-3 bg-blue-50 rounded border border-blue-100">
           {!hasSuggestions ? (
             <p className="text-sm text-blue-600">暂无建议，请尝试刷新</p>
@@ -74,6 +74,9 @@ export default function InboxEntryCard({
                   <span className="px-2 py-0.5 bg-blue-600 text-white rounded text-sm font-medium">
                     {category.label}
                   </span>
+                  {category.reason && (
+                    <span className="text-xs text-gray-400">{category.reason}</span>
+                  )}
                 </div>
               )}
 
@@ -121,9 +124,9 @@ export default function InboxEntryCard({
       )}
 
       <div className="mt-3 flex gap-2">
-        {entry.status === 'pending' && (
+        {item.status === 'pending' && (
           <button
-            onClick={() => onSuggest(entry.id)}
+            onClick={() => onSuggest(item.id)}
             disabled={isLoading}
             className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
           >
@@ -131,17 +134,17 @@ export default function InboxEntryCard({
           </button>
         )}
 
-        {entry.status === 'suggested' && (
+        {item.status === 'suggested' && (
           <>
             <button
-              onClick={() => onArchive(entry.id)}
+              onClick={() => onArchive(item.id)}
               disabled={isLoading}
               className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50"
             >
               {isLoading ? '处理中...' : '接受归档'}
             </button>
             <button
-              onClick={() => onIgnore(entry.id)}
+              onClick={() => onIgnore(item.id)}
               disabled={isLoading}
               className="px-3 py-1 text-sm bg-gray-400 text-white rounded hover:bg-gray-500 disabled:opacity-50"
             >
@@ -150,9 +153,9 @@ export default function InboxEntryCard({
           </>
         )}
 
-        {entry.status === 'ignored' && (
+        {item.status === 'ignored' && (
           <button
-            onClick={() => onRestore(entry.id)}
+            onClick={() => onRestore(item.id)}
             disabled={isLoading}
             className="px-3 py-1 text-sm bg-yellow-500 text-white rounded hover:bg-yellow-600 disabled:opacity-50"
           >
@@ -160,7 +163,7 @@ export default function InboxEntryCard({
           </button>
         )}
 
-        {entry.status === 'archived' && (
+        {item.status === 'archived' && (
           <span className="text-sm text-green-600">已归档完成</span>
         )}
       </div>

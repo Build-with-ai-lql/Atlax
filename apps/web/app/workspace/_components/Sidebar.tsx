@@ -2,23 +2,23 @@
 
 import type { LocalUser } from '@/lib/auth'
 
-export type ViewType = 'inbox' | 'entries' | 'review'
+export type ViewType = 'dock' | 'entries' | 'review'
 
 interface SidebarProps {
   activeView: ViewType
   onViewChange: (view: ViewType) => void
-  inboxCount: number
+  dockCount: number
   user: LocalUser | null
   onLogout: () => void
 }
 
 const NAV_ITEMS: { key: ViewType; label: string; icon: string }[] = [
-  { key: 'inbox', label: 'Inbox', icon: '📥' },
+  { key: 'dock', label: 'Dock', icon: '📥' },
   { key: 'entries', label: 'Entries', icon: '📂' },
   { key: 'review', label: 'Review', icon: '📊' },
 ]
 
-export default function Sidebar({ activeView, onViewChange, inboxCount, user, onLogout }: SidebarProps) {
+export default function Sidebar({ activeView, onViewChange, dockCount, user, onLogout }: SidebarProps) {
   return (
     <aside className="w-56 flex-shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col">
       <div className="h-14 flex items-center px-5 border-b border-gray-200">
@@ -37,9 +37,9 @@ export default function Sidebar({ activeView, onViewChange, inboxCount, user, on
           >
             <span className="text-base">{item.icon}</span>
             <span>{item.label}</span>
-            {item.key === 'inbox' && inboxCount > 0 && (
+            {item.key === 'dock' && dockCount > 0 && (
               <span className="ml-auto bg-blue-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                {inboxCount}
+                {dockCount}
               </span>
             )}
           </button>

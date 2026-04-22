@@ -5,18 +5,18 @@ import { useEffect, useState, useCallback } from 'react'
 
 import { getCurrentUser } from '@/lib/auth'
 import {
-  archiveEntry,
-  listInboxEntries,
-  ignoreEntry,
-  restoreEntry,
-  suggestEntry,
-  type InboxEntry,
+  archiveItem,
+  listDockItems,
+  ignoreItem,
+  restoreItem,
+  suggestItem,
+  type DockItem,
 } from '@/lib/repository'
 
-import InboxEntryCard from './_components/InboxEntryCard'
+import DockItemCard from './_components/DockItemCard'
 
-export default function InboxPage() {
-  const [entries, setEntries] = useState<InboxEntry[]>([])
+export default function DockPage() {
+  const [items, setItems] = useState<DockItem[]>([])
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -26,12 +26,12 @@ export default function InboxPage() {
     return user?.id ?? ''
   }
 
-  const loadEntries = useCallback(async () => {
+  const loadItems = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const data = await listInboxEntries(getUserId())
-      setEntries(data)
+      const data = await listDockItems(getUserId())
+      setItems(data)
     } catch {
       setError('加载失败，请重试')
     } finally {
@@ -40,26 +40,26 @@ export default function InboxPage() {
   }, [])
 
   useEffect(() => {
-    loadEntries()
-  }, [loadEntries])
+    loadItems()
+  }, [loadItems])
 
   const refreshList = useCallback(async () => {
     try {
-      const updated = await listInboxEntries(getUserId())
-      setEntries(updated)
+      const updated = await listDockItems(getUserId())
+      setItems(updated)
     } catch {
       setError('刷新失败，请重试')
     }
   }, [])
 
-  const replaceEntry = useCallback((updatedEntry: InboxEntry) => {
-    setEntries((currentEntries) =>
-      currentEntries.map((entry) => (entry.id === updatedEntry.id ? updatedEntry : entry))
+  const replaceItem = useCallback((updatedItem: DockItem) => {
+    setItems((currentItems) =>
+      currentItems.map((item) => (item.id === updatedItem.id ? updatedItem : item))
     )
   }, [])
 
   const wrapAction = useCallback(
-    async (id: number, action: () => Promise<InboxEntry | null>, actionName: string) => {
+    async (id: number, action: () => Promise<DockItem | null>, actionName: string) => {
       if (actionLoading !== null) return
       setActionLoading(id)
       setError(null)
@@ -71,7 +71,7 @@ export default function InboxPage() {
           return
         }
 
-        replaceEntry(result)
+        replaceItem(result)
       } catch (error) {
         setError(`${actionName}失败：${error instanceof Error ? error.message : '未知错误'}`)
         await refreshList()
@@ -79,29 +79,29 @@ export default function InboxPage() {
         setActionLoading(null)
       }
     },
-    [actionLoading, replaceEntry, refreshList]
+    [actionLoading, replaceItem, refreshList]
   )
 
   const handleSuggest = async (id: number) => {
-    await wrapAction(id, () => suggestEntry(getUserId(), id), '生成建议')
+    await wrapAction(id, () => suggestItem(getUserId(), id), '生成建议')
   }
 
   const handleArchive = async (id: number) => {
-    await wrapAction(id, () => archiveEntry(getUserId(), id), '归档')
+    await wrapAction(id, () => archiveItem(getUserId(), id), '归档')
   }
 
   const handleIgnore = async (id: number) => {
-    await wrapAction(id, () => ignoreEntry(getUserId(), id), '忽略')
+    await wrapAction(id, () => ignoreItem(getUserId(), id), '忽略')
   }
 
   const handleRestore = async (id: number) => {
-    await wrapAction(id, () => restoreEntry(getUserId(), id), '恢复')
+    await wrapAction(id, () => restoreItem(getUserId(), id), '恢复')
   }
 
   return (
     <main className="flex min-h-screen flex-col p-8">
       <div className="max-w-2xl mx-auto">
-        <h1 className="text-3xl font-bold mb-6">Inbox</h1>
+        <h1 className="text-3xl font-bold mb-6">Dock</h1>
         <p className="text-gray-600 mb-8">待整理的内容</p>
 
         {error && (
@@ -112,7 +112,7 @@ export default function InboxPage() {
 
         {loading ? (
           <div className="text-center py-8 text-gray-500">加载中...</div>
-        ) : entries.length === 0 ? (
+        ) : items.length === 0 ? (
           <div className="text-center py-8">
             <p className="text-gray-500 mb-4">暂无待整理内容</p>
             <Link href="/capture" className="text-blue-500 hover:underline">
@@ -121,10 +121,10 @@ export default function InboxPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {entries.map((entry) => (
-              <InboxEntryCard
-                key={entry.id}
-                entry={entry}
+            {items.map((item) => (
+              <DockItemCard
+                key={item.id}
+                item={item}
                 onSuggest={handleSuggest}
                 onArchive={handleArchive}
                 onIgnore={handleIgnore}
@@ -140,7 +140,7 @@ export default function InboxPage() {
             继续记录 →
           </Link>
           <button
-            onClick={loadEntries}
+            onClick={loadItems}
             className="text-gray-500 hover:underline"
           >
             刷新列表

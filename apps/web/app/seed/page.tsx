@@ -6,7 +6,7 @@ import { getCurrentUser } from '@/lib/auth'
 import { db } from '@/lib/db'
 
 interface SeedResult {
-  inboxCreated: number
+  dockItemsCreated: number
   entriesCreated: number
   tagsCreated: number
 }
@@ -14,7 +14,7 @@ interface SeedResult {
 const SEED_ITEMS = [
   {
     rawText: '下周产品评审会议，需要准备 Q2 路线图和用户反馈数据',
-    inboxStatus: 'archived' as const,
+    dockStatus: 'archived' as const,
     entry: {
       title: '产品评审会议准备',
       content: '下周产品评审会议，需要准备 Q2 路线图和用户反馈数据\n\n需要整理的内容：\n- Q1 用户调研结果\n- 竞品分析更新\n- 技术债务清单',
@@ -23,7 +23,7 @@ const SEED_ITEMS = [
   },
   {
     rawText: '读到了一篇关于 RAG 架构优化的文章，核心观点是 chunk 策略比 embedding 模型更重要',
-    inboxStatus: 'archived' as const,
+    dockStatus: 'archived' as const,
     entry: {
       title: 'RAG 架构优化阅读笔记',
       content: '读到了一篇关于 RAG 架构优化的文章，核心观点是 chunk 策略比 embedding 模型更重要\n\n关键要点：\n1. 语义分块优于固定长度分块\n2. 重叠窗口可以减少信息丢失\n3. 元数据增强检索精度',
@@ -32,7 +32,7 @@ const SEED_ITEMS = [
   },
   {
     rawText: '灵感：假如把知识图谱和本地优先结合，用户可以拥有自己的语义网络',
-    inboxStatus: 'archived' as const,
+    dockStatus: 'archived' as const,
     entry: {
       title: '知识图谱 + 本地优先的灵感',
       content: '灵感：假如把知识图谱和本地优先结合，用户可以拥有自己的语义网络\n\n每个用户的笔记、想法、阅读记录都可以自动建立关联，形成个人知识图谱。不需要云端，所有数据在本地。',
@@ -40,32 +40,32 @@ const SEED_ITEMS = [
     },
   },
   {
-    rawText: '待办：修复 Inbox 页面刷新后的状态丢失问题',
-    inboxStatus: 'archived' as const,
+    rawText: '待办：修复 Dock 页面刷新后的状态丢失问题',
+    dockStatus: 'archived' as const,
     entry: {
-      title: '修复 Inbox 状态丢失问题',
-      content: '待办：修复 Inbox 页面刷新后的状态丢失问题\n\n问题：用户在 Inbox 中操作后刷新页面，条目状态会回退\n原因：可能是 useEffect 依赖不完整导致\n解决方案：确保 useCallback 包裹所有异步函数',
+      title: '修复 Dock 状态丢失问题',
+      content: '待办：修复 Dock 页面刷新后的状态丢失问题\n\n问题：用户在 Dock 中操作后刷新页面，条目状态会回退\n原因：可能是 useEffect 依赖不完整导致\n解决方案：确保 useCallback 包裹所有异步函数',
       type: 'task', tags: ['技术'], project: 'MindDock', actions: ['待办提取'],
     },
   },
   {
     rawText: '今天和团队讨论了技术选型，决定用 Dexie + Next.js 做本地优先方案',
-    inboxStatus: 'ignored' as const,
+    dockStatus: 'ignored' as const,
     entry: null,
   },
   {
     rawText: '读书笔记：《系统之美》第 3 章，关于反馈回路和延迟的概念',
-    inboxStatus: 'suggested' as const,
+    dockStatus: 'suggested' as const,
     entry: null,
   },
   {
     rawText: '产品需求：用户希望能在 Entries 中按状态筛选',
-    inboxStatus: 'pending' as const,
+    dockStatus: 'pending' as const,
     entry: null,
   },
   {
     rawText: '周末去爬山，回来整理一下照片和路线记录',
-    inboxStatus: 'pending' as const,
+    dockStatus: 'pending' as const,
     entry: null,
   },
 ]
@@ -92,28 +92,28 @@ export default function SeedPage() {
       const now = new Date()
       const total = SEED_ITEMS.length
 
-      let inboxCreated = 0
-      const inboxIds: number[] = []
+      let dockItemsCreated = 0
+      const dockItemIds: number[] = []
 
       for (let i = 0; i < total; i++) {
         const item = SEED_ITEMS[i]
-        const id = await db.table('inboxEntries').add({
+        const id = await db.table('dockItems').add({
           userId,
           rawText: item.rawText,
           sourceType: 'text',
-          status: item.inboxStatus,
-          suggestions: item.inboxStatus === 'suggested'
-            ? [{ id: `seed_${i}:category:reading`, type: 'category', label: 'reading', confidence: 0.8 },
-               { id: `seed_${i}:tag:learn`, type: 'tag', label: '学习', confidence: 0.7 }]
-            : item.inboxStatus === 'archived' && item.entry
-            ? [{ id: `seed_${i}:category:${item.entry.type}`, type: 'category', label: item.entry.type, confidence: 0.85 }]
+          status: item.dockStatus,
+          suggestions: item.dockStatus === 'suggested'
+            ? [{ id: `seed_${i}:category:reading`, type: 'category', label: 'reading', confidence: 0.8, reason: '包含阅读/摘录关键词' },
+               { id: `seed_${i}:tag:learn`, type: 'tag', label: '学习', confidence: 0.7, reason: '包含学习相关关键词' }]
+            : item.dockStatus === 'archived' && item.entry
+            ? [{ id: `seed_${i}:category:${item.entry.type}`, type: 'category', label: item.entry.type, confidence: 0.85, reason: '包含相关关键词' }]
             : [],
           userTags: [],
-          processedAt: item.inboxStatus !== 'pending' ? new Date(now.getTime() - i * 60000) : null,
+          processedAt: item.dockStatus !== 'pending' ? new Date(now.getTime() - i * 60000) : null,
           createdAt: new Date(now.getTime() - (total - i) * 3600000),
         }) as number
-        inboxIds.push(id)
-        inboxCreated++
+        dockItemIds.push(id)
+        dockItemsCreated++
       }
 
       let entriesCreated = 0
@@ -123,7 +123,7 @@ export default function SeedPage() {
 
         await db.table('entries').add({
           userId,
-          sourceInboxEntryId: inboxIds[i],
+          sourceDockItemId: dockItemIds[i],
           title: item.entry.title,
           content: item.entry.content,
           type: item.entry.type,
@@ -151,7 +151,7 @@ export default function SeedPage() {
         }
       }
 
-      setResult({ inboxCreated, entriesCreated, tagsCreated })
+      setResult({ dockItemsCreated, entriesCreated, tagsCreated })
     } catch (e) {
       setError(e instanceof Error ? e.message : '未知错误')
     } finally {
@@ -172,9 +172,9 @@ export default function SeedPage() {
     try {
       const userId = user.id
 
-      const inboxIds = await db.table('inboxEntries').where('userId').equals(userId).primaryKeys()
-      if (inboxIds.length > 0) {
-        await db.table('inboxEntries').bulkDelete(inboxIds)
+      const dockItemIds = await db.table('dockItems').where('userId').equals(userId).primaryKeys()
+      if (dockItemIds.length > 0) {
+        await db.table('dockItems').bulkDelete(dockItemIds)
       }
 
       const entryIds = await db.table('entries').where('userId').equals(userId).primaryKeys()
@@ -205,7 +205,7 @@ export default function SeedPage() {
           <h2 className="text-sm font-semibold text-gray-700 mb-3">将创建的数据</h2>
           <div className="space-y-2 text-sm text-gray-600">
             <div className="flex justify-between">
-              <span>Inbox 条目（覆盖 pending/suggested/archived/ignored）</span>
+              <span>Dock 条目（覆盖 pending/suggested/archived/ignored）</span>
               <span className="font-medium">{SEED_ITEMS.length} 条</span>
             </div>
             <div className="flex justify-between">
@@ -217,7 +217,7 @@ export default function SeedPage() {
               <span className="font-medium">{SEED_TAGS.length} 个</span>
             </div>
           </div>
-          <p className="text-xs text-gray-400 mt-3">{'归档条目与 Inbox 一一对应，点击"重新整理"可回到 Inbox'}</p>
+          <p className="text-xs text-gray-400 mt-3">{'归档条目与 Dock 一一对应，点击"重新整理"可回到 Dock'}</p>
         </div>
 
         <div className="flex gap-3">
@@ -241,7 +241,7 @@ export default function SeedPage() {
           <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
             <p className="text-sm text-green-700 font-medium">数据填充成功</p>
             <p className="text-xs text-green-600 mt-1">
-              创建了 {result.inboxCreated} 条 Inbox 条目、{result.entriesCreated} 条归档条目、{result.tagsCreated} 个标签
+              创建了 {result.dockItemsCreated} 条 Dock 条目、{result.entriesCreated} 条归档条目、{result.tagsCreated} 个标签
             </p>
           </div>
         )}

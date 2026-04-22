@@ -7,14 +7,15 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint app lib --ext .ts,.tsx",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@atlax/domain": "workspace:*",
+    "dexie": "^4.0.11",
     "next": "14.2.28",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "dexie": "^4.0.11"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/node": "^20.17.30",
@@ -23,8 +24,11 @@
     "autoprefixer": "^10.4.21",
     "eslint": "^8.57.1",
     "eslint-config-next": "14.2.28",
+    "fake-indexeddb": "^6.2.5",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vite-tsconfig-paths": "^6.1.1",
+    "vitest": "^3.1.2"
   }
 }

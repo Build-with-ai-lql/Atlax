@@ -35,7 +35,7 @@ export function buildEntryFromArchive(input: ArchiveInput, assignedId: number): 
 
   return {
     id: assignedId,
-    sourceInboxEntryId: input.inboxEntryId,
+    sourceDockItemId: input.dockItemId,
     title: extractTitle(input.rawText),
     content: input.rawText,
     type: resolveCategory(input.suggestions),

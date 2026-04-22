@@ -12,29 +12,29 @@ import {
 
 import {
   entriesTable,
-  inboxEntries,
+  dockItemsTable,
   tagsTable,
   type EntryRecord,
-  type InboxEntryRecord,
+  type DockItemRecord,
   type PersistedEntry,
-  type PersistedInboxEntry,
+  type PersistedDockItem,
   type PersistedTag,
   type TagRecord,
 } from './db'
 
-export type { PersistedInboxEntry as InboxEntry }
+export type { PersistedDockItem as DockItem }
 export type { PersistedEntry as StoredEntry }
 export type { PersistedTag as StoredTag }
 
-function toPersistedInboxEntry(entry: InboxEntryRecord | undefined): PersistedInboxEntry | null {
-  if (!entry || typeof entry.id !== 'number') {
+function toPersistedDockItem(item: DockItemRecord | undefined): PersistedDockItem | null {
+  if (!item || typeof item.id !== 'number') {
     return null
   }
 
   return {
-    ...entry,
-    id: entry.id,
-    userTags: entry.userTags ?? [],
+    ...item,
+    id: item.id,
+    userTags: item.userTags ?? [],
   }
 }
 
@@ -60,20 +60,20 @@ function toPersistedEntry(entry: EntryRecord | undefined): PersistedEntry | null
   }
 }
 
-async function getPersistedInboxEntry(id: number): Promise<PersistedInboxEntry | null> {
-  const entry = await inboxEntries.get(id)
-  return toPersistedInboxEntry(entry)
+async function getPersistedDockItem(id: number): Promise<PersistedDockItem | null> {
+  const item = await dockItemsTable.get(id)
+  return toPersistedDockItem(item)
 }
 
-async function getInboxEntryForUser(userId: string, id: number): Promise<PersistedInboxEntry | null> {
-  const entry = await getPersistedInboxEntry(id)
-  if (!entry) return null
-  if (entry.userId !== userId) return null
-  return entry
+async function getDockItemForUser(userId: string, id: number): Promise<PersistedDockItem | null> {
+  const item = await getPersistedDockItem(id)
+  if (!item) return null
+  if (item.userId !== userId) return null
+  return item
 }
 
-export async function createInboxEntry(userId: string, rawText: string, sourceType: SourceType = 'text'): Promise<number> {
-  const id = await inboxEntries.add({
+export async function createDockItem(userId: string, rawText: string, sourceType: SourceType = 'text'): Promise<number> {
+  const id = await dockItemsTable.add({
     userId,
     rawText,
     sourceType,
@@ -86,27 +86,27 @@ export async function createInboxEntry(userId: string, rawText: string, sourceTy
   return id as number
 }
 
-export async function listInboxEntries(userId: string): Promise<PersistedInboxEntry[]> {
-  const entries = await inboxEntries.where('userId').equals(userId).reverse().sortBy('createdAt')
+export async function listDockItems(userId: string): Promise<PersistedDockItem[]> {
+  const items = await dockItemsTable.where('userId').equals(userId).reverse().sortBy('createdAt')
 
-  return entries.flatMap((entry) => {
-    const persistedEntry = toPersistedInboxEntry(entry)
-    return persistedEntry ? [persistedEntry] : []
+  return items.flatMap((item) => {
+    const persistedItem = toPersistedDockItem(item)
+    return persistedItem ? [persistedItem] : []
   })
 }
 
-export async function listEntriesByStatus(userId: string, status: EntryStatus): Promise<PersistedInboxEntry[]> {
-  const all = await inboxEntries.where('userId').equals(userId).toArray()
-  const filtered = all.filter((e) => e.status === status)
+export async function listItemsByStatus(userId: string, status: EntryStatus): Promise<PersistedDockItem[]> {
+  const all = await dockItemsTable.where('userId').equals(userId).toArray()
+  const filtered = all.filter((i) => i.status === status)
 
-  return filtered.flatMap((entry) => {
-    const persistedEntry = toPersistedInboxEntry(entry)
-    return persistedEntry ? [persistedEntry] : []
+  return filtered.flatMap((item) => {
+    const persistedItem = toPersistedDockItem(item)
+    return persistedItem ? [persistedItem] : []
   })
 }
 
-export async function countInboxEntries(userId: string): Promise<number> {
-  return inboxEntries.where('userId').equals(userId).count()
+export async function countDockItems(userId: string): Promise<number> {
+  return dockItemsTable.where('userId').equals(userId).count()
 }
 
 export async function listArchivedEntries(userId: string): Promise<PersistedEntry[]> {
@@ -153,59 +153,59 @@ export async function getWorkspaceStats(userId: string): Promise<{
   ignoredCount: number
   tagCount: number
 }> {
-  const [allInbox, allEntries, allTags] = await Promise.all([
-    inboxEntries.where('userId').equals(userId).toArray(),
+  const [allDockItems, allEntries, allTags] = await Promise.all([
+    dockItemsTable.where('userId').equals(userId).toArray(),
     entriesTable.where('userId').equals(userId).count(),
     tagsTable.where('userId').equals(userId).count(),
   ])
 
   return {
     totalEntries: allEntries,
-    pendingCount: allInbox.filter((e) => e.status === 'pending').length,
-    suggestedCount: allInbox.filter((e) => e.status === 'suggested').length,
-    archivedCount: allInbox.filter((e) => e.status === 'archived').length,
-    ignoredCount: allInbox.filter((e) => e.status === 'ignored').length,
+    pendingCount: allDockItems.filter((i) => i.status === 'pending').length,
+    suggestedCount: allDockItems.filter((i) => i.status === 'suggested').length,
+    archivedCount: allDockItems.filter((i) => i.status === 'archived').length,
+    ignoredCount: allDockItems.filter((i) => i.status === 'ignored').length,
     tagCount: allTags,
   }
 }
 
-export async function getEntryByInboxId(userId: string, inboxEntryId: number): Promise<PersistedEntry | null> {
-  const entry = await entriesTable.where('userId').equals(userId).and((e) => e.sourceInboxEntryId === inboxEntryId).first()
+export async function getEntryByDockItemId(userId: string, dockItemId: number): Promise<PersistedEntry | null> {
+  const entry = await entriesTable.where('userId').equals(userId).and((e) => e.sourceDockItemId === dockItemId).first()
   return toPersistedEntry(entry)
 }
 
-export async function suggestEntry(userId: string, id: number): Promise<PersistedInboxEntry | null> {
-  const entry = await getInboxEntryForUser(userId, id)
-  if (!entry) return null
-  if (!canTransition(entry.status, 'suggested')) return null
+export async function suggestItem(userId: string, id: number): Promise<PersistedDockItem | null> {
+  const item = await getDockItemForUser(userId, id)
+  if (!item) return null
+  if (!canTransition(item.status, 'suggested')) return null
 
-  const result = generateSuggestions(entry)
-  await inboxEntries.update(id, {
+  const result = generateSuggestions(item)
+  await dockItemsTable.update(id, {
     status: 'suggested',
     suggestions: result.suggestions,
     processedAt: new Date(),
   })
 
-  return getPersistedInboxEntry(id)
+  return getPersistedDockItem(id)
 }
 
-export async function archiveEntry(userId: string, id: number): Promise<PersistedInboxEntry | null> {
-  const entry = await getInboxEntryForUser(userId, id)
-  if (!entry) return null
-  if (!canTransition(entry.status, 'archived')) return null
+export async function archiveItem(userId: string, id: number): Promise<PersistedDockItem | null> {
+  const item = await getDockItemForUser(userId, id)
+  if (!item) return null
+  if (!canTransition(item.status, 'archived')) return null
 
   const built = buildEntryFromArchive(
     {
-      inboxEntryId: id,
-      rawText: entry.rawText,
-      suggestions: entry.suggestions,
-      userTags: entry.userTags,
-      createdAt: entry.createdAt,
+      dockItemId: id,
+      rawText: item.rawText,
+      suggestions: item.suggestions,
+      userTags: item.userTags,
+      createdAt: item.createdAt,
     },
     0,
   )
 
-  const existing = await getEntryByInboxId(userId, id)
+  const existing = await getEntryByDockItemId(userId, id)
   if (existing) {
     await entriesTable.update(existing.id, {
       title: built.title,
@@ -216,16 +216,16 @@ export async function archiveEntry(userId: string, id: number): Promise<Persiste
       actions: built.actions,
       archivedAt: built.archivedAt,
     })
-    await inboxEntries.update(id, {
+    await dockItemsTable.update(id, {
       status: 'archived',
       processedAt: new Date(),
     })
-    return getPersistedInboxEntry(id)
+    return getPersistedDockItem(id)
   }
 
   await entriesTable.add({
     userId,
-    sourceInboxEntryId: id,
+    sourceDockItemId: id,
     title: built.title,
     content: built.content,
     type: built.type,
@@ -236,83 +236,83 @@ export async function archiveEntry(userId: string, id: number): Promise<Persiste
     archivedAt: built.archivedAt,
   })
 
-  await inboxEntries.update(id, {
+  await dockItemsTable.update(id, {
     status: 'archived',
     processedAt: new Date(),
   })
 
-  return getPersistedInboxEntry(id)
+  return getPersistedDockItem(id)
 }
 
-export async function ignoreEntry(userId: string, id: number): Promise<PersistedInboxEntry | null> {
-  const entry = await getInboxEntryForUser(userId, id)
-  if (!entry) return null
-  if (!canTransition(entry.status, 'ignored')) return null
+export async function ignoreItem(userId: string, id: number): Promise<PersistedDockItem | null> {
+  const item = await getDockItemForUser(userId, id)
+  if (!item) return null
+  if (!canTransition(item.status, 'ignored')) return null
 
-  await inboxEntries.update(id, {
+  await dockItemsTable.update(id, {
     status: 'ignored',
     processedAt: new Date(),
   })
 
-  return getPersistedInboxEntry(id)
+  return getPersistedDockItem(id)
 }
 
-export async function restoreEntry(userId: string, id: number): Promise<PersistedInboxEntry | null> {
-  const entry = await getInboxEntryForUser(userId, id)
-  if (!entry) return null
-  if (!canTransition(entry.status, 'pending')) return null
+export async function restoreItem(userId: string, id: number): Promise<PersistedDockItem | null> {
+  const item = await getDockItemForUser(userId, id)
+  if (!item) return null
+  if (!canTransition(item.status, 'pending')) return null
 
-  await inboxEntries.update(id, {
+  await dockItemsTable.update(id, {
     status: 'pending',
     suggestions: [],
     processedAt: null,
   })
 
-  return getPersistedInboxEntry(id)
+  return getPersistedDockItem(id)
 }
 
-export async function reopenEntry(userId: string, id: number): Promise<PersistedInboxEntry | null> {
-  const entry = await getInboxEntryForUser(userId, id)
-  if (!entry) return null
-  if (!canTransition(entry.status, 'pending')) return null
+export async function reopenItem(userId: string, id: number): Promise<PersistedDockItem | null> {
+  const item = await getDockItemForUser(userId, id)
+  if (!item) return null
+  if (!canTransition(item.status, 'pending')) return null
 
-  await inboxEntries.update(id, {
+  await dockItemsTable.update(id, {
     status: 'pending',
     processedAt: null,
   })
 
-  return getPersistedInboxEntry(id)
+  return getPersistedDockItem(id)
 }
 
-export async function updateEntryTags(userId: string, id: number, userTags: string[]): Promise<PersistedInboxEntry | null> {
-  const entry = await getInboxEntryForUser(userId, id)
-  if (!entry) return null
+export async function updateItemTags(userId: string, id: number, userTags: string[]): Promise<PersistedDockItem | null> {
+  const item = await getDockItemForUser(userId, id)
+  if (!item) return null
 
-  await inboxEntries.update(id, {
+  await dockItemsTable.update(id, {
     userTags,
   })
 
-  return getPersistedInboxEntry(id)
+  return getPersistedDockItem(id)
 }
 
-export async function addTagToEntry(userId: string, id: number, tagName: string): Promise<PersistedInboxEntry | null> {
-  const entry = await getInboxEntryForUser(userId, id)
-  if (!entry) return null
+export async function addTagToItem(userId: string, id: number, tagName: string): Promise<PersistedDockItem | null> {
+  const item = await getDockItemForUser(userId, id)
+  if (!item) return null
 
   const normalized = normalizeTagName(tagName)
-  if (!normalized) return entry
+  if (!normalized) return item
 
-  const newTags = dedupeTagNames([...entry.userTags, normalized])
-  return updateEntryTags(userId, id, newTags)
+  const newTags = dedupeTagNames([...item.userTags, normalized])
+  return updateItemTags(userId, id, newTags)
 }
 
-export async function removeTagFromEntry(userId: string, id: number, tagName: string): Promise<PersistedInboxEntry | null> {
-  const entry = await getInboxEntryForUser(userId, id)
-  if (!entry) return null
+export async function removeTagFromItem(userId: string, id: number, tagName: string): Promise<PersistedDockItem | null> {
+  const item = await getDockItemForUser(userId, id)
+  if (!item) return null
 
   const normalized = normalizeTagName(tagName)
-  const newTags = entry.userTags.filter((t) => normalizeTagName(t).toLowerCase() !== normalized.toLowerCase())
-  return updateEntryTags(userId, id, newTags)
+  const newTags = item.userTags.filter((t) => normalizeTagName(t).toLowerCase() !== normalized.toLowerCase())
+  return updateItemTags(userId, id, newTags)
 }
 
 export async function listTags(userId: string): Promise<PersistedTag[]> {
@@ -357,4 +357,25 @@ export async function getOrCreateTag(userId: string, name: string): Promise<Pers
   if (existing) return existing
 
   return createStoredTag(userId, name)
+}
+
+export async function updateArchivedEntry(
+  userId: string,
+  entryId: number,
+  updates: { tags?: string[]; project?: string | null; content?: string; title?: string },
+): Promise<PersistedEntry | null> {
+  const entry = await entriesTable.get(entryId)
+  if (!entry || entry.userId !== userId) return null
+
+  const patch: Partial<EntryRecord> = {}
+  if (updates.tags !== undefined) patch.tags = updates.tags
+  if (updates.project !== undefined) patch.project = updates.project
+  if (updates.content !== undefined) patch.content = updates.content
+  if (updates.title !== undefined) patch.title = updates.title
+
+  if (Object.keys(patch).length > 0) {
+    await entriesTable.update(entryId, patch)
+  }
+
+  return toPersistedEntry(await entriesTable.get(entryId))
 }

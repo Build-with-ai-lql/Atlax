@@ -12,8 +12,9 @@
     "build:web": "pnpm --dir apps/web build",
     "lint": "eslint apps/web packages/domain --ext .ts,.tsx",
     "typecheck": "pnpm --filter @atlax/domain typecheck && pnpm --dir apps/web typecheck",
-    "test": "pnpm --filter @atlax/domain test",
-    "validate": "pnpm lint && pnpm typecheck && pnpm test"
+    "test": "pnpm --filter @atlax/domain test && pnpm --dir apps/web test",
+    "check:terminology": "node scripts/check-terminology.mjs",
+    "validate": "pnpm lint && pnpm typecheck && pnpm test && pnpm check:terminology"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.31.1",

@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useState } from 'react'
 
 import { getCurrentUser } from '@/lib/auth'
-import { createInboxEntry } from '@/lib/repository'
+import { createDockItem } from '@/lib/repository'
 
 export default function CapturePage() {
   const [text, setText] = useState('')
@@ -20,7 +20,7 @@ export default function CapturePage() {
 
     setSaving(true)
     try {
-      await createInboxEntry(user.id, text.trim())
+      await createDockItem(user.id, text.trim())
       setText('')
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
@@ -50,12 +50,12 @@ export default function CapturePage() {
           >
             {saving ? '保存中...' : '保存'}
           </button>
-          {saved && <span className="text-green-600">已保存到 Inbox</span>}
+          {saved && <span className="text-green-600">已保存到 Dock</span>}
         </div>
       </form>
 
-      <Link href="/inbox" className="mt-8 text-blue-500 hover:underline">
-        查看 Inbox →
+      <Link href="/workspace" className="mt-8 text-blue-500 hover:underline">
+        查看 Dock →
       </Link>
     </main>
   )

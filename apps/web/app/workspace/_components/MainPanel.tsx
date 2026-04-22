@@ -1,23 +1,23 @@
 'use client'
 
-import type { InboxEntry, StoredEntry } from '@/lib/repository'
+import type { DockItem, StoredEntry } from '@/lib/repository'
 import type { EntryStatus } from '@/lib/types'
 
 import type { ViewType } from './Sidebar'
 import EntriesFilterBar from './EntriesFilterBar'
 import EntryListItem from './EntryListItem'
 import EmptyState from './EmptyState'
-import InboxListItem from './InboxListItem'
+import DockListItem from './DockListItem'
 import QuickInputBar from './QuickInputBar'
 import ReviewPanel from './ReviewPanel'
 
 interface MainPanelProps {
   activeView: ViewType
-  entries: InboxEntry[]
+  items: DockItem[]
   archivedEntries: StoredEntry[]
-  selectedEntryId: number | null
+  selectedItemId: number | null
   selectedArchivedEntryId: number | null
-  onSelectEntry: (id: number) => void
+  onSelectItem: (id: number) => void
   onSelectArchivedEntry: (id: number) => void
   loading: boolean
   error: string | null
@@ -40,22 +40,22 @@ interface MainPanelProps {
     ignoredCount: number
     tagCount: number
   }
-  onGotoInbox: () => void
+  onGotoDock: () => void
 }
 
 const VIEW_TITLES: Record<ViewType, string> = {
-  inbox: 'Inbox',
+  dock: 'Dock',
   entries: 'Entries',
   review: 'Review',
 }
 
 export default function MainPanel({
   activeView,
-  entries,
+  items,
   archivedEntries,
-  selectedEntryId,
+  selectedItemId,
   selectedArchivedEntryId,
-  onSelectEntry,
+  onSelectItem,
   onSelectArchivedEntry,
   loading,
   error,
@@ -71,19 +71,19 @@ export default function MainPanel({
   onFilterProject,
   onFilterStatus,
   reviewStats,
-  onGotoInbox,
+  onGotoDock,
 }: MainPanelProps) {
   const availableTypes = Array.from(new Set(archivedEntries.map((e) => e.type)))
   const availableTags = Array.from(new Set(archivedEntries.flatMap((e) => e.tags)))
   const availableProjects = Array.from(new Set(archivedEntries.map((e) => e.project).filter(Boolean))) as string[]
 
-  const inboxStatusMap = new Map<number, EntryStatus>()
-  for (const ie of entries) {
-    inboxStatusMap.set(ie.id, ie.status)
+  const dockStatusMap = new Map<number, EntryStatus>()
+  for (const item of items) {
+    dockStatusMap.set(item.id, item.status)
   }
 
   const getEntryStatus = (entry: StoredEntry): EntryStatus => {
-    return inboxStatusMap.get(entry.sourceInboxEntryId) ?? 'archived'
+    return dockStatusMap.get(entry.sourceDockItemId) ?? 'archived'
   }
 
   const availableStatuses = Array.from(new Set(archivedEntries.map(getEntryStatus)))
@@ -134,7 +134,7 @@ export default function MainPanel({
             <EmptyState
               title="Entries"
               description={archivedEntries.length === 0 ? "归档后的内容会出现在这里" : "没有符合筛选条件的内容"}
-              hint={archivedEntries.length === 0 ? "在 Inbox 中接受归档后，内容将自动出现在此列表" : "尝试调整筛选条件"}
+              hint={archivedEntries.length === 0 ? "在 Dock 中接受归档后，内容将自动出现在此列表" : "尝试调整筛选条件"}
             />
           ) : (
             <div className="p-2 space-y-0.5">
@@ -165,7 +165,7 @@ export default function MainPanel({
           stats={reviewStats}
           recentEntries={archivedEntries.slice(0, 5)}
           onSelectEntry={onSelectArchivedEntry}
-          onGotoInbox={onGotoInbox}
+          onGotoDock={onGotoDock}
         />
       </div>
     )
@@ -175,13 +175,13 @@ export default function MainPanel({
     <div className="w-[360px] flex-shrink-0 border-r border-gray-200 flex flex-col">
       <div className="h-14 flex items-center px-5 border-b border-gray-200">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
-          {VIEW_TITLES.inbox}
+          {VIEW_TITLES.dock}
         </h2>
       </div>
       <div className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="p-8 text-center text-gray-400 text-sm">加载中…</div>
-        ) : error && entries.length === 0 ? (
+        ) : error && items.length === 0 ? (
           <div className="p-8 text-center">
             <p className="text-red-500 text-sm mb-3">{error}</p>
             <button
@@ -191,19 +191,19 @@ export default function MainPanel({
               重试
             </button>
           </div>
-        ) : entries.length === 0 ? (
+        ) : items.length === 0 ? (
           <div className="p-8 text-center">
-            <p className="text-gray-400 text-sm">Inbox 为空</p>
+            <p className="text-gray-400 text-sm">Dock 为空</p>
             <p className="text-gray-300 text-xs mt-1">在下方输入框快速记录，或点击展开按钮写长内容</p>
           </div>
         ) : (
           <div className="p-2 space-y-0.5">
-            {entries.map((entry) => (
-              <InboxListItem
-                key={entry.id}
-                entry={entry}
-                isSelected={selectedEntryId === entry.id}
-                onSelect={onSelectEntry}
+            {items.map((item) => (
+              <DockListItem
+                key={item.id}
+                item={item}
+                isSelected={selectedItemId === item.id}
+                onSelect={onSelectItem}
               />
             ))}
           </div>

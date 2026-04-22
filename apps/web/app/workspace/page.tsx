@@ -4,20 +4,21 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { getCurrentUser, logoutUser, type LocalUser } from '@/lib/auth'
 import {
-  addTagToEntry,
-  archiveEntry,
-  createInboxEntry,
+  addTagToItem,
+  archiveItem,
+  createDockItem,
   createStoredTag,
   getWorkspaceStats,
-  ignoreEntry,
+  ignoreItem,
   listArchivedEntries,
-  listInboxEntries,
+  listDockItems,
   listTags,
-  removeTagFromEntry,
-  reopenEntry,
-  restoreEntry,
-  suggestEntry,
-  type InboxEntry,
+  removeTagFromItem,
+  reopenItem,
+  restoreItem,
+  suggestItem,
+  updateArchivedEntry,
+  type DockItem,
   type StoredEntry,
   type StoredTag,
 } from '@/lib/repository'
@@ -33,11 +34,11 @@ import Sidebar from './_components/Sidebar'
 export default function WorkspacePage() {
   const [user, setUser] = useState<LocalUser | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
-  const [activeView, setActiveView] = useState<ViewType>('inbox')
-  const [entries, setEntries] = useState<InboxEntry[]>([])
+  const [activeView, setActiveView] = useState<ViewType>('dock')
+  const [items, setItems] = useState<DockItem[]>([])
   const [archivedEntries, setArchivedEntries] = useState<StoredEntry[]>([])
   const [existingTags, setExistingTags] = useState<StoredTag[]>([])
-  const [selectedEntryId, setSelectedEntryId] = useState<number | null>(null)
+  const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
   const [selectedArchivedEntryId, setSelectedArchivedEntryId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
@@ -64,18 +65,18 @@ export default function WorkspacePage() {
 
   const userId = user?.id ?? ''
 
-  const loadEntries = useCallback(async () => {
+  const loadItems = useCallback(async () => {
     if (!userId) return
     setLoading(true)
     setError(null)
     try {
       const [data, archived, tags, stats] = await Promise.all([
-        listInboxEntries(userId),
+        listDockItems(userId),
         listArchivedEntries(userId),
         listTags(userId),
         getWorkspaceStats(userId),
       ])
-      setEntries(data)
+      setItems(data)
       setArchivedEntries(archived)
       setExistingTags(tags)
       setReviewStats(stats)
@@ -88,9 +89,9 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     if (user) {
-      loadEntries()
+      loadItems()
     }
-  }, [user, loadEntries])
+  }, [user, loadItems])
 
   const handleAuthenticated = () => {
     setUser(getCurrentUser())
@@ -99,10 +100,10 @@ export default function WorkspacePage() {
   const handleLogout = () => {
     logoutUser()
     setUser(null)
-    setEntries([])
+    setItems([])
     setArchivedEntries([])
     setExistingTags([])
-    setSelectedEntryId(null)
+    setSelectedItemId(null)
     setSelectedArchivedEntryId(null)
     setFilterType(null)
     setFilterTag(null)
@@ -122,27 +123,27 @@ export default function WorkspacePage() {
     return <AuthGate onAuthenticated={handleAuthenticated} />
   }
 
-  const selectedEntry = activeView === 'inbox'
-    ? entries.find((e) => e.id === selectedEntryId) ?? null
+  const selectedItem = activeView === 'dock'
+    ? items.find((i) => i.id === selectedItemId) ?? null
     : null
 
   const selectedArchivedEntry = activeView === 'entries'
     ? archivedEntries.find((e) => e.id === selectedArchivedEntryId) ?? null
     : null
 
-  const pendingCount = entries.filter(
-    (e) => e.status === 'pending' || e.status === 'suggested'
+  const pendingCount = items.filter(
+    (i) => i.status === 'pending' || i.status === 'suggested'
   ).length
 
-  const refreshList = async (): Promise<InboxEntry[]> => {
+  const refreshList = async (): Promise<DockItem[]> => {
     try {
       const [data, archived, tags, stats] = await Promise.all([
-        listInboxEntries(userId),
+        listDockItems(userId),
         listArchivedEntries(userId),
         listTags(userId),
         getWorkspaceStats(userId),
       ])
-      setEntries(data)
+      setItems(data)
       setArchivedEntries(archived)
       setExistingTags(tags)
       setReviewStats(stats)
@@ -156,19 +157,19 @@ export default function WorkspacePage() {
 
   const handleCapture = async (text: string) => {
     try {
-      await createInboxEntry(userId, text)
+      await createDockItem(userId, text)
       const updated = await refreshList()
-      setActiveView('inbox')
+      setActiveView('dock')
       if (updated.length > 0 && updated[0]) {
-        setSelectedEntryId(updated[0].id)
+        setSelectedItemId(updated[0].id)
       }
     } catch {
       setError('保存失败，请重试')
     }
   }
 
-  const handleSelectEntry = (id: number) => {
-    setSelectedEntryId((prev) => (prev === id ? null : id))
+  const handleSelectItem = (id: number) => {
+    setSelectedItemId((prev) => (prev === id ? null : id))
   }
 
   const handleSelectArchivedEntry = (id: number) => {
@@ -180,21 +181,21 @@ export default function WorkspacePage() {
 
   const handleViewChange = (view: ViewType) => {
     setActiveView(view)
-    if (view !== 'inbox') {
-      setSelectedEntryId(null)
+    if (view !== 'dock') {
+      setSelectedItemId(null)
     }
     if (view !== 'entries') {
       setSelectedArchivedEntryId(null)
     }
   }
 
-  const handleGotoInbox = () => {
-    setActiveView('inbox')
-    setSelectedEntryId(null)
+  const handleGotoDock = () => {
+    setActiveView('dock')
+    setSelectedItemId(null)
     setSelectedArchivedEntryId(null)
   }
 
-  const wrapAction = async (action: () => Promise<InboxEntry | null>) => {
+  const wrapAction = async (action: () => Promise<DockItem | null>) => {
     if (actionLoading) return
     setActionLoading(true)
     setError(null)
@@ -203,8 +204,8 @@ export default function WorkspacePage() {
       if (result) {
         const archived = await listArchivedEntries(userId)
         setArchivedEntries(archived)
-        setEntries((current) =>
-          current.map((e) => (e.id === result.id ? result : e))
+        setItems((current) =>
+          current.map((i) => (i.id === result.id ? result : i))
         )
         const stats = await getWorkspaceStats(userId)
         setReviewStats(stats)
@@ -219,35 +220,35 @@ export default function WorkspacePage() {
   }
 
   const handleSuggest = async (id: number) => {
-    await wrapAction(() => suggestEntry(userId, id))
+    await wrapAction(() => suggestItem(userId, id))
   }
 
   const handleArchive = async (id: number) => {
-    await wrapAction(() => archiveEntry(userId, id))
+    await wrapAction(() => archiveItem(userId, id))
   }
 
   const handleIgnore = async (id: number) => {
-    await wrapAction(() => ignoreEntry(userId, id))
+    await wrapAction(() => ignoreItem(userId, id))
   }
 
   const handleRestore = async (id: number) => {
-    await wrapAction(() => restoreEntry(userId, id))
+    await wrapAction(() => restoreItem(userId, id))
   }
 
-  const handleReopen = async (inboxEntryId: number) => {
+  const handleReopen = async (dockItemId: number) => {
     if (actionLoading) return
     setActionLoading(true)
     setError(null)
     try {
-      const result = await reopenEntry(userId, inboxEntryId)
+      const result = await reopenItem(userId, dockItemId)
       if (result) {
         const archived = await listArchivedEntries(userId)
         setArchivedEntries(archived)
-        setEntries((current) =>
-          current.map((e) => (e.id === result.id ? result : e))
+        setItems((current) =>
+          current.map((i) => (i.id === result.id ? result : i))
         )
-        setActiveView('inbox')
-        setSelectedEntryId(result.id)
+        setActiveView('dock')
+        setSelectedItemId(result.id)
         setSelectedArchivedEntryId(null)
         const stats = await getWorkspaceStats(userId)
         setReviewStats(stats)
@@ -262,12 +263,21 @@ export default function WorkspacePage() {
   const handleAddTag = async (id: number, tagName: string) => {
     await wrapAction(async () => {
       await createStoredTag(userId, tagName)
-      return addTagToEntry(userId, id, tagName)
+      return addTagToItem(userId, id, tagName)
     })
   }
 
   const handleRemoveTag = async (id: number, tagName: string) => {
-    await wrapAction(() => removeTagFromEntry(userId, id, tagName))
+    await wrapAction(() => removeTagFromItem(userId, id, tagName))
+  }
+
+  const handleUpdateEntry = async (entryId: number, updates: { tags?: string[]; project?: string | null; content?: string; title?: string }) => {
+    const result = await updateArchivedEntry(userId, entryId, updates)
+    if (result) {
+      setArchivedEntries((current) =>
+        current.map((e) => (e.id === result.id ? result : e))
+      )
+    }
   }
 
   return (
@@ -275,7 +285,7 @@ export default function WorkspacePage() {
       <Sidebar
         activeView={activeView}
         onViewChange={handleViewChange}
-        inboxCount={pendingCount}
+        dockCount={pendingCount}
         user={user}
         onLogout={handleLogout}
       />
@@ -293,15 +303,15 @@ export default function WorkspacePage() {
         )}
         <MainPanel
           activeView={activeView}
-          entries={entries}
+          items={items}
           archivedEntries={archivedEntries}
-          selectedEntryId={selectedEntryId}
+          selectedItemId={selectedItemId}
           selectedArchivedEntryId={selectedArchivedEntryId}
-          onSelectEntry={handleSelectEntry}
+          onSelectItem={handleSelectItem}
           onSelectArchivedEntry={handleSelectArchivedEntry}
           loading={loading}
           error={error}
-          onRetry={loadEntries}
+          onRetry={loadItems}
           onCapture={handleCapture}
           onExpandEditor={() => setExpandedEditorOpen(true)}
           filterType={filterType}
@@ -313,11 +323,11 @@ export default function WorkspacePage() {
           onFilterProject={setFilterProject}
           onFilterStatus={setFilterStatus}
           reviewStats={reviewStats}
-          onGotoInbox={handleGotoInbox}
+          onGotoDock={handleGotoDock}
         />
         <DetailPanel
           activeView={activeView}
-          entry={selectedEntry}
+          item={selectedItem}
           archivedEntry={selectedArchivedEntry}
           existingTags={existingTags}
           onSuggest={handleSuggest}
@@ -327,6 +337,7 @@ export default function WorkspacePage() {
           onReopen={handleReopen}
           onAddTag={handleAddTag}
           onRemoveTag={handleRemoveTag}
+          onUpdateEntry={handleUpdateEntry}
           actionLoading={actionLoading}
         />
       </div>
