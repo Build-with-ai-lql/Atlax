@@ -1,4 +1,4 @@
-export type SourceType = 'text' | 'voice' | 'import'
+export type SourceType = 'text' | 'voice' | 'import' | 'chat'
 
 export type EntryStatus = 'pending' | 'suggested' | 'archived' | 'ignored' | 'reopened'
 

@@ -178,6 +178,19 @@ export default function WorkspacePage() {
     }
   }
 
+  const handleChatSubmitToDock = async (text: string) => {
+    const id = await createDockItem(userId, text, 'chat')
+    recordEvent({ type: 'chat_guided_capture_created', dockItemId: id, rawText: text })
+    await refreshList()
+  }
+
+  const handleSwitchToClassic = () => {
+    setMode('classic')
+    setActiveView('dock')
+    setSelectedItemId(null)
+    setSelectedArchivedEntryId(null)
+  }
+
   const handleSelectItem = (id: number) => {
     setSelectedItemId((prev) => (prev === id ? null : id))
   }
@@ -314,7 +327,7 @@ export default function WorkspacePage() {
           </div>
         )}
         {mode === 'chat' ? (
-          <ChatPanel user={user} />
+          <ChatPanel user={user} onSubmitToDock={handleChatSubmitToDock} onSwitchToClassic={handleSwitchToClassic} />
         ) : (
           <>
             <MainPanel

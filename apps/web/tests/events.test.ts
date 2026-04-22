@@ -187,3 +187,71 @@ describe('mode switch behavior', () => {
     expect(log[0]._ts).toBeLessThanOrEqual(log[1]._ts)
   })
 })
+
+describe('chat guided capture events', () => {
+  afterEach(() => {
+    clearEventLog()
+  })
+
+  it('records chat_guided_capture_created event', () => {
+    recordEvent({
+      type: 'chat_guided_capture_created',
+      dockItemId: 42,
+      rawText: '今天讨论了产品路线图',
+    })
+
+    const log = getEventLog()
+    expect(log).toHaveLength(1)
+    expect(log[0]).toMatchObject({
+      type: 'chat_guided_capture_created',
+      dockItemId: 42,
+      rawText: '今天讨论了产品路线图',
+    })
+  })
+
+  it('chat event includes _ts timestamp', () => {
+    const before = Date.now()
+    recordEvent({
+      type: 'chat_guided_capture_created',
+      dockItemId: 1,
+      rawText: 'test',
+    })
+    const after = Date.now()
+
+    const log = getEventLog()
+    expect(log[0]._ts).toBeGreaterThanOrEqual(before)
+    expect(log[0]._ts).toBeLessThanOrEqual(after)
+  })
+
+  it('chat event is emitted to subscribers', () => {
+    const received: AppEvent[] = []
+    const unsub = subscribe((e) => received.push(e))
+
+    recordEvent({
+      type: 'chat_guided_capture_created',
+      dockItemId: 1,
+      rawText: 'test',
+    })
+
+    expect(received).toHaveLength(1)
+    expect(received[0].type).toBe('chat_guided_capture_created')
+
+    unsub()
+  })
+
+  it('mixed events are recorded in order', () => {
+    recordEvent({ type: 'mode_switched', from: 'classic', to: 'chat' })
+    recordEvent({
+      type: 'chat_guided_capture_created',
+      dockItemId: 1,
+      rawText: 'first capture',
+    })
+    recordEvent({ type: 'mode_switched', from: 'chat', to: 'classic' })
+
+    const log = getEventLog()
+    expect(log).toHaveLength(3)
+    expect(log[0].type).toBe('mode_switched')
+    expect(log[1].type).toBe('chat_guided_capture_created')
+    expect(log[2].type).toBe('mode_switched')
+  })
+})

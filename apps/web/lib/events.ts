@@ -1,5 +1,6 @@
 export type AppEvent =
   | { type: 'mode_switched'; from: AppMode; to: AppMode }
+  | { type: 'chat_guided_capture_created'; dockItemId: number; rawText: string }
 
 export type AppMode = 'classic' | 'chat'
 
