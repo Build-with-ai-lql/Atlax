@@ -1,5 +1,6 @@
 export * from './archive-service'
 export * from './selectors'
+export * from './services'
 export * from './state-machine'
 export * from './suggestion-engine'
 export * from './tag-service'

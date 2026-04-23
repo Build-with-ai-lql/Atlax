@@ -1,5 +1,6 @@
 import {
   buildEntryFromArchive,
+  buildDockItemReset,
   canTransition,
   createTag,
   dedupeTagNames,
@@ -295,12 +296,8 @@ export async function updateDockItemText(userId: string, id: number, rawText: st
   const item = await getDockItemForUser(userId, id)
   if (!item) return null
 
-  await dockItemsTable.update(id, {
-    rawText,
-    status: 'pending',
-    suggestions: [],
-    processedAt: null,
-  })
+  const resetFields = buildDockItemReset({ dockItemId: id, newText: rawText })
+  await dockItemsTable.update(id, resetFields)
 
   return getPersistedDockItem(id)
 }

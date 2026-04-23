@@ -189,7 +189,84 @@ Phase 3.2 - Round 2：应用服务封装
 
 ---
 
-## 9. 关联文档
+## 9. Phase 3.2 - Round 2（第一个子模块）：应用服务封装
+
+| 开发日志信息 | |
+|-------------|---------|
+| 日期 | 2026-04-23 |
+| 负责人 | Backend Agent |
+| 状态 | 已完成 |
+| 子模块 | DockItemService（文本更新与状态重置链路） |
+
+### 9.1 执行内容
+
+1. **新增 `packages/domain/src/services/DockItemService.ts`**
+   - `buildDockItemReset()`: 返回状态重置字段（status='pending', suggestions=[], processedAt=null）
+   - `applyTextUpdateToDockItem()`: 将重置逻辑应用到 DockItem 对象
+
+2. **新增 `packages/domain/src/services/index.ts`**
+   - 导出 services 模块
+
+3. **更新 `packages/domain/src/index.ts`**
+   - 添加 `export * from './services'`
+
+4. **更新 `apps/web/lib/repository.ts`**
+   - `updateDockItemText()` 改为调用 `buildDockItemReset()` 获取重置字段
+
+5. **新增 `packages/domain/tests/DockItemService.test.ts`**
+   - 覆盖 `buildDockItemReset` 和 `applyTextUpdateToDockItem` 函数
+
+### 9.2 关键 Diff
+
+**packages/domain/src/services/DockItemService.ts** (新增)
+```typescript
+export function buildDockItemReset(update: DockItemTextUpdate): Partial<DockItem> {
+  return {
+    rawText: update.newText,
+    status: 'pending',
+    suggestions: [],
+    processedAt: null,
+  }
+}
+```
+
+**apps/web/lib/repository.ts**
+```typescript
+export async function updateDockItemText(userId: string, id: number, rawText: string) {
+  const item = await getDockItemForUser(userId, id)
+  if (!item) return null
+
+  const resetFields = buildDockItemReset({ dockItemId: id, newText: rawText })
+  await dockItemsTable.update(id, resetFields)
+
+  return getPersistedDockItem(id)
+}
+```
+
+### 9.3 验证结果
+
+| 命令 | 结果 | 备注 |
+|------|------|------|
+| `pnpm --dir apps/web lint` | ✅ PASS | - |
+| `pnpm --dir apps/web typecheck` | ✅ PASS | - |
+| `pnpm --dir apps/web test -- --run` | ⚠️ 受阻 | darwin-arm64 下 @rollup/rollup-darwin-arm64 加载失败，ERR_DLOPEN_FAILED / code signature |
+| `pnpm --dir packages/domain test -- --run` | ⚠️ 受阻 | darwin-arm64 下 @rollup/rollup-darwin-arm64 加载失败，ERR_DLOPEN_FAILED / code signature |
+
+### 9.4 约束检查
+
+- [x] 上一轮代码已提交并推送至远端
+- [x] 本轮更改已放入 git 暂存区
+- [x] lint PASS / typecheck PASS / test 受阻（darwin-arm64 @rollup/rollup-darwin-arm64，ERR_DLOPEN_FAILED / code signature）
+- [x] 未修改 apps/web/app/** (前端 UI 文件)
+- [x] 行为保持等价，状态重置逻辑不变
+
+### 9.5 下一步
+
+Phase 3.3 - Round 2（第二个子模块）：EntryService 封装
+
+---
+
+## 10. 关联文档
 
 | 文档 | 路径 |
 |------|------|
