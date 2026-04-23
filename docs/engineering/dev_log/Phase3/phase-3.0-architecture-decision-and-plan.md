@@ -435,11 +435,112 @@ export const defaultSuggestionResetPolicy: SuggestionResetPolicy = {
 
 ### 11.5 下一步
 
-Phase 3.5 - Round 4：ImmersiveEditor 后端接口预留
+Pre-Phase3-Architecture-Round-A：后端预留端口补齐
 
 ---
 
-## 12. 关联文档
+## 12. Pre-Phase3-Architecture-Round-A：后端预留端口补齐
+
+| 开发日志信息 | |
+|-------------|---------|
+| 日期 | 2026-04-23 |
+| 负责人 | Backend Agent |
+| 状态 | 已完成 |
+| 类型 | 架构端口预留 |
+
+### 12.1 执行内容
+
+1. **新增 `packages/domain/src/ports/editor.ts`**
+   - `EditorBackendPort`: 沉浸式编辑器后端接口
+   - `saveContent()`, `loadContent()`, `deleteContent()`
+
+2. **新增 `packages/domain/src/ports/file.ts`**
+   - `FileServicePort`: 文件服务接口
+   - `uploadFile()`, `getFile()`, `listFiles()`, `deleteFile()`
+
+3. **新增 `packages/domain/src/ports/project.ts`**
+   - `ProjectServicePort`: 项目服务接口
+   - `createProject()`, `getProject()`, `listProjects()`, `updateProject()`, `deleteProject()`
+
+4. **新增 `packages/domain/src/ports/rendering.ts`**
+   - `MarkdownRenderPort`: Markdown 渲染接口
+   - `render()`, `renderPreview()`
+
+5. **更新 `packages/domain/src/ports/index.ts`**
+   - 导出 4 个新端口
+
+6. **更新架构文档口径**
+   - ARCHITECTURE.md: v5.0 -> v5.1, "Phase 3" -> "Pre-Phase3-Architecture"
+   - TECH_SPEC.md: v5.0 -> v5.1, "Phase 3" -> "Pre-Phase3-Architecture"
+   - architecture-migration-plan.md: "Phase 3" -> "Pre-Phase3-Architecture"
+
+### 12.2 关键 Diff
+
+**packages/domain/src/ports/editor.ts** (新增)
+```typescript
+export interface EditorBackendPort {
+  saveContent(userId: string, dockItemId: number, content: string): Promise<EditorSaveResult>
+  loadContent(userId: string, dockItemId: number): Promise<EditorLoadResult>
+  deleteContent(userId: string, dockItemId: number): Promise<boolean>
+}
+```
+
+**packages/domain/src/ports/file.ts** (新增)
+```typescript
+export interface FileServicePort {
+  uploadFile(input: FileUploadInput): Promise<FileUploadResult>
+  getFile(userId: string, fileId: string): Promise<FileInfo | null>
+  listFiles(userId: string): Promise<FileInfo[]>
+  deleteFile(userId: string, fileId: string): Promise<boolean>
+}
+```
+
+**packages/domain/src/ports/project.ts** (新增)
+```typescript
+export interface ProjectServicePort {
+  createProject(input: ProjectCreateInput): Promise<Project>
+  getProject(userId: string, projectId: string): Promise<Project | null>
+  listProjects(userId: string): Promise<Project[]>
+  updateProject(userId: string, projectId: string, updates: ProjectUpdateInput): Promise<Project | null>
+  deleteProject(userId: string, projectId: string): Promise<boolean>
+}
+```
+
+**packages/domain/src/ports/rendering.ts** (新增)
+```typescript
+export interface MarkdownRenderPort {
+  render(input: RenderInput, options?: RenderOptions): Promise<RenderOutput>
+  renderPreview(content: string): Promise<RenderOutput>
+}
+```
+
+### 12.3 验证结果
+
+| 命令 | 结果 | 备注 |
+|------|------|------|
+| `pnpm --dir apps/web lint` | ✅ PASS | - |
+| `pnpm --dir apps/web typecheck` | ✅ PASS | - |
+| `pnpm --dir apps/web test -- --run` | ⚠️ 受阻 | darwin-arm64 下 @rollup/rollup-darwin-arm64 加载失败，ERR_DLOPEN_FAILED / code signature |
+| `pnpm --dir packages/domain typecheck` | ✅ PASS | - |
+| `pnpm --dir packages/domain test -- --run` | ⚠️ 受阻 | darwin-arm64 下 @rollup/rollup-darwin-arm64 加载失败，ERR_DLOPEN_FAILED / code signature |
+
+### 12.4 约束检查
+
+- [x] 上一轮代码已提交并推送至远端
+- [x] 本轮更改已放入 git 暂存区
+- [x] lint PASS / typecheck PASS / test 受阻（darwin-arm64 @rollup/rollup-darwin-arm64，ERR_DLOPEN_FAILED / code signature）
+- [x] 未修改 apps/web/app/** (前端 UI 文件)
+- [x] 未修改 apps/web/lib/** (前端业务代码)
+- [x] 仅定义接口，不做具体实现
+- [x] 架构文档口径统一为 Pre-Phase3-Architecture
+
+### 12.5 下一步
+
+根据业务优先级，选择实现具体端口适配器
+
+---
+
+## 13. 关联文档
 
 | 文档 | 路径 |
 |------|------|
