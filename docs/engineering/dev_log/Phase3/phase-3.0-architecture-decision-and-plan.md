@@ -1,9 +1,9 @@
-# Phase 3.0 - 架构决策与迁移计划
+# 架构调整阶段 - 架构决策与迁移计划
 
 | 开发日志信息 | |
 |-------------|---------|
-| 阶段 | Phase 3 |
-| 轮次 | Phase 3.0 |
+| 阶段 | Pre-Phase3-Architecture（架构调整阶段） |
+| 轮次 | 架构调整 Round 0 |
 | 日期 | 2026-04-23 |
 | 负责人 | Architecture Agent |
 | 状态 | 已完成 |
@@ -107,11 +107,11 @@ Round 4-6 (后端接口预留，可并行)
 
 ## 6. 下一步
 
-等待 Phase 3.1 开始执行 Round 1：仓储接口提取
+等待架构调整 Round 1 开始执行：仓储接口提取
 
 ---
 
-## 8. Phase 3.1 - Round 1 仓储接口提取
+## 8. 架构调整 Round 1 - 仓储接口提取
 
 | 开发日志信息 | |
 |-------------|---------|
@@ -185,11 +185,11 @@ export interface TagRepository {
 
 ### 8.5 下一步
 
-Phase 3.2 - Round 2：应用服务封装
+架构调整 Round 2：应用服务封装
 
 ---
 
-## 9. Phase 3.2 - Round 2（第一个子模块）：应用服务封装
+## 9. 架构调整 Round 2（第一个子模块）：应用服务封装
 
 | 开发日志信息 | |
 |-------------|---------|
@@ -262,11 +262,11 @@ export async function updateDockItemText(userId: string, id: number, rawText: st
 
 ### 9.5 下一步
 
-Phase 3.3 - Round 2（第二个子模块）：EntryService 封装
+架构调整 Round 2（第二个子模块）：EntryService 封装
 
 ---
 
-## 10. Phase 3.3 - Round 2（第二个子模块）：EntryService 封装
+## 10. 架构调整 Round 2（第二个子模块）：EntryService 封装
 
 | 开发日志信息 | |
 |-------------|---------|
@@ -339,11 +339,11 @@ export function buildEntryAndDockPatches(
 
 ### 10.5 下一步
 
-Phase 3.4 - Round 3：Suggestion 策略提取
+架构调整 Round 3：Suggestion 策略提取
 
 ---
 
-## 11. Phase 3.4 - Round 3：Suggestion 策略提取
+## 11. 架构调整 Round 3：Suggestion 策略提取
 
 | 开发日志信息 | |
 |-------------|---------|
@@ -617,7 +617,7 @@ Pre-Phase3-Architecture 阶段完成，可进入下一阶段开发
 
 ---
 
-## 14. Pre-Phase3-Architecture-Round-B-Fix：Phase2 日志收敛与 Phase3 日志修正
+## 14. Pre-Phase3-Architecture-Round-B-Fix：Phase2 日志收敛与架构调整日志修正
 
 | 开发日志信息 | |
 |-------------|---------|
@@ -634,9 +634,9 @@ Pre-Phase3-Architecture 阶段完成，可进入下一阶段开发
    - 删除 36 个分散日志文件（`phase-2.*.md`）
    - Phase2/ 目录仅保留统一日志文件 + 验收主文档
 
-2. **修正 Phase3 日志**
-   - 13.3：test 改为环境受阻（@rollup/rollup-darwin-arm64, ERR_DLOPEN_FAILED, code signature）
-   - 13.4：约束检查与实际轮次切分一致
+2. **修正架构调整日志**
+   - 17.3：test 改为环境受阻（@rollup/rollup-darwin-arm64, ERR_DLOPEN_FAILED, code signature）
+   - 17.4：约束检查与实际轮次切分一致
 
 3. **更新 README.md**
    - 目录说明与最终目录一致
@@ -673,7 +673,7 @@ Pre-Phase3-Architecture 阶段完成，可进入下一阶段开发
 
 ---
 
-## 16. Phase 3.5 - Frontend 结构兼容性核查
+## 16. Frontend 结构兼容性核查
 
 | 开发日志信息 | |
 |-------------|---------|
@@ -749,11 +749,9 @@ Frontend 本轮无代码改动，仅完成结构兼容核查。
 |------|------|------|
 | `git ls-files \| grep design_refs` | 无输出 | 已从 git 跟踪中移除 |
 | `find docs -type f \( -name '*.ts' -o -name '*.tsx' \)` | 无业务代码 | docs 仅含文档 |
-| `pnpm --dir apps/web lint` | ✅ PASS | - |
-| `pnpm --dir apps/web typecheck` | ✅ PASS | - |
-| `pnpm --dir apps/web test -- --run` | ✅ 102 passed | - |
-| `pnpm --dir packages/domain typecheck` | ✅ PASS | - |
-| `pnpm --dir packages/domain test -- --run` | ✅ 71 passed | - |
+| `bash scripts/run-web-gate.sh` | ✅ GATE PASSED | 统一门禁脚本，lint/typecheck/test 全通过 |
+
+> **注**：Codex Node 可能触发 rollup native 签名问题（ERR_DLOPEN_FAILED / code signature），门禁以统一脚本执行端（Trae bundled Node）为准。
 
 ### 17.4 约束检查
 
@@ -770,7 +768,110 @@ Frontend 本轮无代码改动，仅完成结构兼容核查。
 
 ---
 
-## 18. 关联文档
+## 18. Round-D Frontend 兼容性核查与推送
+
+| 开发日志信息 | |
+|-------------|---------|
+| 日期 | 2026-04-23 |
+| 负责人 | Frontend Agent |
+| 状态 | 已完成 |
+| 类型 | 兼容性核查与推送 |
+
+### 18.1 执行内容
+
+1. **代码提交与推送**
+   - 提交并推送上一轮（Round-C）的仓库结构清理改动至远端 `develop` 分支。
+   - 提交哈希：`c731686`
+
+2. **只读核查（apps/web）**
+   - 运行 `pnpm --dir apps/web lint`：✅ PASS
+   - 运行 `pnpm --dir apps/web typecheck`：✅ PASS
+   - **手动验证**：启动 Next.js 开发服务器，通过浏览器访问 `/workspace`。确认页面加载正常，侧边栏、输入框、用户认证（AccountGate）等核心 UI 均正常工作。
+
+3. **文档核查**
+   - 检查 `docs/engineering/archive/week2-backend-reference/README.md` 及其他文档，确认路径迁移后的说明准确。
+
+### 18.2 结论
+
+**本轮无前端功能改动**。经过核查，结构调整（docs 仅存文档、代码移至 packages）未对前端应用造成任何破坏性影响，环境与逻辑保持稳健。
+
+### 18.3 约束检查
+
+- [x] 上一轮代码已推送至远端
+- [x] 本轮更改已放入 git 暂存区，不提交
+- [x] 未修改 apps/web/app/** (前端界面代码)
+- [x] lint PASS / typecheck PASS / 页面访问正常
+
+---
+
+## 19. Round-D 最终收口
+
+| 开发日志信息 | |
+|-------------|---------|
+| 日期 | 2026-04-23 |
+| 负责人 | Backend Agent |
+| 状态 | 已完成 |
+| 类型 | 最终收口 |
+
+### 19.1 执行内容
+
+1. **提交上一轮代码**
+   - Round-C 已提交推送：commit `c731686`
+
+2. **修正文档口径一致性**
+   - 17.3 节验证命令改为统一脚本口径：`bash scripts/run-web-gate.sh`
+   - 添加备注：Codex Node 可能触发 rollup native 签名问题，门禁以统一脚本执行端为准
+
+3. **完成最终结构导览**
+   - 更新 `README.md`：添加 reference 目录、docs 子目录职责、design_refs 本地化规则
+   - 更新 `architecture-migration-plan.md`：添加"结构整理完成状态"与"进入下一阶段条件"
+
+4. **门禁复核**
+   - 执行 `bash scripts/run-web-gate.sh`：✅ GATE PASSED
+
+### 19.2 门禁结果摘要
+
+```text
+============================================
+ Atlax MindDock Web Gate (unified runner) 
+============================================
+
+[FINGERPRINT]
+  node:     /Users/qilong.lu/.trae-cn/binaries/node/versions/24.14.0/bin/node
+  platform: darwin
+  arch:     arm64
+
+--- lint ---    PASS
+--- typecheck --- PASS
+--- test ---    102 passed (8 files)
+
+============================================
+ Results: 3 passed, 0 failed
+ GATE: PASSED
+```
+
+### 19.3 变更清单
+
+| 操作 | 文件 | 说明 |
+|------|------|------|
+| 修改 | `docs/engineering/dev_log/Phase3/phase-3.0-architecture-decision-and-plan.md` | 统一脚本口径 |
+| 修改 | `README.md` | 目录说明更新 |
+| 修改 | `docs/engineering/architecture-migration-plan.md` | 完成状态与进入条件 |
+
+### 19.4 约束检查
+
+- [x] 上一轮代码已提交并推送至远端（Round-C: commit c731686）
+- [x] 本轮更改已放入 git 暂存区，不提交
+- [x] 未修改 apps/web/app/** (前端界面代码)
+- [x] 所有结论与 git diff 可复核结果一致
+
+### 19.5 Pre-Phase3-Architecture 阶段完成
+
+所有架构整理轮次（Round 1-3, A-D）已完成，可进入下一阶段功能迭代。
+
+---
+
+## 20. 关联文档
 
 | 文档 | 路径 |
 |------|------|

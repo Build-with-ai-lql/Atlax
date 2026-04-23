@@ -50,6 +50,10 @@ atlax-mind-dock/
 │       │   │   ├── project.ts      # ProjectServicePort
 │       │   │   ├── rendering.ts    # MarkdownRenderPort
 │       │   │   └── repository.ts   # Repository 接口
+│       │   ├── reference/          # 参考代码（Week2+ 后端参考）
+│       │   │   └── week2/
+│       │   │       ├── types/      # 类型定义参考
+│       │   │       └── utils/      # 工具函数参考
 │       │   ├── services/           # 应用服务
 │       │   │   ├── DockItemService.ts
 │       │   │   └── EntryService.ts
@@ -66,18 +70,22 @@ atlax-mind-dock/
 │   │   ├── ARCHITECTURE.md  # 架构说明书
 │   │   ├── FRONT_DESIGN.md  # 前端设计文档
 │   │   ├── PRD.md           # 产品需求文档
+│   │   ├── mvp.md           # MVP 范围定义
 │   │   └── TECH_SPEC.md    # 技术规格
 │   └── engineering/        # 工程文档
-│       ├── archive/        # 归档参考
+│       ├── archive/        # 归档参考（仅文档）
+│       ├── demo/           # 演示路径文档
 │       ├── dev_log/        # 开发日志
 │       │   ├── Phase2/     # Phase 2 日志
 │       │   └── Phase3/     # Phase 3 日志
 │       └── architecture-migration-plan.md
 │
-├── design_refs/            # 设计参考文件
+├── scripts/                # 脚本
+│   └── run-web-gate.sh     # 统一门禁脚本
+│
+├── docs/design_refs/       # 设计参考文件（本地保留，不提交）
 │   └── gemini/             # Gemini 生成的设计稿
 │
-├── scripts/                # 脚本
 └── .github/               # GitHub 配置
 ```
 
@@ -137,6 +145,26 @@ atlax-mind-dock/
 - ❌ 不感知 UI 状态（React 组件状态）
 - ❌ 不处理 HTTP 请求（Next.js API Routes 将来在此）
 - ❌ 不直接渲染 UI（前端职责）
+
+---
+
+## docs 子目录职责
+
+| 目录 | 职责 |
+|------|------|
+| `docs/product/` | 产品定义文档（PRD、ARCHITECTURE、TECH_SPEC、mvp） |
+| `docs/engineering/` | 工程文档（迁移计划、开发日志、归档参考） |
+| `docs/engineering/dev_log/` | 按阶段组织的开发日志 |
+| `docs/engineering/archive/` | 历史参考文档（仅保留 .md 文档，代码已迁移至 packages/domain） |
+| `docs/design_refs/` | 设计参考文件（本地保留，不提交到 Git） |
+
+---
+
+## design_refs 本地化规则
+
+- `docs/design_refs/` 目录用于存放设计参考文件（如 Gemini 生成的 UI 设计稿）
+- 该目录已添加到 `.gitignore`，不会提交到远端仓库
+- 开发者可在本地保留这些参考文件，但不应依赖其进行生产代码开发
 
 ---
 

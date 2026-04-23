@@ -205,3 +205,59 @@ Round 4-6 (后端接口预留，可并行)
 - [ ] 功能等效于迁移前
 - [ ] 文档已更新
 - [ ] 本轮更改已放入 git 暂存区
+
+---
+
+## 7. 结构整理完成状态
+
+### 7.1 已完成轮次
+
+| 轮次 | 内容 | 状态 | 完成日期 |
+|------|------|------|---------|
+| Round 1 | 仓储接口提取 | ✅ 已完成 | 2026-04-23 |
+| Round 2 | 应用服务封装 | ✅ 已完成 | 2026-04-23 |
+| Round 3 | Suggestion 策略提取 | ✅ 已完成 | 2026-04-23 |
+| Round A | 后端预留端口补齐 | ✅ 已完成 | 2026-04-23 |
+| Round B | 文档与结构收敛 | ✅ 已完成 | 2026-04-23 |
+| Round C | 结构清理收口 | ✅ 已完成 | 2026-04-23 |
+
+### 7.2 结构整理成果
+
+| 整理项 | 结果 |
+|--------|------|
+| `packages/domain/src/ports/` | 5 个端口接口文件 |
+| `packages/domain/src/services/` | 2 个应用服务文件 |
+| `packages/domain/src/policies/` | 1 个策略文件 |
+| `packages/domain/src/reference/` | Week2+ 后端参考代码 |
+| `docs/` | 仅保留文档文件，无业务代码 |
+| `docs/design_refs/` | 本地保留，不提交 Git |
+| Phase2 日志 | 收敛为统一文件 `phase2-dev-log.md` |
+
+---
+
+## 8. 进入 Phase3 条件
+
+### 8.1 必须满足
+
+- [x] Round 1-3 架构迁移完成
+- [x] Round A 后端端口预留完成
+- [x] 门禁脚本 `scripts/run-web-gate.sh` 可执行且通过
+- [x] 文档结构清晰，docs 仅保留文档
+- [x] README.md 目录说明与实际结构一致
+
+### 8.2 建议满足
+
+- [ ] 补充 packages/domain 的单元测试覆盖率
+- [ ] 补充 ports 接口的使用文档
+
+### 8.3 Phase3 启动标志
+
+当以下条件全部满足时，可认为 Pre-Phase3-Architecture 阶段完成，进入 Phase3 功能迭代：
+
+1. `bash scripts/run-web-gate.sh` 输出 `GATE: PASSED`
+2. 所有架构迁移轮次（Round 1-3, A-C）日志已记录
+3. 无未解决的 lint/typecheck 错误
+
+---
+
+**当前状态**：Pre-Phase3-Architecture 已完成，可进入 Phase3 功能迭代。
