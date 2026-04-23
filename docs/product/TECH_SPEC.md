@@ -44,7 +44,7 @@
 - 复杂 Review 策略
 - 高级 Database 体验
 - 高级关系浏览
-- 复杂动画与微交互
+- 超出 `FRONT_DESIGN.md` 基线的新增重交互能力
 - 导入/搜索增强/语音输入
 - 同步、协作、AI provider
 
@@ -75,6 +75,10 @@
 | Tailwind CSS | 样式体系 |
 | Zustand（或等价） | UI / workflow 本地状态 |
 | React Hook Form + Zod（可选） | 输入校验与编辑状态 |
+
+前端一致性约束：
+- `docs/product/FRONT_DESIGN.md` 为 UI/交互/动效规范真源。
+- Phase 2-5 任意前端功能新增或改造，必须在不丢失功能闭环前提下保持该设计语言一致。
 
 ### 4.2 存储与身份
 
@@ -117,6 +121,20 @@ pending -> suggested -> archived -> reopened
 - Chat 输出必须可映射为 `DockItem`。
 - `archived` 项可回退 `reopened`。
 
+### 5.4 `updateDockItemText` 状态重置语义
+
+编辑 DockItem 文本时，后端强制执行状态重置，确保建议始终与最新文本一致：
+
+| 字段 | 重置值 | 语义 |
+|------|--------|------|
+| `rawText` | 新文本 | 替换输入内容 |
+| `status` | `pending` | 强制回退待处理 |
+| `suggestions` | `[]` | 清空旧建议（与新文本不对应） |
+| `processedAt` | `null` | 标记未处理 |
+
+约束：文本变更后，调用方必须重新触发 `suggestItem` 才能获得新建议。  
+与 `reopenItem` 保持对称：两者都是"重置为 pending + 清空建议"。
+
 ---
 
 ## 6. 模块到实现映射
@@ -151,6 +169,30 @@ pending -> suggested -> archived -> reopened
 - `AuthGate`
 - `SessionStore`
 - `WorkspaceShell`
+
+### 6.6 前端接口预留点与后续实现边界
+
+| 预留点 | 预留方式 | 后续实现边界 |
+|------|---------|------------|
+| **沉浸式编辑器** | `DetailHeaderActions` -> `Maximize` 按钮 | 接入基于 Monaco 或 Vditor 的全屏编辑器组件 |
+| **Markdown 渲染切换** | `DetailHeaderActions` -> `BookOpen` 按钮 | 打通 `renderingMode` 状态与预览渲染器 |
+| **文件操作扩展** | `DropdownItem` 统一回调占位 | 接入 `FileService` 或 `ProjectService` 业务接口 |
+| **Dock 项目编辑持久化** | `updateDockItemText` 仓储方法 | 已打通：保存文本 -> 状态重置为 `pending` -> 清空建议 |
+| **列表自适应挤压** | `page.tsx` 中的状态联动渲染 | 已打通：`hasSelectedItem` 驱动侧边栏/列表/详情三位一体宽度变化 |
+
+### 6.7 后端待实现模块拆分规划（仅规划，不实现）
+
+对应前端预留点，后端规划如下拆分（Phase 2 不实现，后续迭代对齐）：
+
+| 规划模块 | 对应前端预留点 | 当前状态 | 目标阶段 |
+|---------|--------------|---------|---------|
+| `DockItemEditService` | `updateDockItemText` 仓储方法 | 内嵌于 repository，待提取为独立 service | Phase 3 |
+| `SuggestionResetPolicy` | 文本编辑后建议失效策略 | 内嵌于 `updateDockItemText`，待抽象为策略类 | Phase 3 |
+| `ImmersiveEditorBackend` | `Maximize` 按钮 -> 全屏编辑器后端接口 | 未实现 | Phase 3 |
+| `FileService` / `ProjectService` | `DropdownItem` 文件操作扩展 | 未实现 | Phase 4 |
+| `MarkdownRenderService` | `BookOpen` 按钮 -> Markdown 预览 | 未实现，当前纯前端渲染 | Phase 4 |
+
+> 约束：Phase 2 不实现上述拆分，不影响当前可上线闭环。
 
 ---
 
@@ -236,9 +278,10 @@ pending -> suggested -> archived -> reopened
 
 ---
 
-## 12. 版本差异说明（v4.9）
+## 12. 版本差异说明（v4.9 -> v4.10）
 
 1. 全面对齐 PRD v4.9 的 Phase 2 P0 边界。
 2. 新增 Chat 最小闭环技术实现约束。
 3. 新增 North Star 指标采集与口径定义。
 4. 压缩 Phase 4/5 技术细节，仅保留方向与接口。
+5. **v4.10 新增**：补充 `updateDockItemText` 状态重置语义（§5.4）与后端待实现模块拆分规划（§6.7），与 Phase 2.14.10.2 工程对齐。

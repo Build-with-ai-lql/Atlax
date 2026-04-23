@@ -1,6 +1,8 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
+import { Loader2, Database, Trash2, ArrowRight } from 'lucide-react'
 
 import { getCurrentUser } from '@/lib/auth'
 import { db } from '@/lib/db'
@@ -204,66 +206,75 @@ export default function SeedPage() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-gray-50">
+    <div className="flex min-h-screen atlax-page-bg items-center justify-center p-8 selection:bg-blue-200 dark:selection:bg-blue-900">
       <div className="w-full max-w-lg">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Demo 数据填充</h1>
-        <p className="text-sm text-gray-500 mb-6">为当前用户生成演示数据，覆盖多种类型、标签、项目和状态</p>
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-400 flex items-center justify-center shadow-sm">
+            <Database size={20} className="text-white" />
+          </div>
+          <h1 className="text-2xl font-semibold text-slate-800 dark:text-slate-100 tracking-tight">Demo 数据填充</h1>
+        </div>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">为当前用户生成演示数据，覆盖多种类型、标签、项目和状态</p>
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">将创建的数据</h2>
-          <div className="space-y-2 text-sm text-gray-600">
+        <div className="atlax-card p-6 mb-6">
+          <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">将创建的数据</h2>
+          <div className="space-y-2 text-sm text-slate-600 dark:text-slate-400">
             <div className="flex justify-between">
               <span>Dock 条目（覆盖 pending/suggested/archived/ignored/reopened）</span>
-              <span className="font-medium">{SEED_ITEMS.length} 条</span>
+              <span className="font-medium text-slate-800 dark:text-slate-200">{SEED_ITEMS.length} 条</span>
             </div>
             <div className="flex justify-between">
               <span>归档条目（覆盖 meeting/reading/idea/task，含 chat 来源）</span>
-              <span className="font-medium">{SEED_ITEMS.filter((s) => s.entry).length} 条</span>
+              <span className="font-medium text-slate-800 dark:text-slate-200">{SEED_ITEMS.filter((s) => s.entry).length} 条</span>
             </div>
             <div className="flex justify-between">
               <span>标签（产品/技术/学习/项目管理/生活/性能/工作）</span>
-              <span className="font-medium">{SEED_TAGS.length} 个</span>
+              <span className="font-medium text-slate-800 dark:text-slate-200">{SEED_TAGS.length} 个</span>
             </div>
           </div>
-          <p className="text-xs text-gray-400 mt-3">{'归档条目与 Dock 一一对应，点击"重新整理"可回到 Dock'}</p>
+          <p className="text-xs text-slate-400 dark:text-slate-500 mt-3">归档条目与 Dock 一一对应，点击&ldquo;重新整理&rdquo;可回到 Dock</p>
         </div>
 
         <div className="flex gap-3">
           <button
             onClick={handleSeed}
             disabled={seeding}
-            className="flex-1 px-4 py-2.5 bg-blue-500 text-white text-sm font-medium rounded-lg hover:bg-blue-600 disabled:opacity-40 transition-colors"
+            className="atlax-btn-primary flex-1 flex items-center justify-center gap-2"
           >
+            {seeding ? <Loader2 size={16} className="animate-spin" /> : <Database size={16} />}
             {seeding ? '填充中…' : '填充 Demo 数据'}
           </button>
           <button
             onClick={handleClear}
             disabled={seeding}
-            className="px-4 py-2.5 bg-red-50 text-red-600 text-sm font-medium rounded-lg hover:bg-red-100 disabled:opacity-40 transition-colors"
+            className="px-4 py-2 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-sm font-medium rounded-xl hover:bg-red-100 dark:hover:bg-red-500/20 disabled:opacity-40 transition-colors flex items-center gap-2"
           >
-            清除我的数据
+            <Trash2 size={16} />
+            清除数据
           </button>
         </div>
 
         {result && (
-          <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
-            <p className="text-sm text-green-700 font-medium">数据填充成功</p>
-            <p className="text-xs text-green-600 mt-1">
+          <div className="mt-4 p-4 bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/20 rounded-xl">
+            <p className="text-sm text-green-700 dark:text-green-400 font-medium">数据填充成功</p>
+            <p className="text-xs text-green-600 dark:text-green-400 mt-1">
               创建了 {result.dockItemsCreated} 条 Dock 条目、{result.entriesCreated} 条归档条目、{result.tagsCreated} 个标签
             </p>
           </div>
         )}
 
         {error && (
-          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-sm text-red-700">{error}</p>
+          <div className="mt-4 p-4 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl">
+            <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
           </div>
         )}
 
         <div className="mt-6 text-center">
-          <a href="/workspace" className="text-sm text-blue-500 hover:underline">返回工作区 →</a>
+          <Link href="/workspace" className="text-sm text-blue-500 dark:text-blue-400 hover:underline inline-flex items-center gap-1">
+            返回工作区 <ArrowRight size={14} />
+          </Link>
         </div>
       </div>
-    </main>
+    </div>
   )
 }

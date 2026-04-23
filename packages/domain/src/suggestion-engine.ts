@@ -119,9 +119,20 @@ function matchActions(itemId: number, text: string): SuggestionItem[] {
 }
 
 export function generateSuggestions(item: SuggestionEntryInput): SuggestionResult {
+  const tagSuggestions = applyRules(item.id, item.rawText, TAG_RULES).slice(0, 5)
+  if (tagSuggestions.length === 0) {
+    tagSuggestions.push({
+      id: makeSuggestionId(item.id, 'tag', '待整理'),
+      type: 'tag',
+      label: '待整理',
+      confidence: 0.3,
+      reason: '未匹配到特定标签，建议稍后整理',
+    })
+  }
+
   const suggestions: SuggestionItem[] = [
     matchCategory(item.id, item.rawText),
-    ...applyRules(item.id, item.rawText, TAG_RULES).slice(0, 5),
+    ...tagSuggestions,
     ...matchActions(item.id, item.rawText),
     ...applyRules(item.id, item.rawText, PROJECT_RULES),
   ]

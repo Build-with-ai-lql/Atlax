@@ -129,3 +129,31 @@ describe('chat tag confirmation', () => {
     expect(chatItem.userTags).toContain('产品')
   })
 })
+
+describe('no tag and retry suggestion', () => {
+  afterEach(cleanAll)
+
+  it('can generate suggestion but with no tags for irrelevant content', async () => {
+    const id = await createDockItem(USER_ID, '今天天气真好，去散个步，什么都不想做')
+    const suggested = unwrap(await suggestItem(USER_ID, id))
+
+    expect(suggested.status).toBe('suggested')
+    const tagSuggestions = suggested.suggestions.filter((s) => s.type === 'tag')
+    expect(tagSuggestions).toHaveLength(1)
+    expect(tagSuggestions[0].label).toBe('待整理')
+    expect(tagSuggestions[0].reason).toBeDefined()
+  })
+
+  it('allows regenerating suggestions when already in suggested state', async () => {
+    const id = await createDockItem(USER_ID, '技术文档第一版')
+    
+    // First suggestion
+    const suggested1 = unwrap(await suggestItem(USER_ID, id))
+    expect(suggested1.status).toBe('suggested')
+    
+    // Retry suggestion
+    const suggested2 = unwrap(await suggestItem(USER_ID, id))
+    expect(suggested2.status).toBe('suggested')
+    expect(suggested2.suggestions).toBeDefined()
+  })
+})

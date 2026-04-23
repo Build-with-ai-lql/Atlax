@@ -287,6 +287,20 @@ export async function reopenItem(userId: string, id: number): Promise<PersistedD
   return getPersistedDockItem(id)
 }
 
+export async function updateDockItemText(userId: string, id: number, rawText: string): Promise<PersistedDockItem | null> {
+  const item = await getDockItemForUser(userId, id)
+  if (!item) return null
+
+  await dockItemsTable.update(id, {
+    rawText,
+    status: 'pending',
+    suggestions: [],
+    processedAt: null,
+  })
+
+  return getPersistedDockItem(id)
+}
+
 export async function updateItemTags(userId: string, id: number, userTags: string[]): Promise<PersistedDockItem | null> {
   const item = await getDockItemForUser(userId, id)
   if (!item) return null

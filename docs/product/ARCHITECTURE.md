@@ -40,6 +40,7 @@ Atlax 架构服务于一个明确目标：
 ### 1.3 关键架构原则
 
 - `PRD v4.9` 是产品边界唯一真源。
+- `FRONT_DESIGN.md` 是前端 UI/交互/动效规范真源；Phase 2-5 所有前端变更均需对齐该规范。
 - `Dock` 是统一待整理入口，不再使用产品术语 `Inbox`。
 - `Classic / Chat` 只影响交互层，不影响底层数据模型。
 - `Tag` 是当前结构骨架，不是可选筛选器。
@@ -141,6 +142,20 @@ pending -> suggested -> archived -> reopened -> pending
 - 建议可忽略、可修正、可延后。
 - 不允许形成 Chat 独立内容仓。
 
+### 4.4 `updateDockItemText` 状态重置语义
+
+当用户编辑 DockItem 文本内容时，后端执行以下强制状态重置：
+
+| 字段 | 重置值 | 说明 |
+|------|--------|------|
+| `rawText` | 新文本 | 替换原始输入内容 |
+| `status` | `pending` | 强制回退到待处理状态 |
+| `suggestions` | `[]`（清空） | 旧建议在新文本下无效，必须清空 |
+| `processedAt` | `null` | 标记为未处理，等待重新 suggest |
+
+语义规则：文本变更 => 上下文失效 => 建议失效 => 必须重走 suggest 流程。  
+此语义与 `reopenItem`（archived -> reopened）保持一致：两者都将条目重置为 `pending + 清空建议`。
+
 ---
 
 ## 5. 模块边界与代码映射
@@ -166,6 +181,20 @@ pending -> suggested -> archived -> reopened -> pending
 - 本地内容：IndexedDB/Dexie（或当前仓储实现）。
 - 身份控制：认证服务 + session 存储。
 - 后续同步：仅预留 adapter，当前不接入。
+
+### 5.4 后端待实现模块拆分规划（仅规划，不实现）
+
+以下模块对应前端接口预留点，后端尚未拆分为独立服务/模块，此处列出规划边界供后续迭代对齐：
+
+| 规划模块 | 对应前端预留点 | 状态 | 优先级 |
+|---------|--------------|------|--------|
+| `DockItemEditService` | `updateDockItemText` 调用层封装，含状态重置校验 | 已在 repository 实现，待提取为独立 service | Phase 3 |
+| `SuggestionResetPolicy` | 文本变更后建议失效策略 | 规则内嵌于 `updateDockItemText`，待抽象为策略类 | Phase 3 |
+| `ImmersiveEditorBackend` | 沉浸式编辑器后端适配（全文内容保存接口） | 未实现，前端已预留 `Maximize` 按钮 | Phase 3 |
+| `FileService` / `ProjectService` | 文件操作扩展后端实现 | 未实现，前端 `DropdownItem` 已占位 | Phase 4 |
+| `MarkdownRenderService` | Markdown 渲染预览后端接口（若需服务端渲染） | 未实现，当前为纯前端渲染 | Phase 4 |
+
+> 约束：以上规划仅为接口边界对齐，Phase 2 不实现上述拆分，不影响当前可上线闭环。
 
 ---
 
@@ -200,7 +229,7 @@ pending -> suggested -> archived -> reopened -> pending
 
 目标：可上线 Demo 闭环。
 - 做：Classic/Chat 最小闭环、Dock/Tag/Suggest/Archive/Browse、登录、单页结构稳定。
-- 不做：复杂 Review、高级关系浏览、复杂动画。
+- 不做：复杂 Review、高级关系浏览、超出 `FRONT_DESIGN` 基线的新增重交互能力。
 
 ### 7.2 Phase 3
 
@@ -230,9 +259,10 @@ pending -> suggested -> archived -> reopened -> pending
 
 ---
 
-## 9. 版本差异说明（v4.9）
+## 9. 版本差异说明（v4.9 -> v4.10）
 
 1. 对齐 `PRD v4.9`，从“功能扩展导向”切换到“可上线闭环导向”。
 2. 架构边界明确为 `Phase 2 P0`，后续阶段仅保留方向。
 3. 明确 Chat/Classic 共用同一知识模型与状态机。
 4. 新增指标埋点与 North Star 指标映射，支持上线验证。
+5. **v4.10 新增**：补充 `updateDockItemText` 状态重置语义（§4.4）与后端待实现模块拆分规划（§5.4），与 Phase 2.14.10.2 工程对齐。

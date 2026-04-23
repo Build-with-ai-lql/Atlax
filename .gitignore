@@ -50,3 +50,6 @@ Thumbs.db
 *.tmp
 *.temp
 node_modules
+
+# Design reference (do not push)
+docs/product/Front_Design_by_Gemini(do-not-push-on-git)/

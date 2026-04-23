@@ -21,6 +21,7 @@ import {
   restoreItem,
   suggestItem,
   updateArchivedEntry,
+  updateDockItemText,
 } from '@/lib/repository'
 
 const USER_A = 'user_test_a'
@@ -160,6 +161,77 @@ describe('repository', () => {
       expect(pending).toHaveLength(1)
       expect(suggested).toHaveLength(1)
       expect(ignored).toHaveLength(1)
+    })
+  })
+
+  describe('updateDockItemText', () => {
+    it('resets status to pending and clears suggestions', async () => {
+      const id = await createDockItem(USER_A, '原始内容')
+      const suggested = unwrap(await suggestItem(USER_A, id))
+      expect(suggested.status).toBe('suggested')
+      expect(suggested.suggestions!.length).toBeGreaterThan(0)
+
+      const updated = unwrap(await updateDockItemText(USER_A, id, '修改后的内容'))
+      expect(updated.rawText).toBe('修改后的内容')
+      expect(updated.status).toBe('pending')
+      expect(updated.suggestions).toEqual([])
+      expect(updated.processedAt).toBeNull()
+    })
+
+    it('allows re-suggest after edit', async () => {
+      const id = await createDockItem(USER_A, '原始内容')
+      await suggestItem(USER_A, id)
+      await updateDockItemText(USER_A, id, '全新内容')
+
+      const reSuggested = unwrap(await suggestItem(USER_A, id))
+      expect(reSuggested.status).toBe('suggested')
+      expect(reSuggested.suggestions!.length).toBeGreaterThan(0)
+    })
+
+    it('returns null for nonexistent item', async () => {
+      expect(await updateDockItemText(USER_A, 99999, '内容')).toBeNull()
+    })
+
+    it('blocks cross-user text update', async () => {
+      const id = await createDockItem(USER_A, '内容')
+      expect(await updateDockItemText(USER_B, id, '恶意修改')).toBeNull()
+    })
+  })
+
+  describe('suggestItem re-generation (suggested -> suggested)', () => {
+    it('regenerates suggestions on reopened -> suggested path', async () => {
+      const id = await createDockItem(USER_A, '产品需求评审')
+      const first = unwrap(await suggestItem(USER_A, id))
+      expect(first.status).toBe('suggested')
+      expect(first.suggestions!.length).toBeGreaterThan(0)
+
+      await archiveItem(USER_A, id)
+      await reopenItem(USER_A, id)
+
+      const second = unwrap(await suggestItem(USER_A, id))
+      expect(second.status).toBe('suggested')
+      expect(second.suggestions!.length).toBeGreaterThan(0)
+    })
+
+    it('reopened item has cleared suggestions before re-suggest', async () => {
+      const id = await createDockItem(USER_A, '测试内容')
+      await suggestItem(USER_A, id)
+      await archiveItem(USER_A, id)
+
+      const reopened = unwrap(await reopenItem(USER_A, id))
+      expect(reopened.suggestions).toEqual([])
+      expect(reopened.processedAt).toBeNull()
+    })
+
+    it('edit -> suggest produces valid suggestions on same item', async () => {
+      const id = await createDockItem(USER_A, '第一次输入')
+      await suggestItem(USER_A, id)
+      await updateDockItemText(USER_A, id, '第二次输入')
+
+      const afterEdit = unwrap(await suggestItem(USER_A, id))
+      expect(afterEdit.status).toBe('suggested')
+      expect(afterEdit.rawText).toBe('第二次输入')
+      expect(afterEdit.suggestions!.length).toBeGreaterThan(0)
     })
   })
 
