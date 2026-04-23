@@ -10,19 +10,23 @@ import {
   type SourceType,
 } from '@atlax/domain'
 
+import type {
+  DockItem as DomainDockItem,
+} from '@atlax/domain/ports'
+
 import {
   entriesTable,
   dockItemsTable,
   tagsTable,
   type EntryRecord,
   type DockItemRecord,
-  type PersistedEntry,
   type PersistedDockItem,
+  type PersistedEntry,
   type PersistedTag,
   type TagRecord,
 } from './db'
 
-export type { PersistedDockItem as DockItem }
+export type DockItem = DomainDockItem
 export type { PersistedEntry as StoredEntry }
 export type { PersistedTag as StoredTag }
 

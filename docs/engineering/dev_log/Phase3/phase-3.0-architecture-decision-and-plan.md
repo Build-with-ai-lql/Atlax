@@ -111,7 +111,85 @@ Round 4-6 (后端接口预留，可并行)
 
 ---
 
-## 7. 关联文档
+## 8. Phase 3.1 - Round 1 仓储接口提取
+
+| 开发日志信息 | |
+|-------------|---------|
+| 日期 | 2026-04-23 |
+| 负责人 | Backend Agent |
+| 状态 | 已完成 |
+
+### 8.1 执行内容
+
+1. **创建 `packages/domain/src/ports/repository.ts`**
+   - 定义 `DockItemRepository`、`EntryRepository`、`TagRepository`、`StatsRepository` 接口
+   - 定义 `DockItem`、`PersistedEntry`、`PersistedTag` 类型
+   - 定义 `WorkspaceStats`、`EntryUpdate` 等辅助类型
+
+2. **创建 `packages/domain/src/ports/index.ts`**
+   - 导出 ports 模块
+
+3. **更新 `packages/domain/src/index.ts`**
+   - 添加 `export * from './ports'`
+
+4. **更新 `packages/domain/package.json`**
+   - 添加 `"ports": "./src/ports/index.ts"` 到 exports
+
+5. **更新 `apps/web/lib/repository.ts`**
+   - 导入 `DockItem` 类型从 `@atlax/domain/ports`
+   - 使用 domain types 替代 persistence types
+
+6. **更新 `README.md`**
+   - 修正测试目录结构：`tests/` -> `apps/web/tests/` 和 `packages/domain/tests/`
+   - 添加 ports 目录到仓库树
+
+### 8.2 关键 Diff
+
+**packages/domain/src/ports/repository.ts** (新增)
+```typescript
+export interface DockItemRepository {
+  create(userId: string, rawText: string, sourceType: SourceType): Promise<number>
+  findById(userId: string, id: number): Promise<DockItem | null>
+  listByUser(userId: string): Promise<DockItem[]>
+  listByStatus(userId: string, status: EntryStatus): Promise<DockItem[]>
+  // ...
+}
+
+export interface EntryRepository {
+  findById(userId: string, id: number): Promise<DomainEntry | null>
+  // ...
+}
+
+export interface TagRepository {
+  findById(userId: string, id: string): Promise<DomainTag | null>
+  // ...
+}
+```
+
+### 8.3 验证结果
+
+| 命令 | 结果 | 备注 |
+|------|------|------|
+| `pnpm --dir apps/web lint` | ✅ PASS | - |
+| `pnpm --dir apps/web typecheck` | ✅ PASS | - |
+| `pnpm --dir apps/web test -- --run` | ⚠️ 受阻 | darwin-arm64 下 Rollup native 加载影响，ERR_DLOPEN_FAILED / code signature |
+
+> 注：test 命令在当前机器（darwin-arm64）受 Rollup native 加载影响，存在 `ERR_DLOPEN_FAILED` 或 `code signature` 相关错误导致阻塞。此问题为本地环境特定，非代码逻辑问题。
+
+### 8.4 约束检查
+
+- [x] 上一轮代码已提交并推送至远端
+- [x] 本轮更改已放入 git 暂存区
+- [x] lint PASS / typecheck PASS / test 受 darwin-arm64 Rollup native 加载影响（ERR_DLOPEN_FAILED / code signature）受阻
+- [x] 未修改 apps/web/app/** (前端 UI 文件)
+
+### 8.5 下一步
+
+Phase 3.2 - Round 2：应用服务封装
+
+---
+
+## 9. 关联文档
 
 | 文档 | 路径 |
 |------|------|

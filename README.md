@@ -30,23 +30,27 @@ atlax-mind-dock/
 │       │           ├── QuickInputBar.tsx # 快速输入栏
 │       │           ├── Sidebar.tsx       # 侧边栏
 │       │           └── TagEditor.tsx     # 标签编辑器
-│       └── lib/             # 应用库文件
-│           ├── auth.ts      # 认证服务
-│           ├── db.ts        # IndexedDB 数据库配置
-│           ├── events.ts    # 事件系统
-│           ├── repository.ts # 仓储实现（Secondary Adapter）
-│           ├── suggestion-engine.ts # 建议引擎封装
-│           └── types.ts     # 应用类型
+│       ├── lib/             # 应用库文件
+│       │   ├── auth.ts      # 认证服务
+│       │   ├── db.ts        # IndexedDB 数据库配置
+│       │   ├── events.ts    # 事件系统
+│       │   ├── repository.ts # 仓储实现（Secondary Adapter）
+│       │   ├── suggestion-engine.ts # 建议引擎封装
+│       │   └── types.ts     # 应用类型
+│       └── tests/           # 前端集成测试
 │
 ├── packages/                # 包层（Domain + Shared）
 │   └── domain/              # 领域核心（DDD-lite）
-│       └── src/
-│           ├── archive-service.ts  # 归档服务
-│           ├── selectors.ts        # 查询选择器
-│           ├── state-machine.ts    # 状态机
-│           ├── suggestion-engine.ts # 建议引擎
-│           ├── tag-service.ts      # 标签服务
-│           └── types.ts             # 领域类型定义
+│       ├── src/
+│       │   ├── ports/               # 仓储接口定义
+│       │   │   └── repository.ts    # Repository 接口
+│       │   ├── archive-service.ts  # 归档服务
+│       │   ├── selectors.ts        # 查询选择器
+│       │   ├── state-machine.ts    # 状态机
+│       │   ├── suggestion-engine.ts # 建议引擎
+│       │   ├── tag-service.ts      # 标签服务
+│       │   └── types.ts             # 领域类型定义
+│       └── tests/            # 领域层单元测试
 │
 ├── docs/                    # 文档
 │   ├── product/            # 产品文档
@@ -57,7 +61,6 @@ atlax-mind-dock/
 │       └── dev_log/        # 开发日志
 │
 ├── scripts/                # 脚本
-├── tests/                  # 测试
 └── .github/               # GitHub 配置
 ```
 
