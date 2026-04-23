@@ -3,10 +3,59 @@
 | 文档信息 | |
 |---------|---------|
 | 产品名称 | Atlax |
-| 文档版本 | v4.9 |
+| 文档版本 | v5.0 |
 | 文档类型 | 架构设计文档 |
-| 当前阶段 | Phase 2 可上线 Demo 冲刺 |
+| 当前阶段 | Phase 3 架构决策 |
 | 最后更新 | 2026-04-23 |
+
+---
+
+## 0. 架构决策摘要（Phase 3 新增）
+
+### 0.1 架构风格选型
+
+| 维度 | 决策 | 理由 |
+|------|------|------|
+| 整体风格 | **DDD-lite + 模块化单体** | 团队规模中小型，Phase 2 已验证单体可行性，DDD-lite 提供领域边界但不引入完整 DDD 复杂度 |
+| 扩展模式 | **Ports/Adapters（六边形架构）** | 隔离核心业务与外部依赖（DB、UI、API），确保后续可切换存储或接入后端服务 |
+| 模块组织 | **按领域能力划分包** | Capture、Dock、Suggest、Tag、Archive 等作为独立模块，模块内聚、模块间松耦合 |
+
+### 0.2 架构分层
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                    前端应用层 (apps/web)                     │
+│    Classic UI / Chat UI / Mode Switch / Workspace Shell    │
+└─────────────────────────────────────────────────────────────┘
+                              │ HTTP/RPC
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   适配器层 (Adapters)                        │
+│    Primary Adapters: UI Handlers / API Controllers         │
+│    Secondary Adapters: Repository Impl / External Services   │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     端口层 (Ports)                           │
+│    Input Ports: Application Services / Use Cases             │
+│    Output Ports: Repository Interfaces / Service Interfaces  │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     领域层 (Domain)                         │
+│    Entities / Value Objects / Domain Services               │
+│    State Machine / Suggestion Engine / Tag Policy           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 0.3 关键架构原则
+
+1. **依赖单向**：外层依赖内层，内层不感知外层实现
+2. **端口隔离**：领域层只定义接口，适配器负责实现
+3. **模块自治**：每个领域模块可独立测试和演进
+4. **存储可替换**：通过 Repository Pattern 支持后续切换存储方案
 
 ---
 
@@ -158,31 +207,42 @@ pending -> suggested -> archived -> reopened -> pending
 
 ---
 
-## 5. 模块边界与代码映射
+## 5. 模块边界与代码映射（Phase 3 强化）
 
-### 5.1 应用层（`apps/web`）
+### 5.1 整体模块结构（Ports/Adapters 视角）
 
-- `workspace`：Classic 主工作台。
-- `capture`：输入入口与展开编辑。
-- `dock`：待整理视图。
-- `auth`：会话与路由守卫。
-- `chat`（新增或并入 workspace）：引导式交互入口。
+| 层级 | 模块 | 代码位置 | 职责 |
+|------|------|---------|------|
+| **前端应用层** | `apps/web` | `app/*/page.tsx`, `app/*/_components/*` | UI 交互、路由、状态管理 |
+| **Primary Adapters** | UI 适配器 | `app/*/_components/*.tsx` | 将用户操作转换为领域调用 |
+| **Application Services** | 用例封装 | `lib/*.ts` (auth, events, repository) | 编排领域逻辑，处理跨模块协作 |
+| **Domain Layer** | 领域核心 | `packages/domain/src/*` | 状态机、规则引擎、标签策略 |
+| **Secondary Adapters** | 存储适配器 | `lib/db.ts` | IndexedDB/Dexie 实现 |
+| **Output Ports** | 仓储接口 | `packages/domain/src/types.ts` | 领域定义的仓储接口 |
 
-### 5.2 领域层（`packages/domain`）
+### 5.2 前端应用层（`apps/web`）
 
-- `state-machine`：状态流转。
-- `suggestion-engine`：规则建议。
-- `tag-service`：Tag 策略。
-- `archive-service`：归档与回写。
-- `selectors`：Browse 查询。
+- `workspace`：Classic 主工作台
+- `capture`：输入入口与展开编辑
+- `dock`：待整理视图
+- `auth`：会话与路由守卫
+- `chat`（新增或并入 workspace）：引导式交互入口
 
-### 5.3 存储层
+### 5.3 领域层（`packages/domain`）
 
-- 本地内容：IndexedDB/Dexie（或当前仓储实现）。
-- 身份控制：认证服务 + session 存储。
-- 后续同步：仅预留 adapter，当前不接入。
+- `state-machine`：状态流转
+- `suggestion-engine`：规则建议
+- `tag-service`：Tag 策略
+- `archive-service`：归档与回写
+- `selectors`：Browse 查询
 
-### 5.4 后端待实现模块拆分规划（仅规划，不实现）
+### 5.4 存储层（Secondary Adapters）
+
+- 本地内容：IndexedDB/Dexie（`lib/db.ts` 实现）
+- 身份控制：认证服务 + session 存储
+- 后续同步：仅预留 adapter，当前不接入
+
+### 5.5 后端待实现模块拆分规划（仅规划，不实现）
 
 以下模块对应前端接口预留点，后端尚未拆分为独立服务/模块，此处列出规划边界供后续迭代对齐：
 

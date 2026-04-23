@@ -3,12 +3,38 @@
 | 文档信息 | |
 |---------|---------|
 | 产品名称 | Atlax |
-| 文档版本 | v4.9 |
+| 文档版本 | v5.0 |
 | 文档类型 | 技术规格文档 |
-| 当前阶段 | Phase 2 可上线 Demo 冲刺 |
+| 当前阶段 | Phase 3 架构决策 |
 | 最后更新 | 2026-04-23 |
 
 ---
+
+## 0. 架构决策（Phase 3 新增）
+
+### 0.1 架构风格
+
+| 维度 | 决策 | 理由 |
+|------|------|------|
+| 整体风格 | **DDD-lite + 模块化单体** | Phase 2 已验证单体可行性，DDD-lite 提供领域边界但不引入完整 DDD 复杂度 |
+| 扩展模式 | **Ports/Adapters（六边形架构）** | 隔离核心业务与外部依赖，确保后续可切换存储或接入后端服务 |
+| 模块组织 | **按领域能力划分包** | Capture、Dock、Suggest、Tag、Archive 等作为独立模块 |
+
+### 0.2 分层职责
+
+| 层级 | 职责 | 代码位置 |
+|------|------|---------|
+| 前端应用层 | UI 交互、路由、状态管理 | `apps/web/app/*` |
+| Primary Adapters | 将用户操作转换为领域调用 | `apps/web/app/*/_components/*.tsx` |
+| Application Services | 编排领域逻辑，处理跨模块协作 | `apps/web/lib/*.ts` |
+| Domain Layer | 状态机、规则引擎、标签策略 | `packages/domain/src/*` |
+| Secondary Adapters | IndexedDB/Dexie 存储实现 | `apps/web/lib/db.ts` |
+
+### 0.3 依赖规则
+
+- **依赖单向**：外层（UI/Adapter）可依赖内层（Domain），内层不感知外层实现
+- **接口所有**：Domain 层定义 Output Port 接口，Adapter 层负责实现
+- **模块隔离**：领域模块之间通过接口通信，不直接依赖对方实现
 
 ## 1. 文档目标
 
@@ -278,10 +304,18 @@ pending -> suggested -> archived -> reopened
 
 ---
 
-## 12. 版本差异说明（v4.9 -> v4.10）
+## 12. 版本差异说明（v4.9 -> v5.0）
 
-1. 全面对齐 PRD v4.9 的 Phase 2 P0 边界。
-2. 新增 Chat 最小闭环技术实现约束。
-3. 新增 North Star 指标采集与口径定义。
-4. 压缩 Phase 4/5 技术细节，仅保留方向与接口。
-5. **v4.10 新增**：补充 `updateDockItemText` 状态重置语义（§5.4）与后端待实现模块拆分规划（§6.7），与 Phase 2.14.10.2 工程对齐。
+1. **Phase 3 架构决策**：明确采用 DDD-lite + 模块化单体 + Ports/Adapters 架构风格
+2. 新增架构决策章节（§0），包含架构风格选型、分层职责、依赖规则
+3. 更新模块到实现映射（§6），以 Ports/Adapters 视角重新组织
+4. 后续版本（v4.10）技术细节已移至 `architecture-migration-plan.md`
+
+---
+
+## 13. 关联文档
+
+| 文档 | 位置 | 用途 |
+|------|------|------|
+| 架构迁移计划 | `docs/engineering/architecture-migration-plan.md` | 分批迁移执行清单 |
+| 开发日志 | `docs/engineering/dev_log/Phase3/phase-3.0-architecture-decision-and-plan.md` | Phase 3 决策记录 |
