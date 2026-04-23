@@ -4,20 +4,28 @@
 
 ---
 
-## 目录结构
+## 代码迁移说明
+
+**2026-04-23 迁移**：`.ts` 代码文件已迁移至 `packages/domain/src/reference/week2/`，保持 docs 目录仅含文档。
+
+| 原路径 | 新路径 |
+|--------|--------|
+| `types/domain.constants.ts` | `packages/domain/src/reference/week2/types/domain.constants.ts` |
+| `types/health.types.ts` | `packages/domain/src/reference/week2/types/health.types.ts` |
+| `types/insight.types.ts` | `packages/domain/src/reference/week2/types/insight.types.ts` |
+| `utils/date.utils.ts` | `packages/domain/src/reference/week2/utils/date.utils.ts` |
+| `utils/tags.utils.ts` | `packages/domain/src/reference/week2/utils/tags.utils.ts` |
+
+---
+
+## 当前目录结构
 
 ```
 week2-backend-reference/
-├── data-model-reference.md    # 数据模型设计参考
-├── rules/
-│   └── suggestion-rules.md    # 规则引擎思想参考
-├── types/
-│   ├── domain.constants.ts    # 领域常量定义
-│   ├── health.types.ts        # Health 信号类型
-│   └── insight.types.ts       # Insight 卡片类型
-└── utils/
-    ├── date.utils.ts          # 日期工具函数
-    └── tags.utils.ts          # 标签解析工具
+├── README.md                   # 本文档（含迁移说明）
+├── data-model-reference.md     # 数据模型设计参考
+└── rules/
+    └── suggestion-rules.md     # 规则引擎思想参考
 ```
 
 ---
@@ -42,7 +50,7 @@ Week 2 开始实现：
 
 可参考：
 - `rules/suggestion-rules.md` - 规则逻辑
-- `types/domain.constants.ts` - 类型定义
+- `packages/domain/src/reference/week2/types/domain.constants.ts` - 类型定义
 - `data-model-reference.md` - Dexie schema 设计
 
 ### Week 3 可参考这些内容
@@ -53,9 +61,9 @@ Week 3 开始实现：
 - Insight 卡片生成
 
 可参考：
-- `types/health.types.ts` - Health 类型
-- `types/insight.types.ts` - Insight 类型
-- `utils/date.utils.ts` - 周范围计算
+- `packages/domain/src/reference/week2/types/health.types.ts` - Health 类型
+- `packages/domain/src/reference/week2/types/insight.types.ts` - Insight 类型
+- `packages/domain/src/reference/week2/utils/date.utils.ts` - 周范围计算
 
 ---
 
@@ -64,4 +72,5 @@ Week 3 开始实现：
 所有内容归档自 `apps/server/src/` 目录，原始 NestJS 实现已删除。
 
 归档时间：2026-04-20
-归档原因：Week 1 收敛，超出阶段代码归档保留参考价值。
+迁移时间：2026-04-23
+迁移原因：docs 目录仅保留文档，代码迁移至 packages/domain。

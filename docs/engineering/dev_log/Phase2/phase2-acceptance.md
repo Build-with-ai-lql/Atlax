@@ -105,9 +105,9 @@
 
 ## 6. 跨架构门禁放行标准
 
-> **详细对齐见 phase-2.14.11**；**统一门禁入口见 `scripts/run-web-gate.sh`（phase-2.15）**
+> **详细对齐见 [phase2-dev-log.md#9-phase-2141-21411多轮补丁修复](phase2-dev-log.md#9-phase-2141-21411多轮补丁修复)**；**统一门禁入口见 `scripts/run-web-gate.sh`（[phase-2.15](phase2-dev-log.md#10-phase-215统一门禁脚本)）**
 
-### 6.0 统一门禁入口（phase-2.15 新增）
+### 6.0 统一门禁入口（[phase-2.15](phase2-dev-log.md#10-phase-215统一门禁脚本) 新增）
 
 所有 FE/BE agent 执行门禁时，统一使用：
 
