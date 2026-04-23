@@ -478,10 +478,20 @@ Pre-Phase3-Architecture-Round-A：后端预留端口补齐
 
 **packages/domain/src/ports/editor.ts** (新增)
 ```typescript
+export type EditorRenderMode = 'edit' | 'preview' | 'split'
+
+export interface EditorDocumentSnapshot {
+  dockItemId: number
+  content: string
+  mode: EditorRenderMode
+  updatedAt: Date
+}
+
 export interface EditorBackendPort {
-  saveContent(userId: string, dockItemId: number, content: string): Promise<EditorSaveResult>
-  loadContent(userId: string, dockItemId: number): Promise<EditorLoadResult>
-  deleteContent(userId: string, dockItemId: number): Promise<boolean>
+  loadDocument(userId: string, dockItemId: number): Promise<EditorDocumentSnapshot | null>
+  saveDocument(userId: string, dockItemId: number, content: string): Promise<EditorDocumentSnapshot>
+  switchMode(userId: string, dockItemId: number, mode: EditorRenderMode): Promise<EditorDocumentSnapshot>
+  autosave(userId: string, dockItemId: number, content: string): Promise<void>
 }
 ```
 
@@ -536,11 +546,76 @@ export interface MarkdownRenderPort {
 
 ### 12.5 下一步
 
-根据业务优先级，选择实现具体端口适配器
+Pre-Phase3-Architecture-Round-B：文档与结构收敛
 
 ---
 
-## 13. 关联文档
+## 13. Pre-Phase3-Architecture-Round-B：文档与结构收敛
+
+| 开发日志信息 | |
+|-------------|---------|
+| 日期 | 2026-04-23 |
+| 负责人 | Backend Agent |
+| 状态 | 已完成 |
+| 类型 | 文档收敛与结构整理 |
+
+### 13.1 执行内容
+
+1. **过期计划清理**
+   - 删除 `docs/engineering/dev_plan/` 目录（4 个过期本地计划文件）
+   - 说明：Notion 为主备份，本地计划文件已过期
+
+2. **非文档文件迁移**
+   - 迁移 `docs/product/Front_Design_by_Gemini(do-not-push-on-git)/` 下的 `.tsx` 文件
+   - 目标目录：`design_refs/gemini/`
+   - 迁移文件：
+     - `Atlax_MindDock_Landing_Page.tsx`
+     - `gemini_generated_dock_page.tsx`
+
+3. **更新 README.md 目录树**
+   - 添加 `design_refs/` 目录
+   - 添加 `policies/` 和 `services/` 目录到 `packages/domain/src/`
+   - 更新 `ports/` 目录（多个端口文件）
+   - 更新 `docs/` 目录结构
+
+4. **修正日志 12.2 editor 示例**
+   - 更新为最新接口签名（EditorRenderMode, EditorDocumentSnapshot）
+
+### 13.2 迁移/删除清单
+
+| 操作 | 文件/目录 | 原因 |
+|------|----------|------|
+| 删除 | `docs/engineering/dev_plan/` | 过期本地计划，Notion 为主备份 |
+| 迁移 | `Atlax_MindDock_Landing_Page.tsx` | 非文档文件移出 docs/ |
+| 迁移 | `gemini_generated_dock_page.tsx` | 非文档文件移出 docs/ |
+
+### 13.3 验证结果
+
+| 命令 | 结果 | 备注 |
+|------|------|------|
+| `pnpm --dir apps/web lint` | ✅ PASS | - |
+| `pnpm --dir apps/web typecheck` | ✅ PASS | - |
+| `pnpm --dir apps/web test -- --run` | ✅ 102 passed | - |
+| `pnpm --dir packages/domain typecheck` | ✅ PASS | - |
+| `pnpm --dir packages/domain test -- --run` | ✅ 71 passed | - |
+
+### 13.4 约束检查
+
+- [x] 上一轮代码已提交并推送至远端
+- [x] 本轮更改已放入 git 暂存区
+- [x] lint PASS / typecheck PASS / test PASS
+- [x] 未修改 apps/web/app/** (前端 UI 文件)
+- [x] 未修改 apps/web/lib/** (前端业务代码)
+- [x] 未修改 packages/domain/src/** (本轮不改代码)
+- [x] README.md 目录树与真实仓库一致
+
+### 13.5 下一步
+
+Pre-Phase3-Architecture 阶段完成，可进入下一阶段开发
+
+---
+
+## 14. 关联文档
 
 | 文档 | 路径 |
 |------|------|

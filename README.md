@@ -42,8 +42,17 @@ atlax-mind-dock/
 ├── packages/                # 包层（Domain + Shared）
 │   └── domain/              # 领域核心（DDD-lite）
 │       ├── src/
-│       │   ├── ports/               # 仓储接口定义
-│       │   │   └── repository.ts    # Repository 接口
+│       │   ├── policies/           # 策略对象
+│       │   │   └── SuggestionResetPolicy.ts
+│       │   ├── ports/              # 仓储接口定义
+│       │   │   ├── editor.ts       # EditorBackendPort
+│       │   │   ├── file.ts         # FileServicePort
+│       │   │   ├── project.ts      # ProjectServicePort
+│       │   │   ├── rendering.ts    # MarkdownRenderPort
+│       │   │   └── repository.ts   # Repository 接口
+│       │   ├── services/           # 应用服务
+│       │   │   ├── DockItemService.ts
+│       │   │   └── EntryService.ts
 │       │   ├── archive-service.ts  # 归档服务
 │       │   ├── selectors.ts        # 查询选择器
 │       │   ├── state-machine.ts    # 状态机
@@ -55,10 +64,18 @@ atlax-mind-dock/
 ├── docs/                    # 文档
 │   ├── product/            # 产品文档
 │   │   ├── ARCHITECTURE.md  # 架构说明书
+│   │   ├── FRONT_DESIGN.md  # 前端设计文档
+│   │   ├── PRD.md           # 产品需求文档
 │   │   └── TECH_SPEC.md    # 技术规格
 │   └── engineering/        # 工程文档
-│       ├── architecture-migration-plan.md # 架构迁移计划
-│       └── dev_log/        # 开发日志
+│       ├── archive/        # 归档参考
+│       ├── dev_log/        # 开发日志
+│       │   ├── Phase2/     # Phase 2 日志
+│       │   └── Phase3/     # Phase 3 日志
+│       └── architecture-migration-plan.md
+│
+├── design_refs/            # 设计参考文件
+│   └── gemini/             # Gemini 生成的设计稿
 │
 ├── scripts/                # 脚本
 └── .github/               # GitHub 配置
