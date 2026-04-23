@@ -4,7 +4,7 @@
 |------|------|
 | 阶段 | Phase 2 Demo |
 | 日期 | 2026-04-23 |
-| 状态 | 待复审（2.14.10.3 前端文档真实性修正与收口已完成） |
+| 状态 | 待复审（2.14.11 基建运行时门禁对齐已完成） |
 
 ---
 
@@ -100,3 +100,27 @@
 | 动画与交互打磨 | 模式切换动画、列表过渡 | P2 |
 | sourceType 筛选 | Entries 按来源类型筛选 | P2 |
 | EntryListItem 来源标识 | 列表项显示 chat/text 来源图标 | P2 |
+
+---
+
+## 6. 跨架构门禁放行标准
+
+> **详细对齐见 phase-2.14.11**
+
+### 6.1 执行端判定规则（统一口径）
+
+1. 先记录执行端二进制：`which node`。
+2. 再记录运行时身份：`node -p "process.execPath + ' | ' + process.platform + ' | ' + process.arch"`。
+3. 最后在同一执行端运行：`pnpm --dir apps/web test -- --run`。
+4. 门禁归因仅依据上述同端输出；`uname -m` 仅作宿主机背景，不作为主判据。
+
+### 6.2 放行矩阵（已纳入签名失败分支）
+
+| 执行端 | `process.platform/arch` | 门禁结果 | 归因 | 放行口径 |
+|-----------|-------------|------------------|----------------|
+| `/Applications/Codex.app/Contents/Resources/node` | `darwin/arm64` | ✖️ 失败：`ERR_DLOPEN_FAILED` + `code signature ... different Team IDs` | 同为 arm64，但 Node 签名链路失败 | 环境执行端失败，不判业务回归 |
+| `/Users/qilong.lu/.trae-cn/binaries/node/versions/24.14.0/bin/node` | `darwin/arm64` | ✅ `102/102 PASS` | 架构与签名链路均通过 | 作为本轮可复核放行基准 |
+| 历史 Rosetta x64 执行端 | `darwin/x64` | ✖️ 失败：`Cannot find module @rollup/rollup-darwin-x64` | 架构不匹配 | 环境阻塞，不判业务回归 |
+| CI Linux runner | `linux/x64` | ✅ PASS | Linux 平台链路通过 | 辅助验证 |
+
+**阶段放行准入**：以可复核执行端（本轮为 `/Users/qilong.lu/.trae-cn/binaries/node/versions/24.14.0/bin/node`）门禁全部 PASS 为准；其他执行端失败需先归因为环境分支（架构或签名链路），再决定是否阻断。

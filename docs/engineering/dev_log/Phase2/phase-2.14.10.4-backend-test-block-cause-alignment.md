@@ -3,7 +3,7 @@
 | 项目 | 内容 |
 |------|------|
 | 模块 | 后端/数据层文档真实性修正（最终版） |
-| 状态 | 待复审 |
+| 状态 | 已修正（架构差异运行时门禁对齐见 phase-2.14.11） |
 | 日期 | 2026-04-23 |
 | 执行者 | Agent |
 
@@ -80,9 +80,9 @@ node -e "require('@rollup/rollup-darwin-arm64')"
 # Error: MODULE_NOT_FOUND Cannot find module '@rollup/rollup-darwin-arm64'
 ```
 
-### 3.3 完整错误链路（假设模块已安装但签名无效）
+### 3.3 完整错误链路（已在 2.14.11.1 执行端 A 实测）
 
-以下错误链路在模块**已安装但未签名/签名过期**时触发。当前环境中未观察到（因为模块未安装），但这是 M 系列 Mac 上已知的高频问题：
+以下错误链路已在 `phase-2.14.11.1-runtime-proof-matrix-fix.md` 的执行端 A（`/Applications/Codex.app/Contents/Resources/node`）实测观察到：
 
 ```
 Error: Cannot find module '@rollup/rollup-darwin-arm64'
@@ -113,17 +113,16 @@ caused by: [native dlopen invocation]
 - 未经 Apple 公证的原生模块（.node 文件）在 M 系列 Mac 上默认被 Gatekeeper 拦截
 - 即使文件存在，签名验证失败也会导致 `ERR_DLOPEN_FAILED`
 
-### 3.4 为什么测试不阻塞
+### 3.4 为什么同仓会出现“有的通过、有的阻塞”
 
-| 测试运行器 | 使用的转换器 | 是否需要 rollup native |
+| 执行端 | `which node` | 结果 |
 |-----------|------------|---------------------|
-| vitest | esbuild | **否** |
-| Next.js dev | SWC (rust) | **否** |
-| rollup CLI | rollup native | **是**（但测试不调用） |
+| A（Codex 内置 node） | `/Applications/Codex.app/Contents/Resources/node` | `ERR_DLOPEN_FAILED`（Team ID 不一致）导致 `pnpm test` 启动失败 |
+| B（trae node） | `/Users/qilong.lu/.trae-cn/binaries/node/versions/24.14.0/bin/node` | `102/102 PASS` |
 
-**结论**：`vitest` 使用 `esbuild` 进行代码转换（transform 阶段），完全不依赖 `rollup` 包，更不需要 `@rollup/rollup-darwin-arm64` 原生模块。因此即使该模块完全不可用，102 测试仍然全部通过。
+**结论**：当前仓库的 `pnpm --dir apps/web test -- --run` 对“执行端 Node 二进制”敏感。即使同为 `darwin/arm64`，也可能因签名链路差异出现相反结论。
 
-**潜在影响场景**：生产构建（`next build` 或 `rollup` CLI）时，如果构建流程显式调用 rollup，可能会触发上述完整错误链。需要在 CI 的 M1 Mac runner 上验证。
+**统一口径**：门禁归因必须绑定 `which node` 与 `node -p ...`，并在同一执行端复跑测试。
 
 ---
 
@@ -177,9 +176,29 @@ caused by: [native dlopen invocation]
 
 ---
 
-## 7. 强制约束确认
+## 8. 强制约束确认
 
 - [x] 未提交任何 commit（仅暂存）
 - [x] 所有变更可通过 `git diff` / `git diff --cached` 审阅
 - [x] 未修改任何前端 UI（`apps/web/app/**` 本轮无改动）
 - [x] 文档记录与实际验证结果一致（测试 102 PASS，完整错误链路已记录）
+
+---
+
+## 9. 跨架构门禁冲突说明
+
+> **本节由 phase-2.14.11 小节补充**，完整基建对齐见该文档。
+
+### 9.1 根因摘要
+
+| 执行环境 | Node.js arch | pnpm 选装的 rollup 包 | 测试是否可通过 |
+|-----------|-------------|---------------------|---------------|
+| 主开发机（NVM x64 on Apple Silicon） | x64 (Rosetta) | 已安装 darwin-arm64，缺 darwin-x64 | ✖️ 阻塞 |
+| 主开发机（系统原生 arm64 Node.js） | arm64 | 已安装 darwin-arm64 | ✅ PASS |
+| CI Linux runner | linux/x64 | 已安装 linux-x64-gnu | ✅ PASS |
+
+### 9.2 项目放行标准（项目级约定）
+
+- **放行基准**：**主开发机可复核结果**（以 arm64 原生 Node.js + pnpm 运行门禁全部 PASS）为阶段放行准入。
+- **CI 结果**：为辅助验证，不作为单一门禁。
+- **sandbox/agent 执行端**：如果使用 Rosetta x64 Node.js，应将该环境结果标注为“架构不匹配，非业务断言失败”，不得单独引用该结果作为门禁结论。

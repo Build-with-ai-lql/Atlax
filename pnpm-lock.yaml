@@ -29,6 +29,13 @@ importers:
       vitest:
         specifier: ^3.1.2
         version: 3.2.4(@types/node@20.19.39)(jiti@1.21.7)
+    optionalDependencies:
+      '@rollup/rollup-darwin-arm64':
+        specifier: 4.60.2
+        version: 4.60.2
+      '@rollup/rollup-darwin-x64':
+        specifier: 4.60.2
+        version: 4.60.2
 
   apps/web:
     dependencies:
