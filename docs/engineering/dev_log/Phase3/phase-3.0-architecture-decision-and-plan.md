@@ -343,7 +343,103 @@ Phase 3.4 - Round 3：Suggestion 策略提取
 
 ---
 
-## 11. 关联文档
+## 11. Phase 3.4 - Round 3：Suggestion 策略提取
+
+| 开发日志信息 | |
+|-------------|---------|
+| 日期 | 2026-04-23 |
+| 负责人 | Backend Agent |
+| 状态 | 已完成 |
+| 子模块 | SuggestionResetPolicy（编辑后建议重置策略） |
+
+### 11.1 执行内容
+
+1. **新增 `packages/domain/src/policies/SuggestionResetPolicy.ts`**
+   - `SuggestionResetInput`: 策略输入类型
+   - `SuggestionResetOutput`: 策略输出类型
+   - `SuggestionResetPolicy`: 策略接口（可替换）
+   - `defaultSuggestionResetPolicy`: 默认策略实现
+   - `applySuggestionResetPolicy()`: 应用策略函数
+   - `buildSuggestionResetPatch()`: 构建重置 patch
+
+2. **新增 `packages/domain/src/policies/index.ts`**
+   - 导出 policies 模块
+
+3. **更新 `packages/domain/src/index.ts`**
+   - 添加 `export * from './policies'`
+
+4. **更新 `packages/domain/src/services/DockItemService.ts`**
+   - `buildDockItemReset()` 改为调用 `buildSuggestionResetPatch()`
+   - `applyTextUpdateToDockItem()` 改为调用 `buildSuggestionResetPatch()`
+
+5. **新增 `packages/domain/tests/SuggestionResetPolicy.test.ts`**
+   - 10 个测试用例覆盖策略逻辑
+
+### 11.2 关键 Diff
+
+**packages/domain/src/policies/SuggestionResetPolicy.ts** (新增)
+```typescript
+export interface SuggestionResetPolicy {
+  shouldReset(input: SuggestionResetInput): boolean
+  buildResetPatch(input: SuggestionResetInput): SuggestionResetOutput
+}
+
+export const defaultSuggestionResetPolicy: SuggestionResetPolicy = {
+  shouldReset(input): boolean {
+    return input.currentRawText !== input.newRawText
+  },
+  buildResetPatch(input): SuggestionResetOutput {
+    return {
+      rawText: input.newRawText,
+      status: 'pending',
+      suggestions: [],
+      processedAt: null,
+    }
+  },
+}
+```
+
+**packages/domain/src/services/DockItemService.ts**
+```diff
++ import { buildSuggestionResetPatch } from '../policies/SuggestionResetPolicy'
+
+  export function buildDockItemReset(update: DockItemTextUpdate): Partial<DockItem> {
+-   return {
+-     rawText: update.newText,
+-     status: 'pending',
+-     suggestions: [],
+-     processedAt: null,
+-   }
++   return buildSuggestionResetPatch(update.dockItemId, update.newText)
+  }
+```
+
+### 11.3 验证结果
+
+| 命令 | 结果 | 备注 |
+|------|------|------|
+| `pnpm --dir apps/web lint` | ✅ PASS | - |
+| `pnpm --dir apps/web typecheck` | ✅ PASS | - |
+| `pnpm --dir apps/web test -- --run` | ⚠️ 受阻 | darwin-arm64 下 @rollup/rollup-darwin-arm64 加载失败，ERR_DLOPEN_FAILED / code signature |
+| `pnpm --dir packages/domain typecheck` | ✅ PASS | - |
+| `pnpm --dir packages/domain test -- --run` | ⚠️ 受阻 | darwin-arm64 下 @rollup/rollup-darwin-arm64 加载失败，ERR_DLOPEN_FAILED / code signature |
+
+### 11.4 约束检查
+
+- [x] 上一轮代码已提交并推送至远端
+- [x] 本轮更改已放入 git 暂存区
+- [x] lint PASS / typecheck PASS / test 受阻（darwin-arm64 @rollup/rollup-darwin-arm64，ERR_DLOPEN_FAILED / code signature）
+- [x] 未修改 apps/web/app/** (前端 UI 文件)
+- [x] 行为保持等价，编辑后建议重置逻辑不变
+- [x] 策略可替换，支持自定义策略注入
+
+### 11.5 下一步
+
+Phase 3.5 - Round 4：ImmersiveEditor 后端接口预留
+
+---
+
+## 12. 关联文档
 
 | 文档 | 路径 |
 |------|------|

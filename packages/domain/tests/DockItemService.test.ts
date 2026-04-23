@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildDockItemReset, applyTextUpdateToDockItem } from '../src/services/DockItemService'
+import { type SuggestionResetPolicy, type SuggestionResetInput } from '../src/policies/SuggestionResetPolicy'
 
 describe('DockItemService', () => {
   describe('buildDockItemReset', () => {
@@ -31,6 +32,21 @@ describe('DockItemService', () => {
       const result = buildDockItemReset({ dockItemId: 1, newText: 'text' })
 
       expect(result.processedAt).toBeNull()
+    })
+
+    it('accepts custom policy', () => {
+      const customPolicy: SuggestionResetPolicy = {
+        shouldReset: () => true,
+        buildResetPatch: (input: SuggestionResetInput) => ({
+          rawText: input.newRawText.toUpperCase(),
+          status: 'pending' as const,
+          suggestions: [] as [],
+          processedAt: null as null,
+        }),
+      }
+      const result = buildDockItemReset({ dockItemId: 1, newText: 'custom' }, customPolicy)
+
+      expect(result.rawText).toBe('CUSTOM')
     })
   })
 
@@ -75,6 +91,60 @@ describe('DockItemService', () => {
       const result = applyTextUpdateToDockItem(original, 'new text')
 
       expect(result.userTags).toEqual(['important', 'review'])
+    })
+
+    it('returns unchanged dock item when policy says no reset', () => {
+      const noResetPolicy: SuggestionResetPolicy = {
+        shouldReset: () => false,
+        buildResetPatch: () => ({
+          rawText: '',
+          status: 'pending' as const,
+          suggestions: [] as [],
+          processedAt: null as null,
+        }),
+      }
+      const original = {
+        id: 1,
+        userId: 'user1',
+        rawText: 'original',
+        sourceType: 'text' as const,
+        status: 'suggested' as const,
+        suggestions: [],
+        userTags: [],
+        processedAt: null,
+        createdAt: new Date(),
+      }
+
+      const result = applyTextUpdateToDockItem(original, 'new text', noResetPolicy)
+
+      expect(result).toBe(original)
+    })
+
+    it('accepts custom policy for reset behavior', () => {
+      const customPolicy: SuggestionResetPolicy = {
+        shouldReset: () => true,
+        buildResetPatch: (input: SuggestionResetInput) => ({
+          rawText: `[EDITED] ${input.newRawText}`,
+          status: 'pending' as const,
+          suggestions: [] as [],
+          processedAt: null as null,
+        }),
+      }
+      const original = {
+        id: 1,
+        userId: 'user1',
+        rawText: 'original',
+        sourceType: 'text' as const,
+        status: 'suggested' as const,
+        suggestions: [],
+        userTags: [],
+        processedAt: null,
+        createdAt: new Date(),
+      }
+
+      const result = applyTextUpdateToDockItem(original, 'custom text', customPolicy)
+
+      expect(result.rawText).toBe('[EDITED] custom text')
     })
   })
 })
