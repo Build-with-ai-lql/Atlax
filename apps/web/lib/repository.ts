@@ -1,6 +1,7 @@
 import {
   buildEntryFromArchive,
   buildDockItemReset,
+  buildEntryAndDockPatches,
   canTransition,
   createTag,
   dedupeTagNames,
@@ -385,21 +386,17 @@ export async function updateArchivedEntry(
   const entry = await entriesTable.get(entryId)
   if (!entry || entry.userId !== userId) return null
 
-  const patch: Partial<EntryRecord> = {}
-  if (updates.tags !== undefined) patch.tags = updates.tags
-  if (updates.project !== undefined) patch.project = updates.project
-  if (updates.content !== undefined) patch.content = updates.content
-  if (updates.title !== undefined) patch.title = updates.title
+  const { entryPatch, dockSyncPatch } = buildEntryAndDockPatches(updates, entry.sourceDockItemId)
 
-  if (Object.keys(patch).length > 0) {
-    await entriesTable.update(entryId, patch)
+  if (entryPatch && Object.keys(entryPatch).length > 0) {
+    await entriesTable.update(entryId, entryPatch)
   }
 
-  if (updates.tags !== undefined && entry.sourceDockItemId) {
-    const dockItem = await getPersistedDockItem(entry.sourceDockItemId)
+  if (dockSyncPatch) {
+    const dockItem = await getPersistedDockItem(dockSyncPatch.sourceDockItemId)
     if (dockItem && dockItem.userId === userId) {
-      await dockItemsTable.update(entry.sourceDockItemId, {
-        userTags: updates.tags,
+      await dockItemsTable.update(dockSyncPatch.sourceDockItemId, {
+        userTags: dockSyncPatch.userTags,
       })
     }
   }

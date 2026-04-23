@@ -266,7 +266,84 @@ Phase 3.3 - Round 2（第二个子模块）：EntryService 封装
 
 ---
 
-## 10. 关联文档
+## 10. Phase 3.3 - Round 2（第二个子模块）：EntryService 封装
+
+| 开发日志信息 | |
+|-------------|---------|
+| 日期 | 2026-04-23 |
+| 负责人 | Backend Agent |
+| 状态 | 已完成 |
+| 子模块 | EntryService（Entry 更新 + Dock 同步标签） |
+
+### 10.1 执行内容
+
+1. **新增 `packages/domain/src/services/EntryService.ts`**
+   - `EntryUpdateInput`: 输入类型
+   - `EntryPatch`: Entry 更新 patch
+   - `DockSyncPatch`: Dock 同步 patch
+   - `buildEntryPatch()`: 构建 Entry patch
+   - `buildDockSyncPatch()`: 构建 Dock 同步 patch（有条件）
+   - `buildEntryAndDockPatches()`: 组合构建两个 patch
+
+2. **更新 `packages/domain/src/services/index.ts`**
+   - 添加 `export * from './EntryService'`
+
+3. **更新 `apps/web/lib/repository.ts`**
+   - `updateArchivedEntry()` 改为调用 `buildEntryAndDockPatches()`
+
+4. **新增 `packages/domain/tests/EntryService.test.ts`**
+   - 14 个测试用例覆盖 patch 构建逻辑
+
+### 10.2 关键 Diff
+
+**packages/domain/src/services/EntryService.ts** (新增)
+```typescript
+export function buildEntryAndDockPatches(
+  updates: EntryUpdateInput,
+  sourceDockItemId: number | undefined,
+): BuildEntryPatchResult {
+  return {
+    entryPatch: buildEntryPatch(updates),
+    dockSyncPatch: buildDockSyncPatch(sourceDockItemId, updates.tags),
+  }
+}
+```
+
+**apps/web/lib/repository.ts**
+```diff
+- const patch: Partial<EntryRecord> = {}
+- if (updates.tags !== undefined) patch.tags = updates.tags
+- if (updates.project !== undefined) patch.project = updates.project
+- if (updates.content !== undefined) patch.content = updates.content
+- if (updates.title !== undefined) patch.title = updates.title
++ const { entryPatch, dockSyncPatch } = buildEntryAndDockPatches(updates, entry.sourceDockItemId)
+```
+
+### 10.3 验证结果
+
+| 命令 | 结果 | 备注 |
+|------|------|------|
+| `pnpm --dir apps/web lint` | ✅ PASS | - |
+| `pnpm --dir apps/web typecheck` | ✅ PASS | - |
+| `pnpm --dir apps/web test -- --run` | ⚠️ 受阻 | darwin-arm64 下 @rollup/rollup-darwin-arm64 加载失败，ERR_DLOPEN_FAILED / code signature |
+| `pnpm --dir packages/domain typecheck` | ✅ PASS | - |
+| `pnpm --dir packages/domain test -- --run` | ⚠️ 受阻 | darwin-arm64 下 @rollup/rollup-darwin-arm64 加载失败，ERR_DLOPEN_FAILED / code signature |
+
+### 10.4 约束检查
+
+- [x] 上一轮代码已提交并推送至远端
+- [x] 本轮更改已放入 git 暂存区
+- [x] lint PASS / typecheck PASS / test 受阻（darwin-arm64 @rollup/rollup-darwin-arm64，ERR_DLOPEN_FAILED / code signature）
+- [x] 未修改 apps/web/app/** (前端 UI 文件)
+- [x] 行为保持等价，跨模块同步逻辑不变
+
+### 10.5 下一步
+
+Phase 3.4 - Round 3：Suggestion 策略提取
+
+---
+
+## 11. 关联文档
 
 | 文档 | 路径 |
 |------|------|
