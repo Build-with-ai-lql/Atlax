@@ -3,7 +3,7 @@
 | 项目 | 内容 |
 |------|------|
 | 模块 | 工程基建 - 运行时门禁归因与验收口径修正 |
-| 状态 | 已更新（待 review） |
+| 状态 | 已更新（phase-2.15 门禁脚本已就绪） |
 | 日期 | 2026-04-23 |
 | 执行者 | Agent（后端/工程基建） |
 
@@ -118,7 +118,28 @@ Duration   669ms
 
 ---
 
-## 5. 强制约束确认
+## 5. 统一门禁脚本（phase-2.15 补充）
+
+> 为消除 FE/BE agent 因 Node.js 执行端差异导致门禁结论冲突，新增 `scripts/run-web-gate.sh`。
+
+**使用方式**：
+```bash
+bash scripts/run-web-gate.sh
+```
+
+**脚本行为**：
+1. 检查固定 Node.js 路径是否存在（不存在则报错退出）
+2. 输出执行端指纹（which node + process.execPath/platform/arch）
+3. 依次运行 lint → typecheck → test --run
+4. 汇总 PASS/FAIL 计数并输出最终结论
+
+**实测输出（2026-04-23）**：3/3 PASS，GATE: PASSED（102 tests）
+
+详见 [phase-2.15-backend-gate-script.md](./phase-2.15-backend-gate-script.md)。
+
+---
+
+## 6. 强制约束确认
 
 - [x] 未执行 push。
 - [x] 本轮改动仅放入暂存区，不提交。

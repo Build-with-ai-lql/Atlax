@@ -4,7 +4,7 @@
 |------|------|
 | 阶段 | Phase 2 Demo |
 | 日期 | 2026-04-23 |
-| 状态 | 待复审（2.14.11 基建运行时门禁对齐已完成） |
+| 状态 | 待复审（2.14.15 统一门禁脚本已就绪） |
 
 ---
 
@@ -105,7 +105,44 @@
 
 ## 6. 跨架构门禁放行标准
 
-> **详细对齐见 phase-2.14.11**
+> **详细对齐见 phase-2.14.11**；**统一门禁入口见 `scripts/run-web-gate.sh`（phase-2.15）**
+
+### 6.0 统一门禁入口（phase-2.15 新增）
+
+所有 FE/BE agent 执行门禁时，统一使用：
+
+```bash
+bash scripts/run-web-gate.sh
+```
+
+该脚本固定使用 `/Users/qilong.lu/.trae-cn/binaries/node/versions/24.14.0/bin/node`，自动输出执行端指纹 + lint/typecheck/test 三步结果。
+
+示例输出：
+```text
+============================================
+ Atlax MindDock Web Gate (unified runner)
+============================================
+
+[FINGERPRINT]
+  node:     /Users/qilong.lu/.trae-cn/binaries/node/versions/24.14.0/bin/node
+  execPath: /Users/qilong.lu/.trae-cn/binaries/node/versions/24.14.0/bin/node
+  platform: darwin
+  arch:     arm64
+
+--- lint ---
+  PASS
+--- typecheck ---
+  PASS
+--- test ---
+ Test Files  8 passed (8)
+      Tests  102 passed (102)
+   Duration  653ms
+  PASS
+
+============================================
+ Results: 3 passed, 0 failed
+ GATE: PASSED
+```
 
 ### 6.1 执行端判定规则（统一口径）
 

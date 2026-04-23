@@ -213,6 +213,7 @@ export default function WorkspacePage() {
     setChatTags([])
     setChatImmersive(false)
     setChatSunk(false)
+    setIsChatMinimized(false)
   }
 
   const handleDockViewModeChange = (mode: 'list' | 'card') => {
@@ -638,13 +639,13 @@ export default function WorkspacePage() {
                   </div>
                 </div>
                 <div
-                  className={`w-full mt-auto transition-all duration-[800ms] ease-[cubic-bezier(0.23,1,0.32,1)] z-10 ${
+                  className={`w-full mt-auto transition-all duration-[700ms] ease-[cubic-bezier(0.23,1,0.32,1)] z-10 ${
                     chatSunk
-                      ? 'px-8 pt-4 bg-white/60 dark:bg-[#1C1C1E]/60 backdrop-blur-xl border-t border-slate-100 dark:border-white/5'
-                      : 'px-8 pt-0 bg-transparent border-t border-transparent'
+                      ? 'px-8 pt-4 bg-white/60 dark:bg-[#1C1C1E]/60 backdrop-blur-xl border-t border-slate-100 dark:border-white/5 translate-y-0 opacity-100'
+                      : 'px-8 pt-0 bg-transparent border-t border-transparent translate-y-[-10vh] opacity-80'
                   }`}
                   style={{
-                    paddingBottom: chatSunk ? '1rem' : 'calc(50vh - 40px)'
+                    paddingBottom: chatSunk ? '1.5rem' : 'calc(50vh - 40px)'
                   }}
                 >
                   <div className="max-w-3xl mx-auto">
@@ -1044,7 +1045,7 @@ function DockCard({ item, isSelected, onSelect, viewMode = 'card' }: { item: Doc
         <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${statusConfig.bg} ${statusConfig.color} flex-shrink-0`}>
           {statusConfig.label}
         </span>
-        <p className="text-slate-700 dark:text-slate-300 text-sm flex-1 truncate">
+        <p className="text-slate-700 dark:text-slate-300 text-sm flex-1 line-clamp-2">
           {item.rawText}
         </p>
         {item.sourceType === 'chat' && (
@@ -1069,7 +1070,7 @@ function DockCard({ item, isSelected, onSelect, viewMode = 'card' }: { item: Doc
       }`}
     >
       <div className="flex items-start justify-between">
-        <p className="text-slate-700 dark:text-slate-300 text-[15px] leading-relaxed flex-1 line-clamp-3 transition-colors">
+        <p className="text-slate-700 dark:text-slate-300 text-[15px] leading-relaxed flex-1 line-clamp-2 transition-colors">
           {item.rawText}
         </p>
         <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2 flex-shrink-0 group/btn">
@@ -1475,24 +1476,55 @@ function ChatInputBar({
 
   if (step === 'done') {
     return (
-      <div className="bg-white/95 dark:bg-[#2C2C2E]/95 backdrop-blur-3xl rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.3)] border border-white dark:border-white/10 p-2.5 flex items-center gap-3 transition-all duration-300 group relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-r from-green-400/5 via-transparent to-blue-400/5 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
-        <div className="w-8 h-8 bg-green-50 dark:bg-green-500/10 rounded-full flex items-center justify-center flex-shrink-0 relative z-10">
-          <CheckSquare size={16} className="text-green-500 dark:text-green-400" />
+      <div className="flex flex-col gap-2 w-full animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="bg-green-500/10 dark:bg-green-500/20 backdrop-blur-md border border-green-200 dark:border-green-500/30 rounded-xl p-2 px-4 flex items-center gap-3">
+          <CheckSquare size={16} className="text-green-600 dark:text-green-400" />
+          <span className="text-sm font-medium text-green-700 dark:text-green-300 flex-1">已成功入 Dock</span>
+          <div className="flex gap-2 mr-2">
+            <button 
+              onClick={() => { setStep('input'); setDraft('') }}
+              className="text-xs text-blue-600 dark:text-blue-400 font-bold hover:underline"
+            >
+              继续输入
+            </button>
+            <span className="text-slate-300 dark:text-white/10">|</span>
+            <button 
+              onClick={onGoToDock}
+              className="text-xs text-slate-500 dark:text-slate-400 font-medium hover:underline"
+            >
+              去 Dock 查看
+            </button>
+          </div>
         </div>
-        <span className="text-sm text-slate-600 dark:text-slate-300 flex-1 relative z-10">已成功入 Dock</span>
-        <button
-          onClick={() => { setStep('input') }}
-          className="px-3 py-1.5 text-xs font-medium bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-1 relative z-10"
-        >
-          <Plus size={12} /> 留在 Chat
-        </button>
-        <button
-          onClick={onGoToDock}
-          className="px-3 py-1.5 text-xs font-medium bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-200 dark:hover:bg-white/20 transition-colors flex items-center gap-1 relative z-10"
-        >
-          <Inbox size={12} /> 去 Dock 查看
-        </button>
+        <div className="bg-white/95 dark:bg-[#2C2C2E]/95 backdrop-blur-3xl rounded-2xl shadow-[0_10px_40px_rgb(0,0,0,0.1)] dark:shadow-[0_10px_40px_rgba(0,0,0,0.4)] border border-white dark:border-white/10 p-2.5 flex items-center transition-all duration-300 group relative">
+          <div className="flex items-center space-x-1 pl-1 relative z-10 opacity-40 grayscale pointer-events-none">
+            <ToolButton icon={Mic} tooltip="语音闪记" />
+            <ToolButton icon={Paperclip} tooltip="附件" />
+          </div>
+          <input
+            autoFocus
+            type="text"
+            placeholder="继续记录你的想法…"
+            className="flex-1 bg-transparent border-none focus:outline-none text-slate-700 dark:text-slate-200 px-3 placeholder:text-slate-400 dark:placeholder:text-slate-500 text-[15px] relative z-10"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && draft.trim()) {
+                setStep('input'); // Reset to input step before submitting
+                setTimeout(() => setStep('confirm'), 0);
+              }
+            }}
+          />
+          <button
+            onClick={() => { if (draft.trim()) { setStep('input'); setTimeout(() => setStep('confirm'), 0); } }}
+            disabled={!draft.trim()}
+            className={`ml-1.5 p-2 rounded-xl transition-all duration-300 ${
+              draft.trim() ? 'bg-blue-500 text-white shadow-sm' : 'bg-slate-100 dark:bg-white/5 text-slate-300 dark:text-slate-500 cursor-not-allowed'
+            }`}
+          >
+            <Send size={18} />
+          </button>
+        </div>
       </div>
     )
   }
