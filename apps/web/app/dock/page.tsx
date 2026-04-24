@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useEffect, useState, useCallback } from 'react'
-import { Inbox, Loader2, ArrowRight, Sparkles, Archive, EyeOff, RotateCcw } from 'lucide-react'
+import { Dock, Loader2, ArrowRight, Sparkles, Archive, EyeOff, RotateCcw } from 'lucide-react'
 
 import { getCurrentUser } from '@/lib/auth'
 import {
@@ -105,7 +105,7 @@ export default function DockPage() {
       <div className="flex-1 max-w-2xl mx-auto p-8">
         <div className="flex items-center gap-3 mb-2">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-400 flex items-center justify-center shadow-sm">
-            <Inbox size={20} className="text-white" />
+            <Dock size={20} className="text-white" />
           </div>
           <h1 className="text-2xl font-semibold text-slate-800 dark:text-slate-100 tracking-tight">Dock</h1>
           <span className="px-2 py-0.5 bg-slate-200/50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 rounded-full text-xs font-medium">
@@ -126,7 +126,7 @@ export default function DockPage() {
           </div>
         ) : items.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-32 text-slate-400 dark:text-slate-500">
-            <Inbox size={32} className="mb-3 opacity-50" />
+            <Dock size={32} className="mb-3 opacity-50" />
             <p className="text-sm">暂无待整理内容</p>
             <Link href="/capture" className="text-sm text-blue-500 dark:text-blue-400 hover:underline mt-2 inline-flex items-center gap-1">
               开始记录 <ArrowRight size={14} />

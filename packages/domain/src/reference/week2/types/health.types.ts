@@ -11,7 +11,7 @@ export type HealthSignalType =
   | 'unused_entries'      // 长期未复用内容（30天）
   | 'stalled_projects'    // 停滞项目（14天）
   | 'orphan_entries'      // 孤岛内容（无标签无项目）
-  | 'unstructured_inbox'; // Inbox 未处理（7天）
+  | 'unstructured_dock'; // Dock 未处理（7天）
 
 export interface HealthSignal {
   type: HealthSignalType;
@@ -26,5 +26,5 @@ export interface HealthSignal {
  * - unused_entries: 30 天未查看
  * - stalled_projects: 14 天无更新
  * - orphan_entries: 无标签且无项目
- * - unstructured_inbox: 7 天未处理
+ * - unstructured_dock: 7 天未处理
  */

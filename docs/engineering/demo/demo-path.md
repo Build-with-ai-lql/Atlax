@@ -4,7 +4,7 @@
 
 ### 前置条件
 
-1. 使用 Node 20.x 运行 `pnpm dev`
+1. 使用 Node v24.15.0 运行 `pnpm dev`
 2. 浏览器打开 `http://localhost:3000`
 3. 首次使用需注册账号（输入用户名即可）
 

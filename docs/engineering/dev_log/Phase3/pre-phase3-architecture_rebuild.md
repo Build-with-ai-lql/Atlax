@@ -879,3 +879,64 @@ Frontend 本轮无代码改动，仅完成结构兼容核查。
 | 技术规格 | `docs/product/TECH_SPEC.md` |
 | 迁移计划 | `docs/engineering/architecture-migration-plan.md` |
 | 项目导览 | `README.md` |
+
+---
+
+## 21. CI 失败修复与 Node 版本统一
+
+| 开发日志信息 | |
+|-------------|---------|
+| 日期 | 2026-04-24 |
+| 负责人 | Codex |
+| 状态 | 已完成 |
+| 类型 | CI 修复 / 运行时版本升级 |
+
+### 21.1 背景
+
+远端 `develop` 分支 GitHub Actions run `24839263407` 在 `validate` job 失败。失败发生在 `pnpm validate` 的第一步 `pnpm lint`，后续 typecheck/test 未执行。
+
+### 21.2 根因
+
+1. `apps/web/tests/repository.test.ts` 中 5 处 `suggestions!` 触发 `@typescript-eslint/no-non-null-assertion`。
+2. `packages/domain/src/policies/SuggestionResetPolicy.ts` 中存在未使用的 `DockItem` 类型导入。
+3. `packages/domain/tests/EntryService.test.ts` 中存在未使用的 `EntryUpdateInput` 类型导入。
+4. 项目本地运行时已切到 Node `v24.15.0`，但 CI 与项目声明仍保留 Node 20 口径。
+5. 修复 lint 后，完整 `validate` 继续暴露旧 `Inbox` 术语残留，会导致 `check:terminology` 失败。
+
+### 21.3 修复内容
+
+| 文件 | 修改 |
+|------|------|
+| `apps/web/tests/repository.test.ts` | 移除 5 处非空断言，直接访问必填数组 `suggestions.length` |
+| `packages/domain/src/policies/SuggestionResetPolicy.ts` | 删除未使用的 `DockItem` 类型导入 |
+| `packages/domain/tests/EntryService.test.ts` | 删除未使用的 `EntryUpdateInput` 类型导入 |
+| `.github/workflows/ci.yml` | `actions/setup-node` 统一为 `node-version: 24.15.0` |
+| `package.json` | `engines.node` 统一为 `24.15.0` |
+| `apps/web/package.json` | `@types/node` 升级到 Node 24 类型声明 |
+| `.nvmrc` | 统一为 `24.15.0` |
+| `docs/engineering/demo/demo-path.md` | Demo 前置条件更新为 Node `v24.15.0` |
+| `apps/web/app/workspace/page.tsx` | lucide 图标变量从 `Inbox` 改为 `Dock`，清除术语违规 |
+| `apps/web/app/dock/page.tsx` | lucide 图标变量从 `Inbox` 改为 `Dock`，清除术语违规 |
+| `packages/domain/src/reference/week2/types/domain.constants.ts` | reference 代码中 `INBOX_STATUSES` / `InboxStatus` 改为 Dock 口径 |
+| `packages/domain/src/reference/week2/types/health.types.ts` | reference 代码中 `unstructured_inbox` 改为 `unstructured_dock` |
+
+### 21.4 验证结果
+
+| 命令 | 结果 | 备注 |
+|------|------|------|
+| `node -v` | ✅ PASS | `v24.15.0` |
+| `corepack pnpm validate` | ✅ PASS | lint、typecheck、domain/web tests、terminology 全部通过 |
+
+### 21.5 验证摘要
+
+```text
+Domain tests: 8 files passed, 71 tests passed
+Web tests:    8 files passed, 102 tests passed
+Terminology:  No Inbox references found
+```
+
+### 21.6 约束检查
+
+- [x] 修复范围限定在 CI 报错、Node 版本声明与开发日志
+- [x] `apps/web/app/**` 仅替换术语检查要求的图标变量名，未改业务流程
+- [x] 保留工作区既有文档迁移状态，不恢复或覆盖用户已有改动

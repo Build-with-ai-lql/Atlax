@@ -4,7 +4,6 @@ import {
   buildEntryPatch,
   buildDockSyncPatch,
   buildEntryAndDockPatches,
-  type EntryUpdateInput,
 } from '../src/services/EntryService'
 
 describe('EntryService', () => {

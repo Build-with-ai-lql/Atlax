@@ -1,5 +1,3 @@
-import type { DockItem } from '../ports/repository'
-
 export interface SuggestionResetInput {
   dockItemId: number
   currentRawText: string

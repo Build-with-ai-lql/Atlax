@@ -11,9 +11,9 @@
 export const SOURCE_TYPES = ['text', 'voice'] as const;
 export type SourceType = (typeof SOURCE_TYPES)[number];
 
-// Inbox 状态流转
-export const INBOX_STATUSES = ['pending', 'suggested', 'archived'] as const;
-export type InboxStatus = (typeof INBOX_STATUSES)[number];
+// Dock 状态流转
+export const DOCK_STATUSES = ['pending', 'suggested', 'archived'] as const;
+export type DockStatus = (typeof DOCK_STATUSES)[number];
 
 // Entry 类型
 export const ENTRY_TYPES = ['note', 'meeting', 'idea', 'task', 'reading'] as const;

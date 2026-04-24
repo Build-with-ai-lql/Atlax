@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Inbox, Archive, Hash, Search, Plus, Send, Paperclip,
+  Dock, Archive, Hash, Search, Plus, Send, Paperclip,
   Image as ImageIcon, CheckSquare, List, Minimize2,
   Mic, MessageSquare, PenTool, ChevronRight, Clock,
   Sparkles, Loader2, Sun, Moon, LogOut, RotateCcw, X, Tag, BarChart3, Filter, SlidersHorizontal,
@@ -519,7 +519,7 @@ export default function WorkspacePage() {
                 ) : activeNav === 'dock' ? (
                   items.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-32 text-slate-400 dark:text-slate-500">
-                      <Inbox size={32} className="mb-3 opacity-50" />
+                      <Dock size={32} className="mb-3 opacity-50" />
                       <p className="text-sm">Dock 为空</p>
                       <p className="text-xs mt-1 opacity-60">在下方输入框快速记录</p>
                     </div>
@@ -632,7 +632,7 @@ export default function WorkspacePage() {
                           onClick={() => { setInputMode('classic'); resetChatState(); setChatMessages([]); setActiveNav('dock') }}
                           className="px-5 py-2.5 text-sm font-medium bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-white/20 transition-colors flex items-center gap-2"
                         >
-                          <Inbox size={16} /> 去 Dock 查看
+                          <Dock size={16} /> 去 Dock 查看
                         </button>
                       </div>
                     )}
@@ -851,8 +851,8 @@ function Sidebar({ activeNav, setActiveNav, user, onLogout, dockCount, mode, onM
   isCollapsed: boolean
   onToggleCollapse: () => void
 }) {
-  const navItems: { id: ViewType; icon: typeof Inbox; label: string }[] = [
-    { id: 'dock', icon: Inbox, label: 'Dock' },
+  const navItems: { id: ViewType; icon: typeof Dock; label: string }[] = [
+    { id: 'dock', icon: Dock, label: 'Dock' },
     { id: 'entries', icon: Archive, label: 'Entries' },
     { id: 'review', icon: BarChart3, label: 'Review' },
   ]
