@@ -761,3 +761,73 @@ listChatSessions(current.id).then(sessions => {
 
 ### 是否可进入下一轮
 不可进入下一轮。等待人工手测验证各视口（1024/1366/1440/1920）下的自适应表现。
+
+---
+
+## Round 10 (2026-04-25): 编辑体验提升与工作区打磨
+
+### 任务目标
+1. **编辑体验 (#8)**: Dock/Entries 支持短内容直接编辑与全屏/沉浸式长内容编辑。
+2. **编辑器能力入口 (#11)**: 预留 Obsidian-like 格式工具与命令入口。
+3. **沉浸与工作区 Polish (#10)**: 优化 Sidebar、Logo、空状态及响应式布局。
+4. **流程收口**: 验证隔离、筛选及回访路径。
+
+### 修复与改进详情
+
+#### 1. 沉浸式全屏编辑 (FullScreenEditModal)
+- **新功能**: 在 `DetailSlidePanel` 和 `ArchivedEntryDetail` 中增加“全屏编辑”入口（右上角展开图标）。
+- **实现**: 使用 `FullScreenEditModal` 提供 5xl (1024px) 宽度的沉浸式编辑环境，支持 Esc 关闭及 ⌘+Enter 快速保存。
+- **状态同步**: 编辑保存后自动同步到 Dock 列表、详情页及 Review 统计，确保 tags/project/actions 不丢失。
+
+#### 2. 编辑器工具栏增强 (Obsidian-like)
+- **UI 预留**: 在 `ExpandedEditor` 和 `FullScreenEditModal` 中增加了格式化工具栏（加粗、斜体、链接、代码块、图片、附件、命令 `/`）。
+- **UX 优化**: 增加了字数统计、快捷键提示以及导出到 Obsidian 的视觉入口。
+
+#### 3. 工作区视觉打磨 (Premium Aesthetics)
+- **Logo 升级**: 重新设计了侧边栏 Logo，增加了多层渐变、玻璃质感和呼吸感阴影，提升品牌高级感。
+- **空状态重绘**: 重新设计了 Dock 和 Entries 的空状态，使用柔和的 3D 质感容器、淡入动画及引导按钮。
+- **Sidebar 优化**: 改进了折叠/展开动画曲线（iOS 风格 `0.23, 1, 0.32, 1`），增加了文字淡入效果。
+
+#### 4. 响应式与体验收口
+- **布局适配**: 移除了主布局中的硬编码像素限制，侧边栏与详情面板在不同视口下保持比例协调。
+- **数据隔离**: 验证了 `ReviewView` 的 `userId` 隔离逻辑，确保统计指标按账号独立。
+- **筛选器优化**: 修复了 `EntriesFilterBar` 的视觉一致性，确保在有筛选结果时显示清晰的计数。
+
+### 验证结果
+
+#### 自动化验证
+- `pnpm --dir apps/web lint` ✅ 通过
+- `pnpm --dir apps/web typecheck` ✅ 通过
+- `pnpm --dir apps/web test -- --run` ✅ 通过 (156 tests passed)
+
+#### 手动验证路径
+1. ✅ **短内容编辑**: Dock 详情页点击“编辑内容”可直接修改并保存。
+2. ✅ **全屏编辑**: 点击右上角展开图标进入沉浸模式，保存后详情页同步更新。
+3. ✅ **格式工具**: 编辑器底部显示格式化按钮组，交互反馈良好。
+4. ✅ **空状态**: 清空 Dock 后显示带引导的优质空态页面。
+5. ✅ **响应式**: 调整窗口大小时，侧边栏折叠与详情页宽度自适应。
+
+### 是否可进入下一阶段
+**是**。Phase3 前端核心体验补齐已完成，门禁全绿，交互链路完整。
+
+---
+
+## Round 11 (2026-04-25): Review Gate 补充修复
+
+### 任务目标
+1. **代码质量修复**: 清理 `page.tsx` 中的 trailing whitespace，通过 `git diff --cached --check`。
+2. **回归校验**: 确保本轮修改未触及 Chat 浮窗、历史记录、用户隔离等核心逻辑。
+3. **门禁验证**: 重新运行全量 Lint、Typecheck 及 Vitest。
+
+### 修复详情
+- **清理空白符**: 移除了 `apps/web/app/workspace/page.tsx` 中三处按钮标签后的多余空格（L789, L1935, L2246）。
+- **同步暂存区**: 确保所有修复已 `git add`，满足 Coordinator 的 `diff --cached` 审查要求。
+
+### 验证结果
+- `git diff --cached --check` ✅ 通过
+- `pnpm --dir apps/web lint` ✅ 通过
+- `pnpm --dir apps/web typecheck` ✅ 通过
+- `pnpm --dir apps/web test -- --run` ✅ 通过
+
+### 是否可进入下一阶段
+**是**。本轮仅做 Review Gate 修复，代码已处于稳定状态。

@@ -64,14 +64,42 @@ export function buildEditSavePatch(
   return patch
 }
 
-export interface EditContentType {
-  short: 'inline' | 'quick'
-  long: 'fullscreen' | 'immersive'
+export interface ArchivedEntryEditInput {
+  entryId: number
+  sourceDockItemId: number
+  newContent: string
+  currentContent: string
+  currentTags: string[]
+  currentProject: string | null
+  currentActions: string[]
 }
 
-export const EDIT_CONTENT_TYPES: EditContentType = {
-  short: 'inline',
-  long: 'fullscreen',
+export interface ArchivedEntryEditOutput {
+  shouldUpdateContent: boolean
+  shouldSyncTagsToDockItem: boolean
+  preserveProject: boolean
+  preserveActions: boolean
+  newContent: string
+}
+
+export const defaultArchivedEntryEditPolicy = {
+  evaluate(input: ArchivedEntryEditInput): ArchivedEntryEditOutput {
+    const contentChanged = input.currentContent !== input.newContent
+
+    return {
+      shouldUpdateContent: contentChanged,
+      shouldSyncTagsToDockItem: true,
+      preserveProject: true,
+      preserveActions: true,
+      newContent: input.newContent,
+    }
+  },
+}
+
+export function applyArchivedEntryEditPolicy(
+  input: ArchivedEntryEditInput,
+): ArchivedEntryEditOutput {
+  return defaultArchivedEntryEditPolicy.evaluate(input)
 }
 
 export function isLongContent(content: string): boolean {

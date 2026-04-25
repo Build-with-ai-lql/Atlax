@@ -1,3 +1,4 @@
+export * from './ChainLinkService'
 export * from './ChatGuidanceService'
 export * from './DockItemService'
 export * from './EditSavePolicy'

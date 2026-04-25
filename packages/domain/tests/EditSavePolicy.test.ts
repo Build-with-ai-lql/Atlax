@@ -7,8 +7,10 @@ import {
   isLongContent,
   getEditContentType,
   getSavePathDescription,
+  applyArchivedEntryEditPolicy,
   type EditSavePolicyInput,
   type EditSavePolicy,
+  type ArchivedEntryEditInput,
 } from '../src/services/EditSavePolicy'
 
 describe('EditSavePolicy', () => {
@@ -216,6 +218,70 @@ describe('EditSavePolicy', () => {
       const result = applyEditSavePolicy(input)
       expect(result.newStatus).toBe('pending')
       expect(result.shouldResetStatus).toBe(false)
+    })
+  })
+
+  describe('archived entry edit policy', () => {
+    it('preserves project on content edit', () => {
+      const input: ArchivedEntryEditInput = {
+        entryId: 1,
+        sourceDockItemId: 10,
+        newContent: 'updated content',
+        currentContent: 'original content',
+        currentTags: ['tag1'],
+        currentProject: 'MyProject',
+        currentActions: ['action1'],
+      }
+
+      const result = applyArchivedEntryEditPolicy(input)
+      expect(result.preserveProject).toBe(true)
+      expect(result.preserveActions).toBe(true)
+    })
+
+    it('detects content change', () => {
+      const input: ArchivedEntryEditInput = {
+        entryId: 1,
+        sourceDockItemId: 10,
+        newContent: 'new content',
+        currentContent: 'old content',
+        currentTags: [],
+        currentProject: null,
+        currentActions: [],
+      }
+
+      const result = applyArchivedEntryEditPolicy(input)
+      expect(result.shouldUpdateContent).toBe(true)
+      expect(result.newContent).toBe('new content')
+    })
+
+    it('detects no content change', () => {
+      const input: ArchivedEntryEditInput = {
+        entryId: 1,
+        sourceDockItemId: 10,
+        newContent: 'same content',
+        currentContent: 'same content',
+        currentTags: [],
+        currentProject: null,
+        currentActions: [],
+      }
+
+      const result = applyArchivedEntryEditPolicy(input)
+      expect(result.shouldUpdateContent).toBe(false)
+    })
+
+    it('syncs tags to dock item', () => {
+      const input: ArchivedEntryEditInput = {
+        entryId: 1,
+        sourceDockItemId: 10,
+        newContent: 'content',
+        currentContent: 'content',
+        currentTags: ['tag1', 'tag2'],
+        currentProject: null,
+        currentActions: [],
+      }
+
+      const result = applyArchivedEntryEditPolicy(input)
+      expect(result.shouldSyncTagsToDockItem).toBe(true)
     })
   })
 })

@@ -504,6 +504,179 @@ await addChatMessage('user-123', session.id, {
 
 ---
 
+## Round 4 Backend - 链式结构/编辑策略/编辑器接口收口
+
+| 开发日志信息 | |
+|-------------|---------|
+| 执行者 | Backend Agent |
+| 时间戳 | 2026-04-24 14:28 CST |
+| 运行轮次 | Phase 3 Round 4 Backend |
+| 状态 | 已完成 |
+
+### 1. 变更内容
+
+#### 1.1 #7 链式结构收口
+
+- **新增文件**: `packages/domain/src/services/ChainLinkService.ts`
+- **读写合约**:
+  - `ChainLink`: `{ itemId, sourceId, parentId }` 最小链路模型
+  - `ChainRelationType`: `'reorganize' | 'continue_edit' | 'derive'`
+  - `ChainProvenance`: 完整溯源信息（含 sourceTitle/parentTitle）
+- **Builder 函数**: `buildReorganizeLink`, `buildContinueEditLink`, `buildDeriveLink`
+- **验证**: `validateChainLinkUpdate` 防止自引用
+- **查询**: `resolveChainRelation`, `isRootItem`, `hasChainLink`, `buildProvenance`
+- **真实 Dexie 测试** (6 tests): reorganize/continue_edit/derive 关系、清除链路、跨用户阻止、suggest/archive 周期保留
+
+#### 1.2 #8 编辑保存策略收敛
+
+- **增强**: `packages/domain/src/services/EditSavePolicy.ts`
+- **新增**: `ArchivedEntryEditInput/Output` + `applyArchivedEntryEditPolicy`
+- **策略**: archived entry 编辑时 preserveProject=true, preserveActions=true, shouldSyncTagsToDockItem=true
+- **domain 测试** (4 tests): preserve project/actions, content change detection, tag sync
+
+#### 1.3 #11 编辑器能力接口
+
+- **新增测试**: `packages/domain/tests/EditorCapabilityPort.test.ts` (14 tests)
+- **覆盖**: command/tool 列表、唯一性、可用性检查、常量一致性
+
+#### 1.4 Review/Browse 数据质量
+
+- **确认**: 所有 repository 方法均有 userId 隔离（88 处 userId 检查）
+- **events.ts**: userId 隔离测试已有（5 tests）
+- **无需额外修复**
+
+### 2. 验证结果
+
+| 命令 | 结果 | 备注 |
+|------|------|------|
+| `pnpm --filter @atlax/domain typecheck` | ✅ PASS | - |
+| `pnpm --filter @atlax/domain test -- --run` | ✅ 177 tests / 14 files | - |
+| `pnpm --dir apps/web typecheck` | ✅ PASS | - |
+| `pnpm --dir apps/web test -- --run` | ✅ 156 tests / 9 files | - |
+
+### 3. 测试详情
+
+**domain 层** (177 tests):
+```
+ ✓ tests/ChainLinkService.test.ts (21 tests)     ← 新增
+ ✓ tests/EditorCapabilityPort.test.ts (14 tests)  ← 新增
+ ✓ tests/EditSavePolicy.test.ts (19 tests)        ← 新增 4 个 archived entry 测试
+ ✓ tests/ChatGuidanceService.test.ts (17 tests)
+ ✓ tests/ChatSession.test.ts (19 tests)
+ ✓ tests/EntryService.test.ts (14 tests)
+ ✓ tests/archive-service.test.ts (13 tests)
+ ✓ tests/sanitizeSuggestionLabel.test.ts (12 tests)
+ ✓ tests/SuggestionResetPolicy.test.ts (10 tests)
+ ✓ tests/tag-service.test.ts (18 tests)
+ ✓ tests/DockItemService.test.ts (9 tests)
+ ✓ tests/suggestion-engine.test.ts (6 tests)
+ ✓ tests/selectors.test.ts (1 test)
+ ✓ tests/state-machine.test.ts (4 tests)
+```
+
+**web 层** (156 tests):
+```
+ ✓ tests/repository.test.ts (48 tests)            ← 新增 6 个 chain link 测试
+ ✓ tests/chat-session.test.ts (35 tests)
+ ✓ tests/events.test.ts (26 tests)
+ ✓ tests/archive-reopen.test.ts (12 tests)
+ ✓ tests/migration.test.ts (10 tests)
+ ✓ tests/browse-seed.test.ts (10 tests)
+ ✓ tests/suggest-tag.test.ts (9 tests)
+ ✓ tests/chat-source.test.ts (4 tests)
+ ✓ tests/integration.test.ts (2 tests)
+```
+
+### 4. 是否可进入下一轮
+
+**可以**。所有验证通过，无阻塞问题。
+
+### 5. 下一轮风险
+
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| 前端 chain link UI 接入 | 低 | 后端 API 已就绪，前端需实现链路展示 |
+| 前端编辑器 command 接入 | 低 | port 类型已稳定，前端需对接 |
+
+### 6. 变更文件清单
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `packages/domain/src/services/ChainLinkService.ts` | A | 新增 - 链式结构服务 |
+| `packages/domain/src/services/index.ts` | M | 导出 ChainLinkService |
+| `packages/domain/src/services/EditSavePolicy.ts` | M | 新增 ArchivedEntryEditPolicy |
+| `packages/domain/tests/ChainLinkService.test.ts` | A | 新增 - 21 个链式结构测试 |
+| `packages/domain/tests/EditorCapabilityPort.test.ts` | A | 新增 - 14 个编辑器能力测试 |
+| `packages/domain/tests/EditSavePolicy.test.ts` | M | 新增 4 个 archived entry 测试 |
+| `apps/web/tests/repository.test.ts` | M | 新增 6 个 chain link Dexie 测试 |
+| `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | 本轮开发日志 |
+
+---
+
+## Round 5 Backend - updateChainLinks 验证修复
+
+| 开发日志信息 | |
+|-------------|---------|
+| 执行者 | Backend Agent |
+| 时间戳 | 2026-04-24 15:12 CST |
+| 运行轮次 | Phase 3 Round 5 Backend |
+| 状态 | 已完成 |
+
+### 1. 修复内容
+
+#### 1.1 updateChainLinks 验证接入
+
+- **问题**: `updateChainLinks` 未验证 sourceId/parentId 的存在性和 ownership
+- **修复**:
+  - 新增 `validateChainLinkWithContext` (async) 到 ChainLinkService
+  - 支持 self-reference 检查、existence 检查、userId ownership 检查
+  - `findItemById` 签名改为 async 以匹配 Dexie 查询
+  - repository.ts `updateChainLinks` 接入 `await validateChainLinkWithContext`
+  - 非法输入返回 null，不写入 DB
+
+#### 1.2 真实 Dexie repository 测试（7 个新增）
+
+- sourceId 指向其他用户 item → 返回 null，原 item 不变
+- parentId 指向其他用户 item → 返回 null
+- sourceId/parentId 指向不存在 id → 返回 null
+- sourceId/self → 返回 null
+- parentId/self → 返回 null
+- 合法同用户 source/parent → 可保存
+
+#### 1.3 domain 层测试（9 个新增）
+
+- `validateChainLinkWithContext` 全部 9 个场景覆盖
+
+### 2. 验证结果
+
+| 命令 | 结果 | 备注 |
+|------|------|------|
+| `pnpm --filter @atlax/domain typecheck` | ✅ PASS | - |
+| `pnpm --filter @atlax/domain test -- --run` | ✅ 186 tests / 14 files | - |
+| `pnpm --dir apps/web typecheck` | ✅ PASS | - |
+| `pnpm --dir apps/web test -- --run` | ✅ 163 tests / 9 files | - |
+| `git diff --cached --check` | ⚠️ trailing whitespace | 来自前端 page.tsx，非本轮修改 |
+
+### 3. 是否解决
+
+**已解决**。updateChainLinks 现在会验证 sourceId/parentId 的 self-reference、existence、ownership。
+
+### 4. 下一轮风险
+
+无新增风险。
+
+### 5. 变更文件清单
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `packages/domain/src/services/ChainLinkService.ts` | M | 新增 validateChainLinkWithContext (async) |
+| `packages/domain/tests/ChainLinkService.test.ts` | M | 新增 9 个 validateChainLinkWithContext 测试 |
+| `apps/web/lib/repository.ts` | M | updateChainLinks 接入验证 |
+| `apps/web/tests/repository.test.ts` | M | 新增 7 个 chain link 验证测试 |
+| `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | 本轮开发日志 |
+
+---
+
 ## 历史记录
 
 （无）

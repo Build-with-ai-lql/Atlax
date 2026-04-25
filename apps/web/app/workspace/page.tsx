@@ -6,7 +6,7 @@ import {
   Image as ImageIcon, CheckSquare, List, Minimize2,
   Mic, MessageSquare, PenTool, ChevronRight, Clock,
   Sparkles, Loader2, Sun, Moon, LogOut, RotateCcw, X, Tag, BarChart3, Filter, SlidersHorizontal,
-  PanelLeftClose, PanelLeftOpen
+  PanelLeftClose, PanelLeftOpen, Bold, Italic, Link, Code, Command, ExternalLink
 } from 'lucide-react'
 
 import { DetailHeaderActions } from './_components/DetailHeaderActions'
@@ -178,6 +178,8 @@ export default function WorkspacePage() {
     }
     return 'card'
   })
+
+  const [fullScreenEditData, setFullScreenEditData] = useState<{ type: 'dock' | 'entry', id: number, content: string } | null>(null)
 
   useEffect(() => {
     if (isAtBottomRef.current && messagesContainerRef.current) {
@@ -629,6 +631,9 @@ export default function WorkspacePage() {
     const result = await updateArchivedEntry(userId, entryId, updates)
     if (result) {
       setArchivedEntries((current) => current.map((e) => (e.id === result.id ? result : e)))
+      if (fullScreenEditData?.type === 'entry' && fullScreenEditData.id === entryId) {
+        setFullScreenEditData(null)
+      }
     }
   }
 
@@ -636,6 +641,9 @@ export default function WorkspacePage() {
     const result = await updateDockItemText(userId, itemId, rawText)
     if (result) {
       setItems((current) => current.map((i) => (i.id === result.id ? result : i)))
+      if (fullScreenEditData?.type === 'dock' && fullScreenEditData.id === itemId) {
+        setFullScreenEditData(null)
+      }
     }
   }
 
@@ -772,10 +780,18 @@ export default function WorkspacePage() {
                   </div>
                 ) : activeNav === 'dock' ? (
                   items.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-32 text-slate-400 dark:text-slate-500">
-                      <Dock size={32} className="mb-3 opacity-50" />
-                      <p className="text-sm">Dock 为空</p>
-                      <p className="text-xs mt-1 opacity-60">在下方输入框快速记录</p>
+                    <div className="flex flex-col items-center justify-center py-20 text-slate-400 dark:text-slate-500 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                      <div className="w-16 h-16 bg-white dark:bg-white/5 rounded-3xl shadow-sm flex items-center justify-center mb-6 border border-slate-100 dark:border-white/5">
+                        <Dock size={32} className="opacity-20" />
+                      </div>
+                      <p className="text-base font-medium text-slate-600 dark:text-slate-300">Dock 虚位以待</p>
+                      <p className="text-sm mt-1.5 opacity-60 max-w-[200px] text-center leading-relaxed">每一个伟大的想法，都值得被认真记录</p>
+                      <button
+                        onClick={() => setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')}
+                        className="mt-6 px-4 py-2 bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-medium transition-colors"
+                      >
+                        即刻开始记录
+                      </button>
                     </div>
                   ) : (
                     <>
@@ -823,11 +839,18 @@ export default function WorkspacePage() {
                       onClear={clearEntryFilters}
                     />
                     {filteredEntries.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-32 text-slate-400 dark:text-slate-500">
-                        <Archive size={32} className="mb-3 opacity-50" />
-                        <p className="text-sm">{hasActiveFilters ? '没有匹配的归档内容' : '暂无归档内容'}</p>
+                      <div className="flex flex-col items-center justify-center py-20 text-slate-400 dark:text-slate-500 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                        <div className="w-16 h-16 bg-white dark:bg-white/5 rounded-3xl shadow-sm flex items-center justify-center mb-6 border border-slate-100 dark:border-white/5">
+                          <Archive size={32} className="opacity-20" />
+                        </div>
+                        <p className="text-base font-medium text-slate-600 dark:text-slate-300">
+                          {hasActiveFilters ? '未找到匹配结果' : '暂无归档内容'}
+                        </p>
+                        <p className="text-sm mt-1.5 opacity-60 max-w-[240px] text-center leading-relaxed">
+                          {hasActiveFilters ? '尝试调整筛选条件，或者清除全部筛选' : '归档后的内容将永久保存在这里'}
+                        </p>
                         {hasActiveFilters && (
-                          <button onClick={clearEntryFilters} className="text-xs text-blue-500 dark:text-blue-400 mt-1 hover:underline">清除筛选</button>
+                          <button onClick={clearEntryFilters} className="mt-6 text-xs text-blue-500 dark:text-blue-400 hover:underline font-medium">清除全部筛选</button>
                         )}
                       </div>
                     ) : (
@@ -1010,6 +1033,21 @@ export default function WorkspacePage() {
             )}
           </div>
 
+          {fullScreenEditData && (
+            <FullScreenEditModal
+              data={fullScreenEditData}
+              onClose={() => setFullScreenEditData(null)}
+              onSave={async (content) => {
+                if (fullScreenEditData.type === 'dock') {
+                  await handleUpdateDockItem(fullScreenEditData.id, content)
+                } else {
+                  await handleUpdateEntry(fullScreenEditData.id, { content })
+                }
+              }}
+              actionLoading={actionLoading}
+            />
+          )}
+
           {(selectedItem || selectedArchivedEntry) && (
             <DetailSlidePanel
               item={selectedItem}
@@ -1030,6 +1068,7 @@ export default function WorkspacePage() {
               onUpdateDockItem={handleUpdateDockItem}
               onUpdateSelectedActions={handleUpdateSelectedActions}
               onUpdateSelectedProject={handleUpdateSelectedProject}
+              onFullScreenEdit={setFullScreenEditData}
               onClose={() => { setSelectedItemId(null); setSelectedArchivedEntryId(null) }}
               actionLoading={actionLoading}
               uniqueProjects={uniqueProjects}
@@ -1107,18 +1146,18 @@ function Sidebar({ activeNav, setActiveNav, user, onLogout, dockCount, isCollaps
       </button>
 
       <div className={`p-6 flex items-center ${isCollapsed ? 'justify-center px-0' : ''}`}>
-        <div className="relative w-10 h-10 flex flex-shrink-0 items-center justify-center group cursor-pointer">
-          <div className="absolute inset-0 bg-white/80 dark:bg-black/50 backdrop-blur-xl rounded-[14px] shadow-[0_2px_10px_rgba(0,0,0,0.03)] dark:shadow-[0_2px_10px_rgba(0,0,0,0.4)] border border-white/60 dark:border-white/10 transition-shadow duration-500 group-hover:shadow-[0_8px_20px_rgba(0,0,0,0.06)] dark:group-hover:shadow-[0_8px_30px_rgba(0,0,0,0.6)]"></div>
-          <div className="absolute inset-[3px] rounded-[11px] bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-400 opacity-80 blur-[1px] group-hover:opacity-100 group-hover:blur-[2px] group-hover:scale-105 transition-all duration-700 ease-out"></div>
-          <div className="absolute inset-[3px] rounded-[11px] bg-gradient-to-b from-white/80 dark:from-white/30 via-white/20 dark:via-transparent to-transparent border border-white/50 dark:border-white/20 z-10 pointer-events-none"></div>
-          <div className="w-2.5 h-2.5 bg-white rounded-full shadow-[0_2px_4px_rgba(0,0,0,0.4)] z-20 group-hover:scale-110 transition-transform duration-300"></div>
+        <div className="relative w-11 h-11 flex flex-shrink-0 items-center justify-center group cursor-pointer">
+          <div className="absolute inset-0 bg-white/80 dark:bg-black/50 backdrop-blur-xl rounded-[15px] shadow-[0_4px_12px_rgba(0,0,0,0.05)] dark:shadow-[0_4px_15px_rgba(0,0,0,0.5)] border border-white/60 dark:border-white/10 transition-all duration-500 group-hover:shadow-[0_8px_25px_rgba(0,0,0,0.08)] dark:group-hover:shadow-[0_12px_40px_rgba(0,0,0,0.7)] group-hover:-translate-y-0.5"></div>
+          <div className="absolute inset-[3px] rounded-[12px] bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-400 opacity-90 blur-[0.5px] group-hover:opacity-100 group-hover:blur-[1px] group-hover:scale-105 transition-all duration-700 ease-out shadow-[0_0_15px_rgba(59,130,246,0.3)]"></div>
+          <div className="absolute inset-[3px] rounded-[12px] bg-gradient-to-b from-white/90 dark:from-white/30 via-white/20 dark:via-transparent to-transparent border border-white/50 dark:border-white/20 z-10 pointer-events-none"></div>
+          <div className="w-2.5 h-2.5 bg-white rounded-full shadow-[0_2px_5px_rgba(0,0,0,0.3)] z-20 group-hover:scale-110 transition-transform duration-500"></div>
         </div>
         {!isCollapsed && (
-          <div className="flex flex-col justify-center ml-3.5 mt-0.5 cursor-pointer overflow-hidden whitespace-nowrap">
-            <span className="text-[9px] font-bold tracking-[0.35em] text-slate-400 uppercase leading-none mb-1">Atlax</span>
-            <span className="text-[22px] tracking-[-0.04em] text-slate-800 dark:text-slate-100 leading-none flex items-center transition-colors">
-              <span className="font-bold text-slate-900 dark:text-white">Mind</span>
-              <span className="font-light text-slate-500 dark:text-slate-400">Dock</span>
+          <div className="flex flex-col justify-center ml-4 mt-0.5 cursor-pointer overflow-hidden whitespace-nowrap animate-in fade-in slide-in-from-left-2 duration-500">
+            <span className="text-[10px] font-black tracking-[0.4em] text-blue-500 dark:text-blue-400 uppercase leading-none mb-1.5">Atlax</span>
+            <span className="text-[24px] tracking-[-0.05em] text-slate-800 dark:text-slate-100 leading-none flex items-center transition-colors">
+              <span className="font-extrabold text-slate-900 dark:text-white">Mind</span>
+              <span className="font-light text-slate-400 dark:text-slate-500">Dock</span>
             </span>
           </div>
         )}
@@ -1673,7 +1712,15 @@ function ExpandedEditor({ text, setText, onSave, onClose, hideHeader = false }: 
     <div className="w-full bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-[0_20px_60px_rgb(0,0,0,0.12)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-slate-100 dark:border-white/5 overflow-hidden flex flex-col transition-all duration-500 relative">
       {!hideHeader && (
         <div className="px-5 py-3 border-b border-slate-50 dark:border-white/5 flex items-center justify-between bg-slate-50/50 dark:bg-black/20">
-          <span className="text-xs font-semibold px-2.5 py-1 bg-slate-200 dark:bg-white/10 text-slate-700 dark:text-slate-300 rounded-lg flex items-center gap-1.5"><PenTool size={12} /> Classic 模式</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold px-2.5 py-1 bg-blue-500 text-white rounded-lg flex items-center gap-1.5 shadow-sm shadow-blue-200/50">
+              <PenTool size={12} /> Classic 模式
+            </span>
+            <div className="flex items-center space-x-1 ml-2">
+              <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-white/5 text-[10px] text-slate-400 rounded">Esc 关闭</span>
+              <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-white/5 text-[10px] text-slate-400 rounded">⌘ Enter 保存</span>
+            </div>
+          </div>
           {onClose && (
             <button onClick={onClose} className="p-1.5 text-slate-400 hover:bg-slate-200 dark:hover:bg-white/10 rounded-lg transition-colors">
               <Minimize2 size={16} />
@@ -1681,35 +1728,125 @@ function ExpandedEditor({ text, setText, onSave, onClose, hideHeader = false }: 
           )}
         </div>
       )}
-      <div className="p-5 relative">
+      <div className="p-5 relative flex-1 flex flex-col">
         <textarea
           autoFocus
-          placeholder="输入记录内容..."
-          className="w-full h-32 bg-transparent border-none focus:outline-none resize-none text-slate-700 dark:text-slate-200 text-[15px] placeholder:text-slate-300 dark:placeholder:text-slate-600 leading-relaxed"
+          placeholder="输入记录内容... 支持沉浸式长文本写作"
+          className="w-full flex-1 min-h-[200px] bg-transparent border-none focus:outline-none resize-none text-slate-700 dark:text-slate-200 text-[15px] placeholder:text-slate-300 dark:placeholder:text-slate-600 leading-relaxed font-sans"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSave()
+            if (e.key === 'Escape' && onClose) onClose()
           }}
         />
       </div>
-      <div className="px-4 py-3 bg-white dark:bg-[#1C1C1E] border-t border-slate-50 dark:border-white/5 flex items-center justify-between">
+      <div className="px-4 py-3 bg-white dark:bg-[#1C1C1E] border-t border-slate-50 dark:border-white/5 flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center space-x-1">
+          <ToolButton icon={Bold} tooltip="加粗" />
+          <ToolButton icon={Italic} tooltip="斜体" />
+          <ToolButton icon={Link} tooltip="链接" />
+          <ToolButton icon={Code} tooltip="代码块" />
+          <div className="w-[1px] h-4 bg-slate-200 dark:bg-white/10 mx-2"></div>
           <ToolButton icon={ImageIcon} tooltip="图片" />
           <ToolButton icon={Paperclip} tooltip="附件" />
           <div className="w-[1px] h-4 bg-slate-200 dark:bg-white/10 mx-2"></div>
-          <ToolButton icon={CheckSquare} tooltip="待办" />
-          <ToolButton icon={List} tooltip="列表" />
+          <ToolButton icon={Command} tooltip="命令 (/)" />
         </div>
-        <div className="flex items-center space-x-3">
-          <span className="text-xs text-slate-400 dark:text-slate-500 font-medium tracking-wide">{text.length} 字</span>
+        <div className="flex items-center space-x-3 ml-auto">
+          <span className="text-[11px] text-slate-400 dark:text-slate-500 font-medium tracking-wide bg-slate-50 dark:bg-white/5 px-2 py-1 rounded-md">{text.length} 字</span>
           <button
             onClick={handleSave}
             disabled={!text.trim() || saving}
-            className="px-5 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400 text-white rounded-xl font-medium shadow-sm shadow-blue-200 dark:shadow-none transition-all active:scale-95 flex items-center gap-2"
+            className="px-5 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-blue-400 text-white rounded-xl font-medium shadow-sm shadow-blue-200/50 dark:shadow-none transition-all active:scale-95 flex items-center gap-2"
           >
-            {saving ? '保存中…' : '保存'} <Send size={16} className="ml-1" />
+            {saving ? '保存中…' : '保存'} <Send size={16} />
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function FullScreenEditModal({ data, onClose, onSave, actionLoading }: {
+  data: { type: 'dock' | 'entry', id: number, content: string }
+  onClose: () => void
+  onSave: (content: string) => Promise<void>
+  actionLoading: boolean
+}) {
+  const [text, setText] = useState(data.content)
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = async () => {
+    if (!text.trim() || saving) return
+    setSaving(true)
+    try {
+      await onSave(text)
+      onClose()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-12">
+      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity duration-500" onClick={onClose} />
+      <div className="relative w-full h-full max-w-5xl bg-white dark:bg-[#0E0E11] rounded-[32px] shadow-[0_30px_100px_rgba(0,0,0,0.5)] border border-white/20 dark:border-white/5 overflow-hidden flex flex-col transition-all duration-500 animate-in fade-in zoom-in duration-300">
+        <div className="px-8 py-5 border-b border-slate-100 dark:border-white/5 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="px-3 py-1 bg-indigo-500 text-white text-[10px] font-bold uppercase tracking-wider rounded-lg shadow-sm">沉浸编辑</span>
+            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+              {data.type === 'dock' ? '编辑 Dock 内容' : '编辑归档条目'}
+            </h3>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center space-x-1.5 mr-2">
+              <span className="px-2 py-0.5 bg-slate-100 dark:bg-white/5 text-[10px] text-slate-400 rounded">Esc 关闭</span>
+              <span className="px-2 py-0.5 bg-slate-100 dark:bg-white/5 text-[10px] text-slate-400 rounded">⌘ Enter 保存</span>
+            </div>
+            <button onClick={onClose} className="p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 rounded-xl transition-colors">
+              <X size={20} />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 p-8 md:p-12 overflow-y-auto">
+          <textarea
+            autoFocus
+            placeholder="开始你的沉浸式创作..."
+            className="w-full h-full bg-transparent border-none focus:outline-none resize-none text-slate-800 dark:text-slate-100 text-lg md:text-xl placeholder:text-slate-300 dark:placeholder:text-slate-700 leading-relaxed font-sans selection:bg-blue-100 dark:selection:bg-blue-900"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSave()
+              if (e.key === 'Escape') onClose()
+            }}
+          />
+        </div>
+
+        <div className="px-8 py-5 bg-slate-50/50 dark:bg-white/5 border-t border-slate-100 dark:border-white/5 flex items-center justify-between">
+          <div className="flex items-center space-x-1">
+            <ToolButton icon={Bold} tooltip="加粗" />
+            <ToolButton icon={Italic} tooltip="斜体" />
+            <ToolButton icon={Link} tooltip="链接" />
+            <ToolButton icon={Code} tooltip="代码块" />
+            <div className="w-[1px] h-6 bg-slate-200 dark:bg-white/10 mx-3"></div>
+            <ToolButton icon={ImageIcon} tooltip="插入图片" />
+            <ToolButton icon={Paperclip} tooltip="添加附件" />
+            <div className="w-[1px] h-6 bg-slate-200 dark:bg-white/10 mx-3"></div>
+            <ToolButton icon={Command} tooltip="快速命令 (/)" />
+            <ToolButton icon={ExternalLink} tooltip="导出到 Obsidian" />
+          </div>
+          <div className="flex items-center gap-6">
+            <span className="text-xs text-slate-400 dark:text-slate-500 font-medium tracking-widest">{text.length} WORDS</span>
+            <button
+              onClick={handleSave}
+              disabled={!text.trim() || saving || actionLoading}
+              className="px-8 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-400 text-white rounded-2xl font-bold shadow-lg shadow-blue-500/30 transition-all active:scale-95 flex items-center gap-2"
+            >
+              {saving || actionLoading ? '正在同步...' : '保存变更'} <Send size={18} />
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1727,7 +1864,7 @@ function ToolButton({ icon: Icon, tooltip }: { icon: typeof ImageIcon; tooltip: 
   )
 }
 
-function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggestions, onSuggest, onArchive, onIgnore, onRestore, onReopen, onAddTag, onRemoveTag, onDismissSuggestion, onUpdateEntry, onUpdateDockItem, onUpdateSelectedActions, onUpdateSelectedProject, uniqueProjects, onClose, actionLoading }: {
+function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggestions, onSuggest, onArchive, onIgnore, onRestore, onReopen, onAddTag, onRemoveTag, onDismissSuggestion, onUpdateEntry, onUpdateDockItem, onUpdateSelectedActions, onUpdateSelectedProject, uniqueProjects, onClose, actionLoading, onFullScreenEdit }: {
   item: DockItem | null
   archivedEntry: StoredEntry | null
   existingTags: StoredTag[]
@@ -1745,6 +1882,7 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
   onUpdateSelectedActions: (itemId: number, actions: string[]) => Promise<void>
   onUpdateSelectedProject: (itemId: number, project: string | null) => Promise<void>
   onClose: () => void
+  onFullScreenEdit: (data: { type: 'dock' | 'entry', id: number, content: string }) => void
   actionLoading: boolean
   uniqueProjects: string[]
 }) {
@@ -1761,7 +1899,7 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
   }, [item])
 
   if (archivedEntry) {
-    return <ArchivedEntryDetail archivedEntry={archivedEntry} onReopen={onReopen} onUpdateEntry={onUpdateEntry} onClose={onClose} actionLoading={actionLoading} />
+    return <ArchivedEntryDetail archivedEntry={archivedEntry} onReopen={onReopen} onUpdateEntry={onUpdateEntry} onClose={onClose} actionLoading={actionLoading} onFullScreenEdit={onFullScreenEdit} />
   }
 
   if (!item) return null
@@ -1788,12 +1926,19 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
         <div className="mb-6">
           {editing ? (
             <div className="flex flex-col space-y-4">
-              <div className="flex-1">
+              <div className="flex-1 relative group">
                 <textarea
                   value={editRawText}
                   onChange={(e) => setEditRawText(e.target.value)}
                   className="w-full min-h-[300px] px-4 py-3 text-[15px] bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400 resize-y text-slate-700 dark:text-slate-200"
                 />
+                <button
+                  onClick={() => onFullScreenEdit({ type: 'dock', id: item.id, content: editRawText })}
+                  className="absolute top-2 right-2 p-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg text-slate-400 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity shadow-sm"
+                  title="全屏编辑"
+                >
+                  <Minimize2 size={14} className="rotate-45" />
+                </button>
               </div>
               <div className="flex gap-2">
                 <button
@@ -2041,11 +2186,12 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
   )
 }
 
-function ArchivedEntryDetail({ archivedEntry, onReopen, onUpdateEntry, onClose, actionLoading }: {
+function ArchivedEntryDetail({ archivedEntry, onReopen, onUpdateEntry, onClose, actionLoading, onFullScreenEdit }: {
   archivedEntry: StoredEntry
   onReopen: (dockItemId: number) => Promise<void>
   onUpdateEntry: (entryId: number, updates: { tags?: string[]; project?: string | null; content?: string; title?: string }) => Promise<void>
   onClose: () => void
+  onFullScreenEdit: (data: { type: 'dock' | 'entry', id: number, content: string }) => void
   actionLoading: boolean
 }) {
   const [editing, setEditing] = useState(false)
@@ -2091,12 +2237,19 @@ function ArchivedEntryDetail({ archivedEntry, onReopen, onUpdateEntry, onClose, 
 
         {editing ? (
           <div className="flex flex-col h-full space-y-4">
-            <div className="flex-1 flex flex-col min-h-[400px]">
+            <div className="flex-1 flex flex-col min-h-[400px] relative group">
               <textarea
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
                 className="w-full flex-1 px-4 py-3 text-[15px] bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none text-slate-700 dark:text-slate-200"
               />
+              <button
+                onClick={() => onFullScreenEdit({ type: 'entry', id: archivedEntry.id, content: editContent })}
+                className="absolute top-2 right-2 p-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg text-slate-400 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity shadow-sm"
+                title="全屏编辑"
+              >
+                <Minimize2 size={14} className="rotate-45" />
+              </button>
             </div>
             <div className="pt-4 border-t border-slate-100 dark:border-white/5">
               <label className="text-xs text-slate-500 dark:text-slate-400 font-medium mb-2 block">标签</label>

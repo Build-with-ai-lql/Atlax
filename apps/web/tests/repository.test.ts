@@ -21,6 +21,7 @@ import {
   restoreItem,
   suggestItem,
   updateArchivedEntry,
+  updateChainLinks,
   updateDockItemText,
   updateSelectedActions,
   updateSelectedProject,
@@ -533,6 +534,126 @@ describe('repository', () => {
       const entry = unwrap(await getEntryByDockItemId(USER_A, id))
       expect(entry.project).toBe('ProjectA')
       expect(entry.actions).toEqual(['action1'])
+    })
+  })
+
+  describe('chain links (sourceId/parentId)', () => {
+    it('sets sourceId for reorganize relation', async () => {
+      const sourceId = await createDockItem(USER_A, '原始记录')
+      const derivedId = await createDockItem(USER_A, '重新整理的记录')
+
+      const updated = unwrap(await updateChainLinks(USER_A, derivedId, sourceId, null))
+      expect(updated.sourceId).toBe(sourceId)
+      expect(updated.parentId).toBeNull()
+    })
+
+    it('sets sourceId=parentId for continue_edit relation', async () => {
+      const sourceId = await createDockItem(USER_A, '原始记录')
+      const derivedId = await createDockItem(USER_A, '继续编辑的记录')
+
+      const updated = unwrap(await updateChainLinks(USER_A, derivedId, sourceId, sourceId))
+      expect(updated.sourceId).toBe(sourceId)
+      expect(updated.parentId).toBe(sourceId)
+    })
+
+    it('sets parentId for derive relation', async () => {
+      const parentId = await createDockItem(USER_A, '父记录')
+      const derivedId = await createDockItem(USER_A, '派生记录')
+
+      const updated = unwrap(await updateChainLinks(USER_A, derivedId, null, parentId))
+      expect(updated.sourceId).toBeNull()
+      expect(updated.parentId).toBe(parentId)
+    })
+
+    it('clears chain links by setting both to null', async () => {
+      const sourceId = await createDockItem(USER_A, '原始记录')
+      const derivedId = await createDockItem(USER_A, '派生记录')
+
+      await updateChainLinks(USER_A, derivedId, sourceId, null)
+      const cleared = unwrap(await updateChainLinks(USER_A, derivedId, null, null))
+      expect(cleared.sourceId).toBeNull()
+      expect(cleared.parentId).toBeNull()
+    })
+
+    it('blocks cross-user chain link update (target item)', async () => {
+      const sourceId = await createDockItem(USER_A, 'User A 记录')
+      const derivedId = await createDockItem(USER_A, 'User A 派生')
+
+      const result = await updateChainLinks(USER_B, derivedId, sourceId, null)
+      expect(result).toBeNull()
+    })
+
+    it('blocks sourceId pointing to other user item', async () => {
+      const otherUserItemId = await createDockItem(USER_B, 'User B 记录')
+      const myItemId = await createDockItem(USER_A, 'User A 记录')
+
+      const result = await updateChainLinks(USER_A, myItemId, otherUserItemId, null)
+      expect(result).toBeNull()
+
+      const original = unwrap(await listDockItems(USER_A)).find((i) => i.id === myItemId)
+      expect(original?.sourceId).toBeNull()
+    })
+
+    it('blocks parentId pointing to other user item', async () => {
+      const otherUserItemId = await createDockItem(USER_B, 'User B 记录')
+      const myItemId = await createDockItem(USER_A, 'User A 记录')
+
+      const result = await updateChainLinks(USER_A, myItemId, null, otherUserItemId)
+      expect(result).toBeNull()
+
+      const original = unwrap(await listDockItems(USER_A)).find((i) => i.id === myItemId)
+      expect(original?.parentId).toBeNull()
+    })
+
+    it('blocks sourceId pointing to nonexistent id', async () => {
+      const myItemId = await createDockItem(USER_A, 'User A 记录')
+
+      const result = await updateChainLinks(USER_A, myItemId, 99999, null)
+      expect(result).toBeNull()
+    })
+
+    it('blocks parentId pointing to nonexistent id', async () => {
+      const myItemId = await createDockItem(USER_A, 'User A 记录')
+
+      const result = await updateChainLinks(USER_A, myItemId, null, 99999)
+      expect(result).toBeNull()
+    })
+
+    it('blocks sourceId equal to self id', async () => {
+      const myItemId = await createDockItem(USER_A, 'User A 记录')
+
+      const result = await updateChainLinks(USER_A, myItemId, myItemId, null)
+      expect(result).toBeNull()
+    })
+
+    it('blocks parentId equal to self id', async () => {
+      const myItemId = await createDockItem(USER_A, 'User A 记录')
+
+      const result = await updateChainLinks(USER_A, myItemId, null, myItemId)
+      expect(result).toBeNull()
+    })
+
+    it('allows valid same-user source and parent', async () => {
+      const sourceId = await createDockItem(USER_A, 'Source')
+      const parentId = await createDockItem(USER_A, 'Parent')
+      const myItemId = await createDockItem(USER_A, 'Derived')
+
+      const updated = unwrap(await updateChainLinks(USER_A, myItemId, sourceId, parentId))
+      expect(updated.sourceId).toBe(sourceId)
+      expect(updated.parentId).toBe(parentId)
+    })
+
+    it('preserves chain links through suggest/archive cycle', async () => {
+      const sourceId = await createDockItem(USER_A, '原始记录')
+      const derivedId = await createDockItem(USER_A, '派生记录')
+
+      await updateChainLinks(USER_A, derivedId, sourceId, null)
+      await suggestItem(USER_A, derivedId)
+      await archiveItem(USER_A, derivedId)
+
+      const items = await listDockItems(USER_A)
+      const archived = items.find((i) => i.id === derivedId)
+      expect(archived?.sourceId).toBe(sourceId)
     })
   })
 })

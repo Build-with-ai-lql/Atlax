@@ -8,6 +8,7 @@ import {
   generateSuggestions,
   makeTagId,
   normalizeTagName,
+  validateChainLinkWithContext,
   type EntryStatus,
   type SourceType,
 } from '@atlax/domain'
@@ -356,6 +357,18 @@ export async function updateSelectedProject(userId: string, id: number, project:
 export async function updateChainLinks(userId: string, id: number, sourceId: number | null, parentId: number | null): Promise<PersistedDockItem | null> {
   const item = await getDockItemForUser(userId, id)
   if (!item) return null
+
+  const validation = await validateChainLinkWithContext({
+    currentItemId: id,
+    userId,
+    sourceId,
+    parentId,
+    findItemById: (uid, itemId) => getDockItemForUser(uid, itemId),
+  })
+
+  if (!validation.valid) {
+    return null
+  }
 
   await dockItemsTable.update(id, {
     sourceId,

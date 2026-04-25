@@ -231,3 +231,15 @@ P2 今日收口：
 - 如果 Round 1 前后端均通过：下一轮 prompt 必须要求 agent 先提交并推送已通过的上一轮代码，再开始 Round 2；Round 2 目标转向 #8 #10 #11 与 Review/Browse polish。
 - 如果某一侧未通过：整理 review finding，生成单侧补充修复 prompt；未通过侧不得提交，另一侧可在不依赖失败代码时继续。
 - 每轮必须遵循双日志收敛：Frontend Agent 只更新固定 Phase 3 前端日志文件，Backend Agent 只更新固定 Phase 3 后端日志文件；除这两个手动创建的日志外，不新增其他并行 dev log。本文件保留为 intake / coordination 基线，不再承载后续每轮执行日志。
+
+---
+
+## 7. Coordinator Checkpoint - Phase3 Demo Baseline
+
+- Timestamp：2026-04-25 13:56:12 CST
+- Round：Coordinator publish checkpoint after Phase3 first demo baseline
+- Result：`develop` and `stable-demo` both point to `85e4a12 Phase3 demo baseline`; old remote branch `demo/phase2-stable` removed.
+- Validation：`pnpm --dir apps/web lint` PASS；`pnpm --dir apps/web typecheck` PASS；`pnpm --dir apps/web test -- --run` PASS；`pnpm --filter @atlax/domain test -- --run` PASS；`pnpm --filter @atlax/domain typecheck` PASS；`git diff --cached --check` PASS before commit.
+- Current acceptance：Phase3 first-stage demo accepted for baseline publishing based on manual confirmation that frontend display, chat history, and chat isolation are normal.
+- Next phase focus：move from demo baseline stabilization to Phase3 completion work: editor experience, chain/edit provenance, immersive polish, review/browse validation, and stricter e2e/manual acceptance.
+- Risk：new work must not regress Chat/History/User isolation; all agents must keep changes staged and update only their fixed dev log file.
