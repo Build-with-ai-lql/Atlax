@@ -473,7 +473,7 @@ export default function DetailPanel({
               {actionLoading ? '生成中…' : '生成建议'}
             </button>
           )}
-          {item.status === 'suggested' && (
+          {(item.status === 'suggested' || (item.status === 'reopened' && item.suggestions.length > 0)) && (
             <>
               <button
                 onClick={() => onArchive(item.id)}
@@ -506,7 +506,7 @@ export default function DetailPanel({
               disabled={actionLoading}
               className="px-4 py-2 text-sm font-medium bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-colors"
             >
-              {actionLoading ? '生成中…' : '重新生成建议'}
+              {actionLoading ? '生成中…' : item.suggestions.length > 0 ? '重新生成建议' : '生成建议'}
             </button>
           )}
           {item.status === 'archived' && (

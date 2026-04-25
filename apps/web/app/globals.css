@@ -85,4 +85,18 @@
   .atlax-page-bg {
     @apply bg-[#F5F5F7] dark:bg-[#0E0E11] text-slate-800 dark:text-slate-200 transition-colors duration-[800ms];
   }
+
+  /* iMessage style bubbles - simplified & robust */
+  .imessage-bubble {
+    @apply relative px-4 py-2 rounded-[20px] text-[15px] leading-snug break-words whitespace-pre-wrap transition-all duration-200;
+    max-width: 75%;
+  }
+
+  .imessage-bubble.user {
+    @apply bg-[#007AFF] text-white rounded-br-[4px] self-end shadow-sm;
+  }
+
+  .imessage-bubble.assistant {
+    @apply bg-[#E9E9EB] dark:bg-[#3A3A3C] text-black dark:text-white rounded-bl-[4px] self-start shadow-sm;
+  }
 }

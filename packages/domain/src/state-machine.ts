@@ -5,7 +5,7 @@ export const VALID_TRANSITIONS: Record<EntryStatus, EntryStatus[]> = {
   suggested: ['suggested', 'archived', 'ignored'],
   archived: ['reopened'],
   ignored: ['pending'],
-  reopened: ['suggested', 'ignored'],
+  reopened: ['suggested', 'ignored', 'archived'],
 }
 
 export function canTransition(current: EntryStatus, target: EntryStatus): boolean {

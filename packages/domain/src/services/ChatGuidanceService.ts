@@ -132,6 +132,55 @@ export function refillStateFromOption(
     case 'topic':
       newState.step = 'awaiting_topic'
       newState.topic = ''
+      newState.selectedType = null
+      newState.content = ''
+      newState.rawText = ''
+      break
+    case 'type':
+      newState.step = 'awaiting_type'
+      newState.selectedType = null
+      newState.content = ''
+      newState.rawText = ''
+      break
+    case 'content':
+      newState.step = 'awaiting_content'
+      newState.content = ''
+      newState.rawText = ''
+      break
+  }
+
+  return newState
+}
+
+export interface RefillPatch {
+  topic?: string | null
+  selectedType?: string | null
+  content?: string
+}
+
+export function buildRefillPatch(option: string): RefillPatch {
+  switch (option) {
+    case 'topic':
+      return { topic: null, selectedType: null, content: '' }
+    case 'type':
+      return { selectedType: null, content: '' }
+    case 'content':
+      return { content: '' }
+    default:
+      return {}
+  }
+}
+
+export function refieldStateFromOption(
+  state: ChatGuidanceState,
+  option: string
+): ChatGuidanceState {
+  const newState = { ...state }
+
+  switch (option) {
+    case 'topic':
+      newState.step = 'awaiting_topic'
+      newState.topic = ''
       break
     case 'type':
       newState.step = 'awaiting_type'
@@ -145,6 +194,19 @@ export function refillStateFromOption(
   }
 
   return newState
+}
+
+export function buildRefieldPatch(option: string): RefillPatch {
+  switch (option) {
+    case 'topic':
+      return { topic: null }
+    case 'type':
+      return { selectedType: null }
+    case 'content':
+      return { content: '' }
+    default:
+      return {}
+  }
 }
 
 const POSITIVE_DISMISSAL_MESSAGES = [
@@ -168,6 +230,7 @@ export interface ChatGuidanceService {
   confirm(): ChatGuidanceState
   cancel(): ChatGuidanceState
   refill(option: string): ChatGuidanceState
+  refield(option: string): ChatGuidanceState
   reset(): ChatGuidanceState
   getCurrentPrompt(): string
   canConfirm(): boolean
@@ -228,6 +291,13 @@ export function createChatGuidanceService(): ChatGuidanceService {
       if (state.step === 'cancelled') {
         state = refillStateFromOption(state, option)
         state = applyGuidanceTransition(state, 'start')
+      }
+      return this.getState()
+    },
+
+    refield(option: string): ChatGuidanceState {
+      if (state.step === 'cancelled') {
+        state = refieldStateFromOption(state, option)
       }
       return this.getState()
     },

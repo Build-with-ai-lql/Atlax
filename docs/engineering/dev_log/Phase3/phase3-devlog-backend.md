@@ -677,6 +677,466 @@ await addChatMessage('user-123', session.id, {
 
 ---
 
+## Round 6 Backend - 链式结构读取能力 + 编辑器命令 domain 支撑
+
+| 开发日志信息 | |
+|-------------|---------|
+| 执行者 | Backend Agent |
+| 时间戳 | 2026-04-25 17:42 CST |
+| 运行轮次 | Phase 3 Round 6 Backend |
+| 状态 | 已完成 |
+
+### 1. 变更内容
+
+#### 1.1 Chain provenance query 补齐
+
+- **修复**: `services/index.ts` 导入路径错误 `EditCommandTransform` → `EditorCommandTransform`
+- **domain 测试**: `buildProvenanceAsync` 新增 6 个测试覆盖
+  - async source/parent 查找
+  - 缺失 source/parent 优雅处理
+  - reorganize / continue_edit / derive 关系类型
+  - 长标题截断
+  - root item（无链路）
+- **真实 Dexie 测试**: `getChainProvenance` 新增 8 个测试覆盖
+  - reorganize 关系 provenance（含多行 rawText 取首行）
+  - continue_edit 关系 provenance
+  - derive 关系 provenance
+  - root item provenance
+  - 不存在 item 返回 null
+  - 跨用户查询返回 null
+  - 不暴露其他用户 source title
+  - 长标题截断到 60 字符
+
+#### 1.2 Editor command behavior
+
+- **已有**: `EditorCommandTransform.ts` 提供 6 种纯函数 transform（bold/italic/code/link/heading/highlight）
+- **修复**: 2 个测试期望值错误（空选区插入时不会删除后续字符）
+  - `transformCode` 空选区: `'some `文本`code here'`（非 `'some `文本` code here'`）
+  - `transformLink` 空选区: `'check [链接文本](url)this out'`（非 `'check [链接文本](url) out'`）
+- **测试覆盖**: 34 tests，含选区为空、选区非空、多字节中文、边界情况
+
+#### 1.3 Review/Browse 数据质量检查
+
+- **审查结果**: 所有核心操作均通过 `getDockItemForUser` 守门，无数据泄漏
+- **新增跨用户隔离测试**（7 个）:
+  - `archiveItem` 跨用户阻止
+  - `reopenItem` 跨用户阻止
+  - `ignoreItem` 跨用户阻止
+  - `restoreItem` 跨用户阻止
+  - `addTagToItem` / `removeTagFromItem` 跨用户阻止
+  - `updateSelectedProject` / `updateSelectedActions` 跨用户阻止
+  - `getEntryByDockItemId` 跨用户阻止
+- **确认**: `browse_revisit` 事件日志按 userId 隔离存储，无泄漏风险
+
+### 2. 验证结果
+
+| 命令 | 结果 | 备注 |
+|------|------|------|
+| `pnpm --filter @atlax/domain typecheck` | ✅ PASS | - |
+| `pnpm --filter @atlax/domain test -- --run` | ✅ 226 tests / 15 files | +6 buildProvenanceAsync |
+| `pnpm --dir apps/web typecheck` | ✅ PASS | - |
+| `pnpm --dir apps/web test -- --run` | ✅ 178 tests / 9 files | +8 provenance +7 跨用户隔离 |
+| `git diff --cached --check` | ✅ PASS | 无空白错误 |
+
+### 3. 测试详情
+
+**domain 层** (226 tests):
+```
+ ✓ tests/ChainLinkService.test.ts (36 tests)     ← 新增 6 buildProvenanceAsync
+ ✓ tests/EditorCommandTransform.test.ts (34 tests) ← 修复 2 个期望值
+ ✓ tests/EditorCapabilityPort.test.ts (14 tests)
+ ✓ tests/EditSavePolicy.test.ts (19 tests)
+ ✓ tests/ChatGuidanceService.test.ts (17 tests)
+ ✓ tests/ChatSession.test.ts (19 tests)
+ ✓ tests/EntryService.test.ts (14 tests)
+ ✓ tests/archive-service.test.ts (13 tests)
+ ✓ tests/sanitizeSuggestionLabel.test.ts (12 tests)
+ ✓ tests/SuggestionResetPolicy.test.ts (10 tests)
+ ✓ tests/DockItemService.test.ts (9 tests)
+ ✓ tests/suggestion-engine.test.ts (6 tests)
+ ✓ tests/tag-service.test.ts (18 tests)
+ ✓ tests/state-machine.test.ts (4 tests)
+ ✓ tests/selectors.test.ts (1 test)
+```
+
+**web 层** (178 tests):
+```
+ ✓ tests/repository.test.ts (70 tests)            ← 新增 8 provenance + 7 跨用户隔离
+ ✓ tests/chat-session.test.ts (35 tests)
+ ✓ tests/events.test.ts (26 tests)
+ ✓ tests/archive-reopen.test.ts (12 tests)
+ ✓ tests/migration.test.ts (10 tests)
+ ✓ tests/browse-seed.test.ts (10 tests)
+ ✓ tests/suggest-tag.test.ts (9 tests)
+ ✓ tests/chat-source.test.ts (4 tests)
+ ✓ tests/integration.test.ts (2 tests)
+```
+
+### 4. 变更文件清单
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `packages/domain/src/services/index.ts` | M | 修复 EditCommandTransform → EditorCommandTransform 导入路径 |
+| `packages/domain/tests/ChainLinkService.test.ts` | M | 新增 6 个 buildProvenanceAsync 测试 |
+| `packages/domain/tests/EditorCommandTransform.test.ts` | M | 修复 2 个空选区测试期望值 |
+| `apps/web/tests/repository.test.ts` | M | 新增 8 个 getChainProvenance Dexie 测试 + 7 个跨用户隔离测试 |
+| `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | 本轮开发日志 |
+
+---
+
+## Round 7 Backend - createDockItem chain link 安全校验修复
+
+| 开发日志信息 | |
+|-------------|---------|
+| 执行者 | Backend Agent |
+| 时间戳 | 2026-04-25 22:55 CST |
+| 运行轮次 | Phase 3 Round 7 Backend |
+| 状态 | 已完成 |
+
+### 1. 问题
+
+| 问题 | 严重性 | 说明 |
+|------|--------|------|
+| `createDockItem` 绕过 chain link 校验 | P0 | `createDockItem(userId, rawText, sourceType, { sourceId, parentId })` 直接写入 sourceId/parentId，未复用 `validateChainLinkWithContext`，可能持久化跨用户、不存在、自引用的非法链路 |
+
+### 2. 解决方式
+
+#### 2.1 createDockItem 接入校验
+
+- **位置**: `apps/web/lib/repository.ts` - `createDockItem`
+- **策略**: 当 `sourceId` 或 `parentId` 非空时，调用 `validateChainLinkWithContext` 进行校验
+- **创建场景的自引用处理**: 传入 `currentItemId: -1`（Dexie 自增 ID 从 1 开始，`-1` 不可能与任何真实 ID 匹配，自引用检查自然通过）
+- **失败行为**: 校验失败时抛出 `Error('createDockItem: invalid chain links - ...')`，不写入 DB，不留脏数据
+- **共享校验语义**: `createDockItem` 和 `updateChainLinks` 共用同一个 `validateChainLinkWithContext` 函数
+
+#### 2.2 校验覆盖
+
+| 场景 | 结果 |
+|------|------|
+| sourceId 指向同用户存在的 item | ✅ 允许创建 |
+| parentId 指向同用户存在的 item | ✅ 允许创建 |
+| sourceId 指向其他用户的 item | ❌ 抛出错误，不创建 |
+| parentId 指向其他用户的 item | ❌ 抛出错误，不创建 |
+| sourceId 指向不存在的 ID | ❌ 抛出错误，不创建 |
+| parentId 指向不存在的 ID | ❌ 抛出错误，不创建 |
+| 不传 options（无 chain links） | ✅ 正常创建 |
+| 显式传 sourceId: null, parentId: null | ✅ 正常创建 |
+
+### 3. 是否解决
+
+**已解决**。`createDockItem` 和 `updateChainLinks` 现在共用 `validateChainLinkWithContext` 校验语义，不存在绕过口。
+
+### 4. 验证结果
+
+| 命令 | 结果 | 备注 |
+|------|------|------|
+| `pnpm --filter @atlax/domain typecheck` | ✅ PASS | - |
+| `pnpm --filter @atlax/domain test -- --run` | ✅ 229 tests / 15 files | +3 create scenario domain tests |
+| `pnpm --dir apps/web typecheck` | ✅ PASS | - |
+| `pnpm --dir apps/web test -- --run` | ✅ 185 tests / 9 files | +7 createDockItem chain link tests |
+| `git diff --cached --check` | 待验证 | - |
+
+### 5. 测试详情
+
+**domain 层新增** (3 tests):
+- `currentItemId = -1` 跳过自引用检查
+- `currentItemId = -1` 仍然拒绝不存在的 sourceId
+- `currentItemId = -1` 仍然拒绝跨用户 parentId
+
+**web 层新增** (7 tests):
+- 合法 sourceId + parentId 创建成功
+- 跨用户 sourceId 被拒绝 + 不留脏数据
+- 跨用户 parentId 被拒绝 + 不留脏数据
+- 不存在的 sourceId 被拒绝 + 不留脏数据
+- 不存在的 parentId 被拒绝 + 不留脏数据
+- 不传 options 正常创建
+- 显式传 null 正常创建
+
+### 6. 是否可进入下一轮
+
+**可以**。所有校验已补齐，create 和 update 路径共用同一校验语义。
+
+### 7. 风险评估
+
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| 前端 handleDerive 需处理 createDockItem 异常 | 低 | 当前前端在 try/finally 中调用，异常会被捕获，但用户不会看到错误提示 |
+| currentItemId = -1 假设 | 极低 | Dexie 自增 ID 从 1 开始，-1 不可能冲突。如未来改为 UUID，需重新设计 |
+
+### 8. 变更文件清单
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `apps/web/lib/repository.ts` | M | createDockItem 接入 validateChainLinkWithContext 校验 |
+| `packages/domain/tests/ChainLinkService.test.ts` | M | 新增 3 个 currentItemId=-1 场景测试 |
+| `apps/web/tests/repository.test.ts` | M | 新增 7 个 createDockItem chain link 校验测试 |
+| `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | 本轮开发日志 |
+
+---
+
+## Round 8 Backend — reopenItem 缓存复用策略 + lint 修复
+
+**时间**: 2026-04-25 23:45
+**轮次**: Phase 3 Round 8
+**状态**: ✅ 已解决
+
+### 1. 问题
+
+| # | 问题 | 等级 | 说明 |
+|---|------|------|------|
+| 1 | reopenItem 清空 suggestions + processedAt | P0 | 归档记录重新打开后强制用户重新走全流程，已有 tags/actions/project/type 处理结果全部丢失 |
+| 2 | 27 个 lint error | P1 | 非空断言、unused imports/locals 阻塞 CI |
+| 3 | 测试断言过时 | P1 | archive-reopen/browse-seed/repository 测试仍断言 reopen 清空建议 |
+
+### 2. 解决方案
+
+**reopenItem 缓存复用策略**：
+- 有 archived Entry 时：从 Entry 回写 `tags`、`project`、`actions` 到 DockItem；保留 `processedAt`；不清空 `suggestions`
+- 无 archived Entry 时：仅改 status，清空 `processedAt`
+- 用户编辑正文 → `updateDockItemText` → `SuggestionResetPolicy` 清空建议，仍需重新建议
+- userId 隔离：`getEntryByDockItemId(userId, id)` 已有 userId 过滤
+
+**Lint 修复**：
+- 替换所有 `!` 非空断言为 `if (!provenance) return` 或 `if (provenance)` guard
+- 移除 `buildChainLink`、`buildGuidancePrompt`、`beforeEach` unused imports
+- 移除 `hasMessages`、`item` unused locals；`policy` → `_policy`
+
+### 3. 变更内容
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `apps/web/lib/repository.ts` | M | reopenItem 从 Entry 回写 tags/project/actions，保留 suggestions 和 processedAt |
+| `apps/web/tests/archive-reopen.test.ts` | M | 修改旧断言，新增 8 个缓存复用测试 |
+| `apps/web/tests/browse-seed.test.ts` | M | 修正 reopen 断言 |
+| `apps/web/tests/repository.test.ts` | M | 修正 reopen 断言，修复非空断言 |
+| `packages/domain/src/ports/repository.ts` | M | 移除 hasMessages unused local |
+| `packages/domain/src/services/EditSavePolicy.ts` | M | policy → _policy |
+| `packages/domain/tests/ChainLinkService.test.ts` | M | 移除 buildChainLink unused import |
+| `packages/domain/tests/ChatGuidanceService.test.ts` | M | 移除 buildGuidancePrompt、beforeEach unused imports |
+| `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | 本轮日志 |
+
+### 4. 遇到的问题
+
+| 问题 | 解决 |
+|------|------|
+| 测试中 `entry`/`item` 变量声明后未使用触发 lint | 移除无用变量声明 |
+
+### 5. 验证结果
+
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm lint` | ✅ 0 errors |
+| `pnpm typecheck` | ✅ PASS |
+| `pnpm test` (domain) | ✅ 229 tests / 15 files |
+| `pnpm test` (web) | ✅ 192 tests / 9 files |
+| `pnpm build` | ✅ PASS |
+
+### 6. 手工验证标准
+
+1. 归档记录 → 重新整理/重新入库 → 已有建议/标签/项目/动作可复用（suggestions.length > 0, userTags === entry.tags, selectedProject === entry.project, selectedActions === entry.actions）
+2. 编辑正文后 → suggestions 清空、status 回退 pending、processedAt 置 null（EditSavePolicy 生效）
+3. 跨用户 reopen → 返回 null，不能读取缓存
+4. 无 Entry 场景 reopen → processedAt 为 null
+
+### 7. 风险评估
+
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| suggestItem 对 reopened 状态仍可重生成建议 | 无 | state-machine 允许 reopened→suggested，行为不变 |
+| archived Entry 不存在时的 fallback | 低 | 仅改状态、清 processedAt，与旧行为一致 |
+| Entry 回写可能与 DockItem 现有值不同 | 无 | 这是预期行为——Entry 是归档时的快照 |
+
+### 8. 是否可进入下一轮
+
+✅ 是。所有修补完成，lint 清零，测试全通过。
+
+---
+
+## Round 11 Backend — Refill 两层选择逻辑（重走流程 + 单修模块）
+
+**时间**: 2026-04-26 02:04
+**轮次**: Phase 3 Round 11
+**状态**: ✅ 已解决
+
+### 1. 问题
+
+取消后仅提供"重走流程"模式，缺少"单修模块"选项。用户选"类型"会连带清空内容，无法只改一个字段。
+
+### 2. 解决方案
+
+后端支持两层 refill/refield 模式：
+
+**模式 A — refill（重走流程，cascade）**：已有行为不变
+- topic refill → 清空 topic + type + content，从 awaiting_topic 重走
+- type refill → 保留 topic，清空 type + content，从 awaiting_type 重走
+- content refill → 保留 topic + type，清空 content，从 awaiting_content 重走
+
+**模式 B — refield（单修模块，single field）**：新增
+- topic refield → 只清空 topic，保留 type + content
+- type refield → 只清空 selectedType，保留 topic + content
+- content refield → 只清空 content，保留 topic + type
+
+新增导出：
+- `refieldStateFromOption(state, option)` — 纯函数，返回单修后状态
+- `buildRefieldPatch(option)` — 返回可持久化的字段 patch
+- `ChatGuidanceService.refield(option)` — 服务方法
+
+### 3. 前端需新增内容
+
+1. 取消后展示两层选择 UI：
+   - 第一层：选择"重走流程"或"单修模块"
+   - 第二层：选择要修改的字段（topic/type/content）
+2. 选择"重走流程" → 调用 `service.refill(option)` + `buildRefillPatch(option)` 更新 session
+3. 选择"单修模块" → 调用 `service.refield(option)` + `buildRefieldPatch(option)` 更新 session
+4. `refield` 不触发 start transition，前端需在用户提交新值后自行推进 step
+
+### 4. 变更内容
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `packages/domain/src/services/ChatGuidanceService.ts` | M | 新增 refieldStateFromOption、buildRefieldPatch、refield 方法 |
+| `packages/domain/tests/ChatGuidanceService.test.ts` | M | 新增 8 个 refield/buildRefieldPatch 测试 |
+| `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | 修正验证标准 #4，新增 Round 11 日志 |
+
+### 5. 验证结果
+
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm lint` | ✅ 0 errors |
+| `pnpm typecheck` | ✅ PASS |
+| domain tests | ✅ 241 tests / 15 files |
+| web tests | ✅ 203 tests / 9 files |
+| `pnpm build` | ✅ PASS |
+
+### 6. 风险评估
+
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| 前端未适配 refield 模式 | 中 | 前端需新增两层选择 UI，旧 refill API 仍可用 |
+| refield 后 rawText 未更新 | 低 | rawText 在 submitContent 时重新构建 |
+
+### 7. 是否可进入下一轮
+
+✅ 是。后端两层 refill/refield 逻辑已就绪，待前端适配。
+
+---
+
+## Round 9 Backend — 质量收口复核
+
+**时间**: 2026-04-26 01:02
+**轮次**: Phase 3 Round 9
+**状态**: ✅ 已通过
+
+### 1. 复核项
+
+| # | 复核内容 | 结果 |
+|---|----------|------|
+| 1 | trailing whitespace | ✅ `git diff --cached --check` 无输出，devlog 无 trailing whitespace |
+| 2 | archived Entry 存在时 reopen 复用 tags/project/actions/suggestions/processedAt | ✅ 与实现一致 |
+| 3 | 编辑正文后 suggestions 清空、status 回 pending、processedAt 置 null | ✅ `updateDockItemText` → `SuggestionResetPolicy` 生效 |
+| 4 | userId 隔离不泄漏 | ✅ `getDockItemForUser` + `getEntryByDockItemId` 双重过滤 |
+| 5 | 测试断言与实际逻辑一致 | ✅ archive-reopen/browse-seed/repository/integration 全部对齐 |
+| 6 | devlog 手工验证标准覆盖用户 3 条要求 | ✅ 已覆盖 |
+
+### 2. 手工验证标准
+
+1. 归档记录重新整理后不用重新生成即可看到既有整理结果
+2. 编辑正文后才要求重新建议
+3. 跨用户 reopen 不可读取缓存
+
+### 3. 是否可进入下一轮
+
+✅ 是。无业务逻辑变更，质量收口通过。
+
+---
+
+## Round 10 Backend — ChatSession Dock 文档映射 + Refill 状态语义
+
+**时间**: 2026-04-26 01:52
+**轮次**: Phase 3 Round 10
+**状态**: ✅ 已解决
+
+### 1. 问题
+
+| # | 问题 | 等级 | 说明 |
+|---|------|------|------|
+| 1 | ChatSession 与 Dock 文档无映射 | P0 | 每次确认 chat 都创建新 DockItem，重复确认产生重复文档 |
+| 2 | Refill 语义不正确 | P1 | topic refill 只清 topic 不清 type/content；type refill 不清 content |
+| 3 | Refill 无持久化 patch | P1 | 前端无法获取应更新到 persisted session 的字段变更 |
+
+### 2. 解决方案
+
+**ChatSession dockItemId 映射**：
+- domain ports/db/repository 全链路增加 `dockItemId: number | null`
+- v10 migration 给旧 session 填 `null`
+- 新增 `confirmChatSession(userId, id, content, topic, type)`：
+  - 已绑定 dockItemId → 更新原 DockItem（文本/topic 变化走 `updateDockItemText`/EditSavePolicy；type 变化更新 tags）
+  - 未绑定 → 创建新 DockItem（含 topic）并绑定，type 作为 tag
+  - 文本未变 → 不重置 suggestions/status/processedAt
+
+**DockItem.topic 字段**：
+- DockItem 增加 `topic: string | null`，归档时同步为 Entry.title（`input.topic || extractTitle(rawText)`）
+- ArchiveInput 增加 `topic: string | null`
+- `createDockItem` options 增加 `topic`
+- `updateDockItemText` 增加 `topic` 参数
+
+**Refill 状态语义**：
+- topic refill：清空 topic + selectedType + content → awaiting_topic
+- type refill：保留 topic，清空 selectedType + content → awaiting_type
+- content refill：保留 topic + selectedType，清空 content → awaiting_content
+- 新增 `buildRefillPatch(option)` 生成可持久化的字段 patch
+
+### 3. 变更内容
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `packages/domain/src/ports/repository.ts` | M | ChatSession/CreateInput/UpdateInput 增加 dockItemId；DockItem 增加 topic |
+| `packages/domain/src/types.ts` | M | ArchiveInput 增加 topic |
+| `packages/domain/src/services/ChatGuidanceService.ts` | M | 修正 refillStateFromOption 语义，新增 buildRefillPatch |
+| `apps/web/lib/db.ts` | M | ChatSessionRecord 增加 dockItemId，DockItemRecord 增加 topic，v10 migration |
+| `apps/web/lib/repository.ts` | M | createDockItem/updateDockItemText 支持 topic，confirmChatSession 含 topic/type，新增 dockItemId |
+| `apps/web/tests/chat-session.test.ts` | M | 新增 11 个 dockItemId/confirmChatSession 测试 |
+| `packages/domain/tests/ChatGuidanceService.test.ts` | M | 修正 refill 断言，新增 4 个 buildRefillPatch 测试 |
+| `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | 本轮日志 |
+
+### 4. 遇到的问题
+
+| 问题 | 解决 |
+|------|------|
+| `first` 变量声明后未使用触发 lint | 移除无用变量声明 |
+
+### 5. 验证结果
+
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm lint` | ✅ 0 errors |
+| `pnpm typecheck` | ✅ PASS |
+| domain tests | ✅ 233 tests / 15 files |
+| web tests | ✅ 203 tests / 9 files |
+| `pnpm build` | ✅ PASS |
+
+### 6. 手工验证标准
+
+1. 一个 Chat 历史记录第一次确认生成一个 Dock 文档
+2. 选择同一历史记录后重新确认，只更新同一个 Dock 文档，不新增文档
+3. 新建聊天才生成新的 Dock 文档
+4. DockItem.topic 归档后同步为 Entry.title（topic 优先，否则从 rawText 提取首行）
+5. 取消后两层选择：(a) 重走流程 — 选"类型"保留标题并重走类型+内容+确认，选"内容"保留标题+类型并重走内容+确认；(b) 单修模块 — 选哪块只改哪块，其他字段不变
+
+### 7. 风险评估
+
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| confirmChatSession 重复确认时 DockItem 被删 | 低 | 若已绑定 DockItem 不存在，fallback 创建新 DockItem |
+| 前端未调用 confirmChatSession | 中 | 前端需迁移到新 API，旧路径仍可用 |
+| v10 migration 兼容性 | 低 | 仅新增字段默认 null，不影响现有数据 |
+
+### 8. 是否可进入下一轮
+
+✅ 是。所有修补完成，lint 清零，测试全通过。
+
+---
+
 ## 历史记录
 
 （无）

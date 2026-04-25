@@ -3,11 +3,14 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { db } from '@/lib/db'
 import {
   addChatMessage,
+  confirmChatSession,
   createChatSession,
+  createDockItem,
   deleteChatSession,
   getChatSession,
   listActiveChatSessions,
   listChatSessions,
+  listDockItems,
   pinChatSession,
   unpinChatSession,
   updateChatSession,
@@ -18,6 +21,7 @@ const USER_B = 'user_test_b'
 
 async function cleanAll() {
   await db.table('chatSessions').clear()
+  await db.table('dockItems').clear()
 }
 
 function unwrap<T>(value: T | null): T {
@@ -400,6 +404,156 @@ describe('ChatSession repository (real Dexie)', () => {
 
       const original = unwrap(await getChatSession(USER_A, sessionA.id))
       expect(original.topic).toBe('private')
+    })
+  })
+
+  describe('dockItemId field', () => {
+    it('creates session with dockItemId null by default', async () => {
+      const session = unwrap(await createChatSession({
+        userId: USER_A,
+        topic: '测试',
+      }))
+
+      expect(session.dockItemId).toBeNull()
+    })
+
+    it('creates session with dockItemId when provided', async () => {
+      const dockItemId = await createDockItem(USER_A, '已有文档')
+      const session = unwrap(await createChatSession({
+        userId: USER_A,
+        topic: '关联测试',
+        dockItemId,
+      }))
+
+      expect(session.dockItemId).toBe(dockItemId)
+    })
+
+    it('updates dockItemId via updateChatSession', async () => {
+      const session = unwrap(await createChatSession({ userId: USER_A, topic: '测试' }))
+      const dockItemId = await createDockItem(USER_A, '关联文档')
+
+      const updated = unwrap(await updateChatSession(USER_A, session.id, { dockItemId }))
+      expect(updated.dockItemId).toBe(dockItemId)
+    })
+
+    it('getChatSession returns dockItemId', async () => {
+      const dockItemId = await createDockItem(USER_A, '关联文档')
+      const created = unwrap(await createChatSession({
+        userId: USER_A,
+        topic: '测试',
+        dockItemId,
+      }))
+
+      const fetched = unwrap(await getChatSession(USER_A, created.id))
+      expect(fetched.dockItemId).toBe(dockItemId)
+    })
+
+    it('listChatSessions includes dockItemId', async () => {
+      const dockItemId = await createDockItem(USER_A, '关联文档')
+      await createChatSession({ userId: USER_A, topic: '测试', dockItemId })
+
+      const list = await listChatSessions(USER_A)
+      expect(list).toHaveLength(1)
+      expect(list[0].dockItemId).toBe(dockItemId)
+    })
+
+    it('v10 migration fills null for existing sessions without dockItemId', async () => {
+      const session = unwrap(await createChatSession({ userId: USER_A, topic: '迁移测试' }))
+      expect(session.dockItemId).toBeNull()
+    })
+  })
+
+  describe('confirmChatSession', () => {
+    it('first confirm creates a new DockItem and binds it', async () => {
+      const session = unwrap(await createChatSession({
+        userId: USER_A,
+        topic: '会议记录',
+        selectedType: 'meeting',
+        content: '讨论了产品规划',
+      }))
+
+      const before = await listDockItems(USER_A)
+      expect(before).toHaveLength(0)
+
+      const result = await confirmChatSession(USER_A, session.id, '讨论了产品规划', session.topic, session.selectedType)
+      expect(result.session).not.toBeNull()
+      expect(result.dockItemId).not.toBeNull()
+
+      const after = await listDockItems(USER_A)
+      expect(after).toHaveLength(1)
+      expect(after[0].rawText).toBe('讨论了产品规划')
+      expect(after[0].sourceType).toBe('chat')
+
+      if (result.session) {
+        expect(result.session.status).toBe('confirmed')
+        expect(result.session.dockItemId).toBe(result.dockItemId)
+      }
+    })
+
+    it('second confirm updates the same DockItem without creating new one', async () => {
+      const session = unwrap(await createChatSession({
+        userId: USER_A,
+        topic: '会议记录',
+        content: '原始内容',
+      }))
+
+      const first = await confirmChatSession(USER_A, session.id, '原始内容', session.topic, session.selectedType)
+      const firstDockItemId = first.dockItemId
+
+      await updateChatSession(USER_A, session.id, { status: 'active', content: '更新内容' })
+
+      const second = await confirmChatSession(USER_A, session.id, '更新内容', session.topic, session.selectedType)
+      expect(second.dockItemId).toBe(firstDockItemId)
+
+      const items = await listDockItems(USER_A)
+      expect(items).toHaveLength(1)
+      expect(items[0].rawText).toBe('更新内容')
+    })
+
+    it('unchanged text on second confirm does not reset DockItem suggestions', async () => {
+      const session = unwrap(await createChatSession({
+        userId: USER_A,
+        topic: '会议',
+        content: '不变的内容',
+      }))
+
+      await confirmChatSession(USER_A, session.id, '不变的内容', session.topic, session.selectedType)
+
+      const items = await listDockItems(USER_A)
+      const dockItem = items[0]
+      await db.table('dockItems').update(dockItem.id, {
+        status: 'suggested',
+        suggestions: [{ id: '1', type: 'tag', label: '会议', confidence: 0.9 }],
+        processedAt: new Date(),
+      })
+
+      await updateChatSession(USER_A, session.id, { status: 'active' })
+      await confirmChatSession(USER_A, session.id, '不变的内容', session.topic, session.selectedType)
+
+      const updatedItems = await listDockItems(USER_A)
+      expect(updatedItems).toHaveLength(1)
+      expect(updatedItems[0].suggestions.length).toBeGreaterThan(0)
+    })
+
+    it('blocks cross-user confirm', async () => {
+      const session = unwrap(await createChatSession({
+        userId: USER_A,
+        topic: '私有记录',
+        content: '内容',
+      }))
+
+      const result = await confirmChatSession(USER_B, session.id, '内容', session.topic, session.selectedType)
+      expect(result.session).toBeNull()
+      expect(result.dockItemId).toBeNull()
+
+      const items = await listDockItems(USER_B)
+      expect(items).toHaveLength(0)
+    })
+
+    it('returns null for nonexistent session', async () => {
+      const result = await confirmChatSession(USER_A, 99999, '内容', null, null)
+      expect(result.session).toBeNull()
+      expect(result.dockItemId).toBeNull()
     })
   })
 })

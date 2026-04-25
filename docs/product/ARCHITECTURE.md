@@ -3,10 +3,10 @@
 | 文档信息 | |
 |---------|---------|
 | 产品名称 | Atlax |
-| 文档版本 | v5.1 |
+| 文档版本 | v5.3 |
 | 文档类型 | 架构设计文档 |
-| 当前阶段 | Pre-Phase3-Architecture |
-| 最后更新 | 2026-04-23 |
+| 当前阶段 | Phase 3 Developer Preview |
+| 最后更新 | 2026-04-25 |
 
 ---
 
@@ -65,13 +65,15 @@
 
 Atlax 架构服务于一个明确目标：
 
-> 在本地优先前提下，跑通“输入 → 整理 → 归档 → 回看 → 再整理”的可上线闭环。
+> 在本地优先前提下，把“输入 → 编辑 → 结构化建议 → 归档 → 回看 → 再整理 → Review”做成可真实使用的知识工作台闭环。
 
 阶段目标：
 - 支撑 `Classic / Chat` 双入口，但始终写入同一知识库。
 - 支撑 `Dock → Suggest/Tag → Archive → Browse` 主线稳定可用。
+- 支撑 Dock / Entry 详情升级为 `MindDockEditor`，提供 Markdown Edit / Preview / Split。
+- 支撑可解释 Suggestion、Context Panel、真实 Review 聚合与 Browse / Database 基础视图。
 - 支撑账号身份与工作区隔离，但不引入重服务端依赖。
-- 支撑后续扩展接口（导入、搜索、同步、AI），当前不实现完整能力。
+- 支撑后续扩展接口（导入、搜索、同步、AI），但不把主线编辑与归档能力继续后移。
 
 ### 1.2 Phase 2 架构边界（P0）
 
@@ -88,7 +90,7 @@ Atlax 架构服务于一个明确目标：
 
 ### 1.3 关键架构原则
 
-- `PRD v4.9` 是产品边界唯一真源。
+- `PRD v5.1` 与 `PHASE3_DEVELOPER_PREVIEW.md` 是 Phase 3 产品边界真源。
 - `FRONT_DESIGN.md` 是前端 UI/交互/动效规范真源；Phase 2-5 所有前端变更均需对齐该规范。
 - `Dock` 是统一待整理入口，不再使用产品术语 `Inbox`。
 - `Classic / Chat` 只影响交互层，不影响底层数据模型。
@@ -207,7 +209,7 @@ pending -> suggested -> archived -> reopened -> pending
 
 ---
 
-## 5. 模块边界与代码映射（Phase 3 强化）
+## 5. 模块边界与代码映射（Phase 3 Developer Preview）
 
 ### 5.1 整体模块结构（Ports/Adapters 视角）
 
@@ -242,19 +244,55 @@ pending -> suggested -> archived -> reopened -> pending
 - 身份控制：认证服务 + session 存储
 - 后续同步：仅预留 adapter，当前不接入
 
-### 5.5 后端待实现模块拆分规划（仅规划，不实现）
+### 5.5 Phase 3 必做模块拆分
 
-以下模块对应前端接口预留点，后端尚未拆分为独立服务/模块，此处列出规划边界供后续迭代对齐：
+以下模块不再只是远期规划，Phase 3 需要按主线分批落地：
 
 | 规划模块 | 对应前端预留点 | 状态 | 优先级 |
 |---------|--------------|------|--------|
 | `DockItemEditService` | `updateDockItemText` 调用层封装，含状态重置校验 | 已在 repository 实现，待提取为独立 service | Phase 3 |
 | `SuggestionResetPolicy` | 文本变更后建议失效策略 | 规则内嵌于 `updateDockItemText`，待抽象为策略类 | Phase 3 |
-| `ImmersiveEditorBackend` | 沉浸式编辑器后端适配（全文内容保存接口） | 未实现，前端已预留 `Maximize` 按钮 | Phase 3 |
+| `MindDockEditorAdapter` | DockItem / Entry 共用编辑器适配 | 未实现 | Phase 3 |
+| `MarkdownRenderService` | Markdown Edit / Preview / Split 渲染适配 | 未实现，必须前端封装 | Phase 3 |
+| `ContextPanelAdapter` | Status / Type / Tags / Project / Source / Suggestions / Actions 读写适配 | 未实现 | Phase 3 |
+| `SuggestionDecisionService` | 接受、部分接受、修改、忽略建议并记录 decision | 未实现 | Phase 3 |
+| `ArchiveActionPolicy` | 根据 pending / suggested / archived / reopened 输出主操作 | 未实现 | Phase 3 |
+| `ReviewMetricsService` | 真实 Review 聚合查询 | 未实现 | Phase 3 |
+| `WidgetRegistry` / `CalendarWidgetService` | 右上角小组件入口、Sidebar gap placement、日历定位归档内容 | 未实现 | Phase 3 |
+| `KnowledgeGraphService` | Entries 点线树状视图，生成节点、关系线、聚类与布局输入 | 未实现 | Phase 3 |
+| `ChainLinkCommandService` | 拖拽连接文档节点、创建/校验链式关系 | 未实现 | Phase 3 |
+| `ReviewInsightService` | 主动提问、周报、健康检查与图表聚合 | 未实现 | Phase 3 |
 | `FileService` / `ProjectService` | 文件操作扩展后端实现 | 未实现，前端 `DropdownItem` 已占位 | Phase 4 |
-| `MarkdownRenderService` | Markdown 渲染预览后端接口（若需服务端渲染） | 未实现，当前为纯前端渲染 | Phase 4 |
 
-> 约束：以上规划仅为接口边界对齐，Phase 2 不实现上述拆分，不影响当前可上线闭环。
+> 约束：完整文件管理、导入、导出、复杂图谱编辑器可以后移；编辑器、Context Panel、可解释建议、归档状态动作、真实 Review、小组件日历、Entries 点线树状视图不得后移。
+
+### 5.6 Phase 3 新增架构流
+
+```text
+Widget Button
+  -> WidgetRegistry
+  -> CalendarWidgetService
+  -> Entries(date filter)
+
+Entries
+  -> KnowledgeGraphService
+  -> Graph Tree View
+  -> ChainLinkCommandService
+  -> Repository(chain links)
+
+Review
+  -> ReviewMetricsService
+  -> ReviewInsightService
+  -> Questions / Weekly Report / Health Check / Charts
+  -> Chat notification
+```
+
+关键约束：
+- 小组件是工作台辅助入口，不是独立数据源。
+- Graph Tree 的节点和边来自真实 DockItem / Entry / Tag / Project / ChainLink。
+- 未归档或未关联内容可作为散点展示，但必须保留继续整理入口。
+- 所有链式关系写入必须校验 userId、sourceId、targetId、存在性与自引用。
+- Review insight 与 Chat 新消息必须基于同一套真实指标，不做空泛提醒。
 
 ---
 
@@ -293,8 +331,9 @@ pending -> suggested -> archived -> reopened -> pending
 
 ### 7.2 Phase 3
 
-目标：体验统一与留存增强。
-- Review 增强、Chat 策略优化、Browse/Database 体验优化。
+目标：Developer Preview 主线补完。
+- 做：MindDock Editor、Markdown Preview、Edit / Preview / Split、Context Panel、可解释 Suggestion、Archive Action Redesign、Review Data Repair、Browse / Database 基础视图、Entries Graph Tree、Calendar Widget、Review Insight、Chat 与 Editor 汇合。
+- 不做：完整 Block Editor、多人协作、完整导入、复杂 Canvas/图谱编辑器、完整 AI provider。
 
 ### 7.3 Phase 4
 
@@ -316,13 +355,28 @@ pending -> suggested -> archived -> reopened -> pending
 | Phase 2 范围膨胀 | 无法上线验证 | 严格按 P0 清单验收 |
 | Suggestion 不可信 | 用户放弃整理 | 强制可解释 + 用户覆盖优先 |
 | 输入结构不稳定 | 使用成本上升 | 固化单页结构与输入布局边界 |
+| 编辑器继续像对象调试页 | 产品主功能不成立 | Phase 3 将 `MindDockEditor` 设为主入口，Preview 与 Context Panel 必须可用 |
+| Review 继续展示假数据 | 留存判断失真 | ReviewMetricsService 只读真实 DockItem / Entry / Tag / Project 数据 |
+| Graph Tree 成为随机散点图 | 结构价值无法感知 | KnowledgeGraphService 必须输出 Tag / Project / Chain 分层聚类 |
+| 链式关系污染跨账号数据 | 用户隔离失败 | ChainLinkCommandService 必须校验双方节点归属与自引用 |
+| 小组件入口空转 | 变成装饰按钮 | Calendar Widget 必须能驱动 Entries 日期过滤 |
+| Review 主动提问空泛 | 用户不信任系统 | ReviewInsightService 必须附带相关条目、项目或 Tag 来源 |
 
 ---
 
-## 9. 版本差异说明（v4.9 -> v4.10）
+## 9. 版本差异说明（v5.2 -> v5.3）
 
-1. 对齐 `PRD v4.9`，从“功能扩展导向”切换到“可上线闭环导向”。
-2. 架构边界明确为 `Phase 2 P0`，后续阶段仅保留方向。
-3. 明确 Chat/Classic 共用同一知识模型与状态机。
-4. 新增指标埋点与 North Star 指标映射，支持上线验证。
-5. **v4.10 新增**：补充 `updateDockItemText` 状态重置语义（§4.4）与后端待实现模块拆分规划（§5.4），与 Phase 2.14.10.2 工程对齐。
+1. 增加小组件、Calendar Widget、Entries Graph Tree、Review Insight 的架构模块。
+2. 明确 Graph Tree 不是远期复杂图谱，而是 Phase 3 结构化主线视图。
+3. 补充链式关系写入、用户隔离、Review 主动提问与图表数据来源约束。
+4. 调整 Phase 3 / Phase 4 边界：复杂 Canvas 可后移，但基础点线树状结构视图不得后移。
+
+---
+
+## 10. 关联文档
+
+| 文档 | 位置 | 用途 |
+|------|------|------|
+| Phase 3 开发者预览版计划 | `docs/product/PHASE3_DEVELOPER_PREVIEW.md` | Phase 3 产品与技术执行真源 |
+| 技术规格 | `docs/product/TECH_SPEC.md` | Phase 3 技术边界 |
+| 前端设计规范 | `docs/product/FRONT_DESIGN.md` | Phase 3 UI / UX 规范 |

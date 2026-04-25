@@ -23,6 +23,7 @@ export interface ChatSession {
   status: ChatSessionStatus
   pinned: boolean
   messages: ChatMessage[]
+  dockItemId: number | null
   createdAt: Date
   updatedAt: Date
 }
@@ -35,6 +36,7 @@ export interface ChatSessionCreateInput {
   content?: string
   messages?: ChatMessage[]
   pinned?: boolean
+  dockItemId?: number | null
 }
 
 export interface ChatSessionUpdateInput {
@@ -45,12 +47,14 @@ export interface ChatSessionUpdateInput {
   status?: ChatSessionStatus
   messages?: ChatMessage[]
   pinned?: boolean
+  dockItemId?: number | null
 }
 
 export interface DockItem {
   id: number
   userId: string
   rawText: string
+  topic: string | null
   sourceType: SourceType
   status: EntryStatus
   suggestions: SuggestionItem[]
@@ -136,7 +140,6 @@ export interface ChatSessionRepository {
 }
 
 export function isValidChatSessionInput(input: ChatSessionCreateInput): boolean {
-  const hasMessages = input.messages !== undefined && input.messages.length > 0
   const hasUserMessage = input.messages?.some((m) => m.role === 'user' && m.content.trim().length > 0) ?? false
   const hasTopic = input.topic !== undefined && input.topic !== null && input.topic.trim().length > 0
   const hasType = input.selectedType !== undefined && input.selectedType !== null && input.selectedType.trim().length > 0

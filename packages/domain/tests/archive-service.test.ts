@@ -14,6 +14,7 @@ describe('buildEntryFromArchive', () => {
       { id: '42:project:关联项目', type: 'project' as const, label: '关联项目', confidence: 0.5, reason: '包含项目相关关键词' },
     ],
     userTags: ['产品'],
+    topic: null as string | null,
     selectedProject: null,
     selectedActions: [] as string[],
     createdAt: new Date('2026-04-20T10:00:00.000Z'),
@@ -24,6 +25,15 @@ describe('buildEntryFromArchive', () => {
     expect(entry.title).toBe('下周产品评审会议，需要准备 Q2 路线图')
     expect(entry.id).toBe(1)
     expect(entry.sourceDockItemId).toBe(42)
+  })
+
+  it('uses topic as title when provided', () => {
+    const input = {
+      ...baseInput,
+      topic: '这是自定义标题'
+    }
+    const entry = buildEntryFromArchive(input, 1)
+    expect(entry.title).toBe('这是自定义标题')
   })
 
   it('resolves category from suggestions', () => {

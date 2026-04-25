@@ -41,7 +41,7 @@ export function buildEntryFromArchive(input: ArchiveInput, assignedId: number): 
   return {
     id: assignedId,
     sourceDockItemId: input.dockItemId,
-    title: extractTitle(input.rawText),
+    title: input.topic || extractTitle(input.rawText),
     content: input.rawText,
     type: resolveCategory(input.suggestions),
     tags: resolved.final,

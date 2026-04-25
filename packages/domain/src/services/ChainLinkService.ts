@@ -83,6 +83,23 @@ export function buildProvenance(
   }
 }
 
+export async function buildProvenanceAsync(
+  item: DockItem,
+  findItemById: (id: number) => Promise<{ rawText: string } | null>,
+): Promise<ChainProvenance> {
+  const sourceItem = item.sourceId !== null ? await findItemById(item.sourceId) : null
+  const parentItem = item.parentId !== null ? await findItemById(item.parentId) : null
+
+  return {
+    itemId: item.id,
+    sourceId: item.sourceId,
+    parentId: item.parentId,
+    relationType: resolveChainRelation(item),
+    sourceTitle: sourceItem ? sourceItem.rawText.split('\n')[0]?.slice(0, 60) ?? null : null,
+    parentTitle: parentItem ? parentItem.rawText.split('\n')[0]?.slice(0, 60) ?? null : null,
+  }
+}
+
 export interface ChainLinkUpdateInput {
   sourceId: number | null
   parentId: number | null

@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { DockItem } from '../src/ports/repository'
 import {
-  buildChainLink,
   buildContinueEditLink,
   buildDeriveLink,
   buildProvenance,
+  buildProvenanceAsync,
   buildReorganizeLink,
   getChainLinkFromDockItem,
   hasChainLink,
@@ -29,6 +29,7 @@ function makeDockItem(overrides: Partial<DockItem> = {}): DockItem {
     sourceId: null,
     parentId: null,
     processedAt: null,
+    topic: null,
     createdAt: new Date(),
     ...overrides,
   }
@@ -146,6 +147,72 @@ describe('ChainLinkService', () => {
       const provenance = buildProvenance(item, (id) => id === 10 ? source : null)
 
       expect(provenance.sourceTitle?.length).toBeLessThanOrEqual(60)
+    })
+  })
+
+  describe('buildProvenanceAsync', () => {
+    it('builds provenance with async source and parent lookups', async () => {
+      const source = makeDockItem({ id: 10, rawText: 'Source title\nMore content' })
+      const parent = makeDockItem({ id: 20, rawText: 'Parent title\nMore content' })
+      const item = makeDockItem({ id: 1, sourceId: 10, parentId: 20 })
+
+      const findItemById = async (id: number) => {
+        if (id === 10) return source
+        if (id === 20) return parent
+        return null
+      }
+
+      const provenance = await buildProvenanceAsync(item, findItemById)
+
+      expect(provenance.itemId).toBe(1)
+      expect(provenance.sourceId).toBe(10)
+      expect(provenance.parentId).toBe(20)
+      expect(provenance.relationType).toBe('derive')
+      expect(provenance.sourceTitle).toBe('Source title')
+      expect(provenance.parentTitle).toBe('Parent title')
+    })
+
+    it('handles missing source/parent gracefully', async () => {
+      const item = makeDockItem({ sourceId: 99, parentId: 100 })
+      const provenance = await buildProvenanceAsync(item, async () => null)
+
+      expect(provenance.sourceTitle).toBeNull()
+      expect(provenance.parentTitle).toBeNull()
+    })
+
+    it('returns correct relationType for reorganize', async () => {
+      const source = makeDockItem({ id: 10, rawText: 'Source' })
+      const item = makeDockItem({ id: 1, sourceId: 10, parentId: null })
+
+      const provenance = await buildProvenanceAsync(item, async (id) => id === 10 ? source : null)
+      expect(provenance.relationType).toBe('reorganize')
+    })
+
+    it('returns correct relationType for continue_edit', async () => {
+      const source = makeDockItem({ id: 10, rawText: 'Source' })
+      const item = makeDockItem({ id: 1, sourceId: 10, parentId: 10 })
+
+      const provenance = await buildProvenanceAsync(item, async (id) => id === 10 ? source : null)
+      expect(provenance.relationType).toBe('continue_edit')
+    })
+
+    it('truncates long titles from async lookup', async () => {
+      const source = makeDockItem({ id: 10, rawText: 'a'.repeat(100) })
+      const item = makeDockItem({ sourceId: 10, parentId: null })
+      const provenance = await buildProvenanceAsync(item, async (id) => id === 10 ? source : null)
+
+      expect(provenance.sourceTitle?.length).toBeLessThanOrEqual(60)
+    })
+
+    it('handles root item with no chain links', async () => {
+      const item = makeDockItem({ sourceId: null, parentId: null })
+      const provenance = await buildProvenanceAsync(item, async () => null)
+
+      expect(provenance.sourceId).toBeNull()
+      expect(provenance.parentId).toBeNull()
+      expect(provenance.sourceTitle).toBeNull()
+      expect(provenance.parentTitle).toBeNull()
+      expect(provenance.relationType).toBe('reorganize')
     })
   })
 
@@ -294,6 +361,41 @@ describe('ChainLinkService', () => {
         findItemById,
       })
       expect(result.valid).toBe(true)
+    })
+
+    it('skips self-reference check when currentItemId is -1 (create scenario)', async () => {
+      const result = await validateChainLinkWithContext({
+        currentItemId: -1,
+        userId: 'user1',
+        sourceId: 10,
+        parentId: 20,
+        findItemById,
+      })
+      expect(result.valid).toBe(true)
+    })
+
+    it('create scenario still rejects nonexistent sourceId', async () => {
+      const result = await validateChainLinkWithContext({
+        currentItemId: -1,
+        userId: 'user1',
+        sourceId: 999,
+        parentId: null,
+        findItemById,
+      })
+      expect(result.valid).toBe(false)
+      expect(result.reason).toContain('sourceId')
+    })
+
+    it('create scenario still rejects cross-user parentId', async () => {
+      const result = await validateChainLinkWithContext({
+        currentItemId: -1,
+        userId: 'user1',
+        sourceId: null,
+        parentId: 30,
+        findItemById,
+      })
+      expect(result.valid).toBe(false)
+      expect(result.reason).toContain('parentId')
     })
   })
 })

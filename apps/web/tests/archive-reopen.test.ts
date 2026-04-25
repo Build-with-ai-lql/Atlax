@@ -5,15 +5,20 @@ import {
   addTagToItem,
   archiveItem,
   createDockItem,
+  getEntryByDockItemId,
   ignoreItem,
   listArchivedEntries,
   reopenItem,
   restoreItem,
   suggestItem,
   updateArchivedEntry,
+  updateDockItemText,
+  updateSelectedActions,
+  updateSelectedProject,
 } from '@/lib/repository'
 
 const USER_ID = 'user_archive_test'
+const USER_B = 'user_archive_other'
 
 async function cleanAll() {
   await db.table('dockItems').clear()
@@ -58,7 +63,7 @@ describe('full state flow', () => {
     expect(restored.suggestions).toEqual([])
   })
 
-  it('pending -> suggested -> archived -> reopened', async () => {
+  it('pending -> suggested -> archived -> reopened preserves entry data', async () => {
     const id = await createDockItem(USER_ID, '测试重新整理')
 
     await suggestItem(USER_ID, id)
@@ -66,7 +71,7 @@ describe('full state flow', () => {
 
     const reopened = unwrap(await reopenItem(USER_ID, id))
     expect(reopened.status).toBe('reopened')
-    expect(reopened.suggestions).toEqual([])
+    expect(reopened.suggestions.length).toBeGreaterThan(0)
   })
 })
 
@@ -103,15 +108,105 @@ describe('reopen and re-archive', () => {
     expect(ignored.status).toBe('ignored')
   })
 
-  it('reopen clears suggestions for fresh start', async () => {
-    const id = await createDockItem(USER_ID, '重新整理清空建议')
+  it('reopen preserves suggestions from previous archive cycle', async () => {
+    const id = await createDockItem(USER_ID, '重新整理保留建议')
 
     const suggested = unwrap(await suggestItem(USER_ID, id))
     expect(suggested.suggestions.length).toBeGreaterThan(0)
 
     await archiveItem(USER_ID, id)
     const reopened = unwrap(await reopenItem(USER_ID, id))
-    expect(reopened.suggestions).toEqual([])
+    expect(reopened.suggestions.length).toBeGreaterThan(0)
+  })
+})
+
+describe('reopen cache reuse', () => {
+  afterEach(cleanAll)
+
+  it('reuses tags from archived entry on reopen', async () => {
+    const id = await createDockItem(USER_ID, '标签复用测试')
+    await addTagToItem(USER_ID, id, '自定义标签')
+    await suggestItem(USER_ID, id)
+    await archiveItem(USER_ID, id)
+
+    const entry = unwrap(await getEntryByDockItemId(USER_ID, id))
+    expect(entry.tags.length).toBeGreaterThan(0)
+
+    const reopened = unwrap(await reopenItem(USER_ID, id))
+    expect(reopened.userTags).toEqual(entry.tags)
+  })
+
+  it('reuses selectedProject from archived entry on reopen', async () => {
+    const id = await createDockItem(USER_ID, '项目复用测试')
+    await suggestItem(USER_ID, id)
+    await updateSelectedProject(USER_ID, id, 'MindDock')
+    await archiveItem(USER_ID, id)
+
+    const entry = unwrap(await getEntryByDockItemId(USER_ID, id))
+    expect(entry.project).toBe('MindDock')
+
+    const reopened = unwrap(await reopenItem(USER_ID, id))
+    expect(reopened.selectedProject).toBe('MindDock')
+  })
+
+  it('reuses selectedActions from archived entry on reopen', async () => {
+    const id = await createDockItem(USER_ID, '动作复用测试')
+    await suggestItem(USER_ID, id)
+    await updateSelectedActions(USER_ID, id, ['拆分任务', '安排评审'])
+    await archiveItem(USER_ID, id)
+
+    const entry = unwrap(await getEntryByDockItemId(USER_ID, id))
+    expect(entry.actions).toEqual(['拆分任务', '安排评审'])
+
+    const reopened = unwrap(await reopenItem(USER_ID, id))
+    expect(reopened.selectedActions).toEqual(['拆分任务', '安排评审'])
+  })
+
+  it('preserves processedAt when archived entry exists', async () => {
+    const id = await createDockItem(USER_ID, '处理时间保留测试')
+    await suggestItem(USER_ID, id)
+    await archiveItem(USER_ID, id)
+
+    const reopened = unwrap(await reopenItem(USER_ID, id))
+    expect(reopened.processedAt).not.toBeNull()
+  })
+
+  it('clears processedAt when no archived entry exists', async () => {
+    const id = await createDockItem(USER_ID, '无Entry重开测试')
+    await suggestItem(USER_ID, id)
+
+    await db.table('entries').where('sourceDockItemId').equals(id).delete()
+
+    await db.table('dockItems').update(id, { status: 'archived' })
+    const reopened = unwrap(await reopenItem(USER_ID, id))
+    expect(reopened.processedAt).toBeNull()
+  })
+
+  it('editing text after reopen clears suggestions (EditSavePolicy)', async () => {
+    const id = await createDockItem(USER_ID, '编辑后失效测试')
+    await suggestItem(USER_ID, id)
+    await archiveItem(USER_ID, id)
+
+    const reopened = unwrap(await reopenItem(USER_ID, id))
+    expect(reopened.suggestions.length).toBeGreaterThan(0)
+
+    const edited = unwrap(await updateDockItemText(USER_ID, id, '修改后的内容'))
+    expect(edited.suggestions).toEqual([])
+    expect(edited.status).toBe('pending')
+    expect(edited.processedAt).toBeNull()
+  })
+
+  it('blocks cross-user from reading cached entry on reopen', async () => {
+    const id = await createDockItem(USER_ID, '跨用户复用测试')
+    await suggestItem(USER_ID, id)
+    await updateSelectedProject(USER_ID, id, 'SecretProject')
+    await archiveItem(USER_ID, id)
+
+    const crossUserReopen = await reopenItem(USER_B, id)
+    expect(crossUserReopen).toBeNull()
+
+    const entry = unwrap(await getEntryByDockItemId(USER_ID, id))
+    expect(entry.project).toBe('SecretProject')
   })
 })
 

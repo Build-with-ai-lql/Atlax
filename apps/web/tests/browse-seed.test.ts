@@ -81,11 +81,11 @@ describe('entry detail and reopen flow', () => {
     expect(entry.sourceDockItemId).toBe(id1)
   })
 
-  it('reopen from entry returns item to dock', async () => {
+  it('reopen from entry returns item to dock with cached data', async () => {
     const { id1 } = await seedArchiveData()
     const reopened = unwrap(await reopenItem(USER_ID, id1))
     expect(reopened.status).toBe('reopened')
-    expect(reopened.suggestions).toEqual([])
+    expect(reopened.suggestions.length).toBeGreaterThan(0)
 
     const items = await listDockItems(USER_ID)
     const item = unwrap(items.find((i) => i.id === id1))

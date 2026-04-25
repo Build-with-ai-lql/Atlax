@@ -41,7 +41,7 @@ export function applyEditSavePolicy(
 
 export function buildEditSavePatch(
   input: EditSavePolicyInput,
-  policy: EditSavePolicy = defaultEditSavePolicy,
+  _policy: EditSavePolicy = defaultEditSavePolicy,
 ): Record<string, unknown> {
   const result = applyEditSavePolicy(input)
 

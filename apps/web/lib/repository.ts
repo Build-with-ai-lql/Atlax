@@ -2,6 +2,7 @@ import {
   buildEntryFromArchive,
   buildDockItemReset,
   buildEntryAndDockPatches,
+  buildProvenanceAsync,
   canTransition,
   createTag,
   dedupeTagNames,
@@ -9,6 +10,7 @@ import {
   makeTagId,
   normalizeTagName,
   validateChainLinkWithContext,
+  type ChainProvenance,
   type EntryStatus,
   type SourceType,
 } from '@atlax/domain'
@@ -39,6 +41,7 @@ import {
 export type DockItem = DomainDockItem
 export type { PersistedEntry as StoredEntry }
 export type { PersistedTag as StoredTag }
+export type { ChainProvenance }
 
 function toPersistedDockItem(item: DockItemRecord | undefined): PersistedDockItem | null {
   if (!item || typeof item.id !== 'number') {
@@ -90,18 +93,40 @@ async function getDockItemForUser(userId: string, id: number): Promise<Persisted
   return item
 }
 
-export async function createDockItem(userId: string, rawText: string, sourceType: SourceType = 'text'): Promise<number> {
+export async function createDockItem(
+  userId: string,
+  rawText: string,
+  sourceType: SourceType = 'text',
+  options?: { sourceId?: number | null; parentId?: number | null; topic?: string | null },
+): Promise<number> {
+  const sourceId = options?.sourceId ?? null
+  const parentId = options?.parentId ?? null
+
+  if (sourceId !== null || parentId !== null) {
+    const validation = await validateChainLinkWithContext({
+      currentItemId: -1,
+      userId,
+      sourceId,
+      parentId,
+      findItemById: (uid, itemId) => getDockItemForUser(uid, itemId),
+    })
+    if (!validation.valid) {
+      throw new Error(`createDockItem: invalid chain links - ${validation.reason}`)
+    }
+  }
+
   const id = await dockItemsTable.add({
     userId,
     rawText,
+    topic: options?.topic ?? null,
     sourceType,
     status: 'pending',
     suggestions: [],
     userTags: [],
     selectedActions: [],
     selectedProject: null,
-    sourceId: null,
-    parentId: null,
+    sourceId: options?.sourceId ?? null,
+    parentId: options?.parentId ?? null,
     processedAt: null,
     createdAt: new Date(),
   })
@@ -222,6 +247,7 @@ export async function archiveItem(userId: string, id: number): Promise<Persisted
     {
       dockItemId: id,
       rawText: item.rawText,
+      topic: item.topic,
       suggestions: item.suggestions,
       userTags: item.userTags,
       selectedProject: item.selectedProject,
@@ -302,21 +328,42 @@ export async function reopenItem(userId: string, id: number): Promise<PersistedD
   if (!item) return null
   if (!canTransition(item.status, 'reopened')) return null
 
-  await dockItemsTable.update(id, {
-    status: 'reopened',
-    suggestions: [],
-    processedAt: null,
-  })
+  const archivedEntry = await getEntryByDockItemId(userId, id)
+
+  if (archivedEntry) {
+    await dockItemsTable.update(id, {
+      status: 'reopened',
+      userTags: archivedEntry.tags,
+      selectedProject: archivedEntry.project,
+      selectedActions: archivedEntry.actions,
+      processedAt: item.processedAt,
+    })
+  } else {
+    await dockItemsTable.update(id, {
+      status: 'reopened',
+      processedAt: null,
+    })
+  }
 
   return getPersistedDockItem(id)
 }
 
-export async function updateDockItemText(userId: string, id: number, rawText: string): Promise<PersistedDockItem | null> {
+export async function updateDockItemText(
+  userId: string,
+  id: number,
+  rawText: string,
+  topic?: string | null,
+): Promise<PersistedDockItem | null> {
   const item = await getDockItemForUser(userId, id)
   if (!item) return null
 
   const resetFields = buildDockItemReset({ dockItemId: id, newText: rawText })
-  await dockItemsTable.update(id, resetFields)
+  const updateData: Partial<DockItemRecord> = { ...resetFields }
+  if (topic !== undefined) {
+    updateData.topic = topic
+  }
+
+  await dockItemsTable.update(id, updateData)
 
   return getPersistedDockItem(id)
 }
@@ -376,6 +423,17 @@ export async function updateChainLinks(userId: string, id: number, sourceId: num
   })
 
   return getPersistedDockItem(id)
+}
+
+export async function getChainProvenance(userId: string, id: number): Promise<ChainProvenance | null> {
+  const item = await getDockItemForUser(userId, id)
+  if (!item) return null
+
+  return buildProvenanceAsync(item, async (lookupId) => {
+    const found = await dockItemsTable.get(lookupId)
+    if (!found || found.userId !== userId) return null
+    return found
+  })
 }
 
 export async function addTagToItem(userId: string, id: number, tagName: string): Promise<PersistedDockItem | null> {
@@ -479,6 +537,7 @@ function toPersistedChatSession(session: ChatSessionRecord | undefined): Persist
     title: session.title ?? null,
     pinned: session.pinned ?? false,
     messages: session.messages ?? [],
+    dockItemId: session.dockItemId ?? null,
   }
 }
 
@@ -505,6 +564,7 @@ export async function createChatSession(input: ChatSessionCreateInput): Promise<
     status: 'active',
     pinned: input.pinned ?? false,
     messages: input.messages ?? [],
+    dockItemId: input.dockItemId ?? null,
     createdAt: now,
     updatedAt: now,
   })
@@ -618,4 +678,58 @@ export async function addChatMessage(
   })
 
   return toPersistedChatSession(await chatSessionsTable.get(id))
+}
+
+export async function confirmChatSession(
+  userId: string,
+  id: number,
+  content: string,
+  topic: string | null,
+  type: string | null,
+): Promise<{ session: PersistedChatSession | null; dockItemId: number | null }> {
+  const session = await getChatSessionForUser(userId, id)
+  if (!session) return { session: null, dockItemId: null }
+
+  let boundDockItemId: number | null = session.dockItemId
+
+  if (session.dockItemId !== null) {
+    const existingItem = await getDockItemForUser(userId, session.dockItemId)
+    if (existingItem) {
+      // Update text/topic if changed
+      if (existingItem.rawText !== content || existingItem.topic !== topic) {
+        await updateDockItemText(userId, session.dockItemId, content, topic)
+      }
+      // Update tags if type provided
+      if (type) {
+        await createStoredTag(userId, type)
+        await updateItemTags(userId, session.dockItemId, [type])
+      }
+    } else {
+      boundDockItemId = await createDockItem(userId, content, 'chat', { topic })
+      if (type) {
+        await createStoredTag(userId, type)
+        await addTagToItem(userId, boundDockItemId, type)
+      }
+    }
+  } else {
+    boundDockItemId = await createDockItem(userId, content, 'chat', { topic })
+    if (type) {
+      await createStoredTag(userId, type)
+      await addTagToItem(userId, boundDockItemId, type)
+    }
+  }
+
+  await chatSessionsTable.update(id, {
+    status: 'confirmed',
+    topic,
+    selectedType: type,
+    content,
+    dockItemId: boundDockItemId,
+    updatedAt: new Date(),
+  })
+
+  return {
+    session: toPersistedChatSession(await chatSessionsTable.get(id)),
+    dockItemId: boundDockItemId,
+  }
 }

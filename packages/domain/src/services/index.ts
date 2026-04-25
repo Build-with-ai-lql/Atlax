@@ -1,5 +1,6 @@
 export * from './ChainLinkService'
 export * from './ChatGuidanceService'
 export * from './DockItemService'
+export * from './EditorCommandTransform'
 export * from './EditSavePolicy'
 export * from './EntryService'

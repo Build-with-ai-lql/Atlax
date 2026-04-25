@@ -72,6 +72,7 @@ export interface Entry {
 export interface ArchiveInput {
   dockItemId: number
   rawText: string
+  topic: string | null
   suggestions: SuggestionItem[]
   userTags: string[]
   selectedProject: string | null

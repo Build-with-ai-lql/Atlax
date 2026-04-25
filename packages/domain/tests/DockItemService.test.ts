@@ -65,6 +65,7 @@ describe('DockItemService', () => {
         sourceId: null,
         parentId: null,
         processedAt: new Date(),
+        topic: null,
         createdAt: new Date(),
       }
 
@@ -93,6 +94,7 @@ describe('DockItemService', () => {
         sourceId: null,
         parentId: null,
         processedAt: new Date(),
+        topic: null,
         createdAt: new Date(),
       }
 
@@ -124,6 +126,7 @@ describe('DockItemService', () => {
         sourceId: null,
         parentId: null,
         processedAt: null,
+        topic: null,
         createdAt: new Date(),
       }
 
@@ -155,6 +158,7 @@ describe('DockItemService', () => {
         sourceId: null,
         parentId: null,
         processedAt: null,
+        topic: null,
         createdAt: new Date(),
       }
 

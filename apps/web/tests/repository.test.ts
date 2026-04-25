@@ -7,6 +7,7 @@ import {
   countDockItems,
   createDockItem,
   createStoredTag,
+  getChainProvenance,
   getEntryByDockItemId,
   getWorkspaceStats,
   ignoreItem,
@@ -146,6 +147,49 @@ describe('repository', () => {
       const id = await createDockItem(USER_A, '内容')
       expect(await suggestItem(USER_B, id)).toBeNull()
     })
+
+    it('blocks cross-user archive', async () => {
+      const id = await createDockItem(USER_A, '内容')
+      await suggestItem(USER_A, id)
+      expect(await archiveItem(USER_B, id)).toBeNull()
+    })
+
+    it('blocks cross-user reopen', async () => {
+      const id = await createDockItem(USER_A, '内容')
+      await suggestItem(USER_A, id)
+      await archiveItem(USER_A, id)
+      expect(await reopenItem(USER_B, id)).toBeNull()
+    })
+
+    it('blocks cross-user ignore', async () => {
+      const id = await createDockItem(USER_A, '内容')
+      expect(await ignoreItem(USER_B, id)).toBeNull()
+    })
+
+    it('blocks cross-user restore', async () => {
+      const id = await createDockItem(USER_A, '内容')
+      await ignoreItem(USER_A, id)
+      expect(await restoreItem(USER_B, id)).toBeNull()
+    })
+
+    it('blocks cross-user tag operations', async () => {
+      const id = await createDockItem(USER_A, '内容')
+      expect(await addTagToItem(USER_B, id, '技术')).toBeNull()
+      expect(await removeTagFromItem(USER_B, id, '技术')).toBeNull()
+    })
+
+    it('blocks cross-user selectedProject/selectedActions update', async () => {
+      const id = await createDockItem(USER_A, '内容')
+      expect(await updateSelectedProject(USER_B, id, 'Project')).toBeNull()
+      expect(await updateSelectedActions(USER_B, id, ['action1'])).toBeNull()
+    })
+
+    it('blocks cross-user entry access', async () => {
+      const id = await createDockItem(USER_A, '内容')
+      await suggestItem(USER_A, id)
+      await archiveItem(USER_A, id)
+      expect(await getEntryByDockItemId(USER_B, id)).toBeNull()
+    })
   })
 
   describe('listItemsByStatus', () => {
@@ -216,14 +260,14 @@ describe('repository', () => {
       expect(second.suggestions.length).toBeGreaterThan(0)
     })
 
-    it('reopened item has cleared suggestions before re-suggest', async () => {
+    it('reopened item preserves suggestions from archive cycle', async () => {
       const id = await createDockItem(USER_A, '测试内容')
       await suggestItem(USER_A, id)
       await archiveItem(USER_A, id)
 
       const reopened = unwrap(await reopenItem(USER_A, id))
-      expect(reopened.suggestions).toEqual([])
-      expect(reopened.processedAt).toBeNull()
+      expect(reopened.suggestions.length).toBeGreaterThan(0)
+      expect(reopened.processedAt).not.toBeNull()
     })
 
     it('edit -> suggest produces valid suggestions on same item', async () => {
@@ -537,6 +581,85 @@ describe('repository', () => {
     })
   })
 
+  describe('createDockItem chain link validation', () => {
+    it('creates item with valid sourceId and parentId', async () => {
+      const sourceId = await createDockItem(USER_A, '源记录')
+      const parentId = await createDockItem(USER_A, '父记录')
+      const derivedId = await createDockItem(USER_A, '派生记录', 'text', { sourceId, parentId })
+
+      const items = await listDockItems(USER_A)
+      const derived = items.find((i) => i.id === derivedId)
+      expect(derived).toBeDefined()
+      if (derived) {
+        expect(derived.sourceId).toBe(sourceId)
+        expect(derived.parentId).toBe(parentId)
+      }
+    })
+
+    it('rejects cross-user sourceId and does not create item', async () => {
+      const otherItemId = await createDockItem(USER_B, 'User B 记录')
+      const countBefore = await countDockItems(USER_A)
+
+      await expect(
+        createDockItem(USER_A, '非法记录', 'text', { sourceId: otherItemId }),
+      ).rejects.toThrow('invalid chain links')
+
+      expect(await countDockItems(USER_A)).toBe(countBefore)
+    })
+
+    it('rejects cross-user parentId and does not create item', async () => {
+      const otherItemId = await createDockItem(USER_B, 'User B 记录')
+      const countBefore = await countDockItems(USER_A)
+
+      await expect(
+        createDockItem(USER_A, '非法记录', 'text', { parentId: otherItemId }),
+      ).rejects.toThrow('invalid chain links')
+
+      expect(await countDockItems(USER_A)).toBe(countBefore)
+    })
+
+    it('rejects nonexistent sourceId and does not create item', async () => {
+      const countBefore = await countDockItems(USER_A)
+
+      await expect(
+        createDockItem(USER_A, '非法记录', 'text', { sourceId: 99999 }),
+      ).rejects.toThrow('invalid chain links')
+
+      expect(await countDockItems(USER_A)).toBe(countBefore)
+    })
+
+    it('rejects nonexistent parentId and does not create item', async () => {
+      const countBefore = await countDockItems(USER_A)
+
+      await expect(
+        createDockItem(USER_A, '非法记录', 'text', { parentId: 99999 }),
+      ).rejects.toThrow('invalid chain links')
+
+      expect(await countDockItems(USER_A)).toBe(countBefore)
+    })
+
+    it('creates item without chain links when options omitted', async () => {
+      const id = await createDockItem(USER_A, '普通记录')
+      expect(id).toBeDefined()
+      expect(typeof id).toBe('number')
+
+      const items = await listDockItems(USER_A)
+      const item = items.find((i) => i.id === id)
+      expect(item?.sourceId).toBeNull()
+      expect(item?.parentId).toBeNull()
+    })
+
+    it('creates item when both sourceId and parentId are null', async () => {
+      const id = await createDockItem(USER_A, '显式空链路', 'text', { sourceId: null, parentId: null })
+      expect(id).toBeDefined()
+
+      const items = await listDockItems(USER_A)
+      const item = items.find((i) => i.id === id)
+      expect(item?.sourceId).toBeNull()
+      expect(item?.parentId).toBeNull()
+    })
+  })
+
   describe('chain links (sourceId/parentId)', () => {
     it('sets sourceId for reorganize relation', async () => {
       const sourceId = await createDockItem(USER_A, '原始记录')
@@ -654,6 +777,106 @@ describe('repository', () => {
       const items = await listDockItems(USER_A)
       const archived = items.find((i) => i.id === derivedId)
       expect(archived?.sourceId).toBe(sourceId)
+    })
+  })
+
+  describe('getChainProvenance', () => {
+    it('returns provenance for item with sourceId (reorganize)', async () => {
+      const sourceId = await createDockItem(USER_A, '原始会议记录\n详细内容')
+      const derivedId = await createDockItem(USER_A, '重新整理的记录')
+      await updateChainLinks(USER_A, derivedId, sourceId, null)
+
+      const provenance = await getChainProvenance(USER_A, derivedId)
+
+      expect(provenance).not.toBeNull()
+      if (!provenance) return
+      expect(provenance.itemId).toBe(derivedId)
+      expect(provenance.sourceId).toBe(sourceId)
+      expect(provenance.parentId).toBeNull()
+      expect(provenance.relationType).toBe('reorganize')
+      expect(provenance.sourceTitle).toBe('原始会议记录')
+      expect(provenance.parentTitle).toBeNull()
+    })
+
+    it('returns provenance for item with sourceId=parentId (continue_edit)', async () => {
+      const sourceId = await createDockItem(USER_A, '编辑中的文档\n第二行')
+      const derivedId = await createDockItem(USER_A, '继续编辑的文档')
+      await updateChainLinks(USER_A, derivedId, sourceId, sourceId)
+
+      const provenance = await getChainProvenance(USER_A, derivedId)
+
+      expect(provenance).not.toBeNull()
+      if (!provenance) return
+      expect(provenance.relationType).toBe('continue_edit')
+      expect(provenance.sourceTitle).toBe('编辑中的文档')
+      expect(provenance.parentTitle).toBe('编辑中的文档')
+    })
+
+    it('returns provenance for item with different sourceId and parentId (derive)', async () => {
+      const sourceId = await createDockItem(USER_A, '源记录标题')
+      const parentId = await createDockItem(USER_A, '父记录标题')
+      const derivedId = await createDockItem(USER_A, '派生记录')
+      await updateChainLinks(USER_A, derivedId, sourceId, parentId)
+
+      const provenance = await getChainProvenance(USER_A, derivedId)
+
+      expect(provenance).not.toBeNull()
+      if (!provenance) return
+      expect(provenance.relationType).toBe('derive')
+      expect(provenance.sourceTitle).toBe('源记录标题')
+      expect(provenance.parentTitle).toBe('父记录标题')
+    })
+
+    it('returns provenance for root item with no chain links', async () => {
+      const id = await createDockItem(USER_A, '独立记录')
+
+      const provenance = await getChainProvenance(USER_A, id)
+
+      expect(provenance).not.toBeNull()
+      if (!provenance) return
+      expect(provenance.sourceId).toBeNull()
+      expect(provenance.parentId).toBeNull()
+      expect(provenance.sourceTitle).toBeNull()
+      expect(provenance.parentTitle).toBeNull()
+    })
+
+    it('returns null for nonexistent item', async () => {
+      const provenance = await getChainProvenance(USER_A, 99999)
+      expect(provenance).toBeNull()
+    })
+
+    it('returns null for item belonging to different user', async () => {
+      const id = await createDockItem(USER_A, '用户A的记录')
+
+      const provenance = await getChainProvenance(USER_B, id)
+      expect(provenance).toBeNull()
+    })
+
+    it('does not expose source title from different user', async () => {
+      await createDockItem(USER_A, '用户A的源记录')
+      const derivedId = await createDockItem(USER_B, '用户B的派生记录')
+
+      await updateChainLinks(USER_B, derivedId, null, null)
+
+      const provenance = await getChainProvenance(USER_B, derivedId)
+      expect(provenance).not.toBeNull()
+      if (provenance) {
+        expect(provenance.sourceTitle).toBeNull()
+      }
+    })
+
+    it('truncates long source title to 60 chars', async () => {
+      const longTitle = '这'.repeat(100)
+      const sourceId = await createDockItem(USER_A, longTitle)
+      const derivedId = await createDockItem(USER_A, '派生记录')
+      await updateChainLinks(USER_A, derivedId, sourceId, null)
+
+      const provenance = await getChainProvenance(USER_A, derivedId)
+
+      expect(provenance).not.toBeNull()
+      if (provenance?.sourceTitle) {
+        expect(provenance.sourceTitle.length).toBeLessThanOrEqual(60)
+      }
     })
   })
 })

@@ -7,6 +7,7 @@ export interface DockItemRecord {
   id?: number
   userId: string
   rawText: string
+  topic: string | null
   sourceType: SourceType
   status: EntryStatus
   suggestions: SuggestionItem[]
@@ -62,6 +63,7 @@ export interface ChatSessionRecord {
   status: ChatSessionStatus
   pinned: boolean
   messages: ChatMessage[]
+  dockItemId: number | null
   createdAt: Date
   updatedAt: Date
 }
@@ -187,6 +189,17 @@ db.version(9).stores({
   tx.table('chatSessions').toCollection().modify((session: Record<string, unknown>) => {
     if (session.pinned === undefined) session.pinned = false
     if (session.title === undefined) session.title = null
+  })
+})
+
+db.version(11).stores({
+  dockItems: '++id, userId, rawText, topic, sourceType, status, createdAt',
+  tags: 'id, userId, name, [userId+name]',
+  entries: '++id, userId, sourceDockItemId, type, archivedAt',
+  chatSessions: '++id, userId, status, pinned, dockItemId, createdAt, updatedAt',
+}).upgrade((tx) => {
+  tx.table('dockItems').toCollection().modify((item: Record<string, unknown>) => {
+    if (item.topic === undefined) item.topic = null
   })
 })
 

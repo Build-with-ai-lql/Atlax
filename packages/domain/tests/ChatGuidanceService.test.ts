@@ -1,13 +1,14 @@
-import { describe, expect, it, beforeEach } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import {
-  createChatGuidanceService,
   buildInitialGuidanceState,
-  buildGuidancePrompt,
   buildRefillOptions,
-  getRandomDismissalMessage,
+  buildRefillPatch,
+  buildRefieldPatch,
   canTransitionGuidance,
+  createChatGuidanceService,
   getNextStep,
+  getRandomDismissalMessage,
   buildRawTextFromState,
   type ChatGuidanceState,
 } from '../src/services/ChatGuidanceService'
@@ -104,7 +105,7 @@ describe('ChatGuidanceService', () => {
       expect(options.map((o) => o.label)).toEqual(['标题', '类型', '内容'])
     })
 
-    it('refills topic from cancelled state', () => {
+    it('refills topic: clears topic, type, content; goes to awaiting_topic', () => {
       const service = createChatGuidanceService()
 
       service.start()
@@ -118,11 +119,11 @@ describe('ChatGuidanceService', () => {
       service.refill('topic')
       expect(service.getState().step).toBe('awaiting_topic')
       expect(service.getState().topic).toBe('')
-      expect(service.getState().selectedType).toBe('task')
-      expect(service.getState().content).toBe('原始内容')
+      expect(service.getState().selectedType).toBeNull()
+      expect(service.getState().content).toBe('')
     })
 
-    it('refills type from cancelled state', () => {
+    it('refills type: preserves topic, clears type and content; goes to awaiting_type', () => {
       const service = createChatGuidanceService()
 
       service.start()
@@ -135,10 +136,10 @@ describe('ChatGuidanceService', () => {
       expect(service.getState().step).toBe('awaiting_type')
       expect(service.getState().topic).toBe('原始主题')
       expect(service.getState().selectedType).toBeNull()
-      expect(service.getState().content).toBe('原始内容')
+      expect(service.getState().content).toBe('')
     })
 
-    it('refills content from cancelled state', () => {
+    it('refills content: preserves topic and type, clears content; goes to awaiting_content', () => {
       const service = createChatGuidanceService()
 
       service.start()
@@ -152,6 +153,122 @@ describe('ChatGuidanceService', () => {
       expect(service.getState().topic).toBe('原始主题')
       expect(service.getState().selectedType).toBe('task')
       expect(service.getState().content).toBe('')
+    })
+  })
+
+  describe('buildRefillPatch', () => {
+    it('topic patch clears topic, selectedType, content', () => {
+      const patch = buildRefillPatch('topic')
+      expect(patch).toEqual({ topic: null, selectedType: null, content: '' })
+    })
+
+    it('type patch clears selectedType, content; preserves topic', () => {
+      const patch = buildRefillPatch('type')
+      expect(patch).toEqual({ selectedType: null, content: '' })
+      expect(patch.topic).toBeUndefined()
+    })
+
+    it('content patch clears content only; preserves topic and selectedType', () => {
+      const patch = buildRefillPatch('content')
+      expect(patch).toEqual({ content: '' })
+      expect(patch.topic).toBeUndefined()
+      expect(patch.selectedType).toBeUndefined()
+    })
+
+    it('unknown option returns empty patch', () => {
+      const patch = buildRefillPatch('unknown')
+      expect(patch).toEqual({})
+    })
+  })
+
+  describe('refield (single field edit)', () => {
+    it('refields topic: only clears topic, preserves type and content', () => {
+      const service = createChatGuidanceService()
+
+      service.start()
+      service.submitTopic('原始主题')
+      service.submitType('task')
+      service.submitContent('原始内容')
+      service.cancel()
+
+      service.refield('topic')
+      expect(service.getState().step).toBe('awaiting_topic')
+      expect(service.getState().topic).toBe('')
+      expect(service.getState().selectedType).toBe('task')
+      expect(service.getState().content).toBe('原始内容')
+    })
+
+    it('refields type: only clears selectedType, preserves topic and content', () => {
+      const service = createChatGuidanceService()
+
+      service.start()
+      service.submitTopic('原始主题')
+      service.submitType('task')
+      service.submitContent('原始内容')
+      service.cancel()
+
+      service.refield('type')
+      expect(service.getState().step).toBe('awaiting_type')
+      expect(service.getState().topic).toBe('原始主题')
+      expect(service.getState().selectedType).toBeNull()
+      expect(service.getState().content).toBe('原始内容')
+    })
+
+    it('refields content: only clears content, preserves topic and type', () => {
+      const service = createChatGuidanceService()
+
+      service.start()
+      service.submitTopic('原始主题')
+      service.submitType('task')
+      service.submitContent('原始内容')
+      service.cancel()
+
+      service.refield('content')
+      expect(service.getState().step).toBe('awaiting_content')
+      expect(service.getState().topic).toBe('原始主题')
+      expect(service.getState().selectedType).toBe('task')
+      expect(service.getState().content).toBe('')
+    })
+
+    it('refield does not trigger start transition', () => {
+      const service = createChatGuidanceService()
+
+      service.start()
+      service.submitTopic('主题')
+      service.submitType('note')
+      service.submitContent('内容')
+      service.cancel()
+
+      service.refield('type')
+      expect(service.getState().step).toBe('awaiting_type')
+    })
+  })
+
+  describe('buildRefieldPatch', () => {
+    it('topic patch clears topic only', () => {
+      const patch = buildRefieldPatch('topic')
+      expect(patch).toEqual({ topic: null })
+      expect(patch.selectedType).toBeUndefined()
+      expect(patch.content).toBeUndefined()
+    })
+
+    it('type patch clears selectedType only', () => {
+      const patch = buildRefieldPatch('type')
+      expect(patch).toEqual({ selectedType: null })
+      expect(patch.topic).toBeUndefined()
+      expect(patch.content).toBeUndefined()
+    })
+
+    it('content patch clears content only', () => {
+      const patch = buildRefieldPatch('content')
+      expect(patch).toEqual({ content: '' })
+      expect(patch.topic).toBeUndefined()
+      expect(patch.selectedType).toBeUndefined()
+    })
+
+    it('unknown option returns empty patch', () => {
+      const patch = buildRefieldPatch('unknown')
+      expect(patch).toEqual({})
     })
   })
 

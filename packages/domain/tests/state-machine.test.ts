@@ -12,6 +12,7 @@ describe('state-machine', () => {
     expect(canTransition('ignored', 'pending')).toBe(true)
     expect(canTransition('reopened', 'suggested')).toBe(true)
     expect(canTransition('reopened', 'ignored')).toBe(true)
+    expect(canTransition('reopened', 'archived')).toBe(true)
   })
 
   it('blocks invalid transitions', () => {
@@ -21,7 +22,6 @@ describe('state-machine', () => {
     expect(canTransition('archived', 'suggested')).toBe(false)
     expect(canTransition('ignored', 'suggested')).toBe(false)
     expect(canTransition('reopened', 'pending')).toBe(false)
-    expect(canTransition('reopened', 'archived')).toBe(false)
   })
 
   it('exposes valid transition table', () => {

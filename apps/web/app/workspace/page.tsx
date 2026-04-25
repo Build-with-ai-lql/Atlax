@@ -1,12 +1,12 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Dock, Archive, Hash, Search, Plus, Send, Paperclip, History,
   Image as ImageIcon, CheckSquare, List, Minimize2,
-  Mic, MessageSquare, PenTool, ChevronRight, Clock,
+  Mic, MessageSquare, PenTool, ChevronRight, Clock, Check,
   Sparkles, Loader2, Sun, Moon, LogOut, RotateCcw, X, Tag, BarChart3, Filter, SlidersHorizontal,
-  PanelLeftClose, PanelLeftOpen, Bold, Italic, Link, Code, Command, ExternalLink
+  PanelLeftClose, PanelLeftOpen, Bold, Italic, Link, Code, Command, ExternalLink, Link as LinkIcon, Maximize2
 } from 'lucide-react'
 
 import { DetailHeaderActions } from './_components/DetailHeaderActions'
@@ -35,12 +35,16 @@ import {
   updateChatSession,
   pinChatSession,
   unpinChatSession,
+  getChainProvenance,
+  confirmChatSession,
   type DockItem,
   type StoredEntry,
   type StoredTag,
+  type ChainProvenance,
 } from '@/lib/repository'
 import type { EntryStatus } from '@/lib/types'
 import { computeMetrics, getEventLog, recordEvent, type AppMode, type MetricsResult } from '@/lib/events'
+import { applyEditorCommand, buildRefillPatch, buildRefieldPatch } from '@atlax/domain'
 
 import AuthGate from './_components/AuthGate'
 
@@ -64,6 +68,7 @@ interface LocalChatSession {
   content: string
   status: ChatSessionStatus
   messages: LocalChatMessage[]
+  dockItemId: number | null
   pinned: boolean
   createdAt: Date
   updatedAt: Date
@@ -145,6 +150,7 @@ export default function WorkspacePage() {
   const [existingTags, setExistingTags] = useState<StoredTag[]>([])
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
   const [selectedArchivedEntryId, setSelectedArchivedEntryId] = useState<number | null>(null)
+  const [selectedProvenance, setSelectedProvenance] = useState<ChainProvenance | null>(null)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -163,6 +169,7 @@ export default function WorkspacePage() {
   const [entryFilterStatus, setEntryFilterStatus] = useState('')
 
   const [chatStep, setChatStep] = useState<ChatStep>('idle')
+  const [prevChatStep, setPrevChatStep] = useState<ChatStep>('idle')
   const [chatTopic, setChatTopic] = useState('')
   const [chatType, setChatType] = useState('')
   const [chatContent, setChatContent] = useState('')
@@ -170,6 +177,7 @@ export default function WorkspacePage() {
   const [chatMessages, setChatMessages] = useState<LocalChatMessage[]>([])
   const [chatSessions, setChatSessions] = useState<LocalChatSession[]>([])
   const [currentSessionId, setCurrentSessionId] = useState<number | null>(null)
+  const [enlargedPreviewData, setEnlargedPreviewData] = useState<{ topic: string; type: string; content: string } | null>(null)
   const messagesContainerRef = React.useRef<HTMLDivElement>(null)
   const isAtBottomRef = React.useRef(true)
   const [dockViewMode, setDockViewMode] = useState<'list' | 'card'>(() => {
@@ -194,7 +202,32 @@ export default function WorkspacePage() {
     const current = getCurrentUser()
     setUser(current)
     setAuthChecked(true)
+
+    // Restore recorder state and session if possible
+    const savedSessionId = localStorage.getItem('atlax_current_session_id')
+    const savedInputMode = localStorage.getItem('atlax_input_mode')
+    const savedRecorderState = localStorage.getItem('atlax_recorder_state')
+
+    if (savedSessionId) setCurrentSessionId(parseInt(savedSessionId))
+    if (savedInputMode) setInputMode(savedInputMode as AppMode)
+
+    const parseRecorderState = (s: string | null): 'closed' | 'classic' | 'chat' =>
+      (s === 'classic' || s === 'chat') ? s : 'closed'
+    setRecorderState(parseRecorderState(savedRecorderState))
   }, [])
+
+  useEffect(() => {
+    if (currentSessionId) localStorage.setItem('atlax_current_session_id', currentSessionId.toString())
+    else localStorage.removeItem('atlax_current_session_id')
+  }, [currentSessionId])
+
+  useEffect(() => {
+    localStorage.setItem('atlax_input_mode', inputMode)
+  }, [inputMode])
+
+  useEffect(() => {
+    localStorage.setItem('atlax_recorder_state', recorderState)
+  }, [recorderState])
 
   useEffect(() => {
     if (user?.id) {
@@ -207,32 +240,30 @@ export default function WorkspacePage() {
           content: s.content,
           status: s.status,
           messages: s.messages.map((m, idx) => ({ id: `msg-${idx}`, role: m.role, content: m.content, timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : m.timestamp })),
+          dockItemId: s.dockItemId ?? null,
           pinned: s.pinned ?? false,
           createdAt: s.createdAt,
           updatedAt: s.updatedAt,
         }))
         setChatSessions(localSessions)
 
-        if (localSessions.length > 0) {
-          const activeSession = localSessions.find(s => s.status === 'active')
-          if (activeSession) {
-            setCurrentSessionId(activeSession.id)
-            setChatMessages(activeSession.messages)
-            setChatTopic(activeSession.topic || '')
-            setChatType(activeSession.selectedType || '')
-            setChatContent(activeSession.content)
-            if (activeSession.topic) {
-              setChatStep(activeSession.content ? 'awaiting_confirmation' : 'awaiting_content')
-            }
+        const savedSessionId = localStorage.getItem('atlax_current_session_id')
+        const restoredSession = (savedSessionId ? localSessions.find(s => s.id.toString() === savedSessionId) : null) ||
+                                localSessions.find(s => s.status === 'active')
+
+        if (restoredSession) {
+          setCurrentSessionId(restoredSession.id)
+          setChatMessages(restoredSession.messages)
+          setChatTopic(restoredSession.topic || '')
+          setChatType(restoredSession.selectedType || '')
+          setChatContent(restoredSession.content)
+
+          if (restoredSession.status === 'confirmed') {
+            setChatStep('done')
+          } else if (restoredSession.topic) {
+            setChatStep(restoredSession.content ? 'awaiting_confirmation' : 'awaiting_content')
           } else {
-            setCurrentSessionId(null)
-            const greeting = CHAT_PLACEHOLDERS[Math.floor(Math.random() * CHAT_PLACEHOLDERS.length)]
-            setChatMessages([{
-              id: `welcome-${Date.now()}`,
-              role: 'assistant' as const,
-              content: `你好，${user.name}！${greeting}`,
-              timestamp: Date.now()
-            }])
+            setChatStep('idle')
           }
         } else {
           setCurrentSessionId(null)
@@ -240,9 +271,13 @@ export default function WorkspacePage() {
           setChatMessages([{
             id: `welcome-${Date.now()}`,
             role: 'assistant' as const,
-            content: `你好，${user.name}！${greeting}`,
+            content: `你好，${user?.name || ''}！${greeting}`,
             timestamp: Date.now()
           }])
+          setChatStep('idle')
+          setChatTopic('')
+          setChatType('')
+          setChatContent('')
         }
       }).catch(err => {
         console.error('Failed to load chat sessions:', err)
@@ -251,7 +286,7 @@ export default function WorkspacePage() {
         setChatMessages([{
           id: `welcome-${Date.now()}`,
           role: 'assistant' as const,
-          content: `你好，${user.name}！${greeting}`,
+          content: `你好，${user?.name || ''}！${greeting}`,
           timestamp: Date.now()
         }])
       })
@@ -427,16 +462,29 @@ export default function WorkspacePage() {
 
     if (chatStep === 'idle' || chatStep === 'awaiting_topic') {
       newTopic = chatDraft
-      newStep = 'awaiting_type'
-      nextSysMsg = { id: `s-${Date.now()}`, role: 'system' as const, content: '这次记录是什么类型呢', timestamp: Date.now() }
+      if (!chatType) {
+        newStep = 'awaiting_type'
+        nextSysMsg = { id: `s-${Date.now()}`, role: 'assistant' as const, content: '这次记录是什么类型呢', timestamp: Date.now() }
+      } else if (!chatContent) {
+        newStep = 'awaiting_content'
+        nextSysMsg = { id: `s-${Date.now()}`, role: 'assistant' as const, content: '你想记录些什么呢', timestamp: Date.now() }
+      } else {
+        newStep = 'awaiting_confirmation'
+        nextSysMsg = { id: `s-${Date.now()}`, role: 'assistant' as const, content: '灵感已记录，是否落库？', timestamp: Date.now() }
+      }
     } else if (chatStep === 'awaiting_type') {
       newType = chatDraft
-      newStep = 'awaiting_content'
-      nextSysMsg = { id: `s-${Date.now()}`, role: 'system' as const, content: '你想记录些什么呢', timestamp: Date.now() }
+      if (!chatContent) {
+        newStep = 'awaiting_content'
+        nextSysMsg = { id: `s-${Date.now()}`, role: 'assistant' as const, content: '你想记录些什么呢', timestamp: Date.now() }
+      } else {
+        newStep = 'awaiting_confirmation'
+        nextSysMsg = { id: `s-${Date.now()}`, role: 'assistant' as const, content: '灵感已记录，是否落库？', timestamp: Date.now() }
+      }
     } else if (chatStep === 'awaiting_content') {
       newContent = chatDraft
       newStep = 'awaiting_confirmation'
-      nextSysMsg = { id: `s-${Date.now()}`, role: 'system' as const, content: '你看这样为你生成可以么', timestamp: Date.now() }
+      nextSysMsg = { id: `s-${Date.now()}`, role: 'assistant' as const, content: '灵感已记录，是否落库？', timestamp: Date.now() }
     }
 
     setChatTopic(newTopic)
@@ -469,6 +517,7 @@ export default function WorkspacePage() {
           content: newSession.content,
           status: newSession.status,
           messages: newSession.messages.map((m, idx) => ({ id: `msg-${idx}`, role: m.role, content: m.content, timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : m.timestamp })),
+          dockItemId: newSession.dockItemId ?? null,
           pinned: newSession.pinned ?? false,
           createdAt: newSession.createdAt,
           updatedAt: newSession.updatedAt,
@@ -492,46 +541,117 @@ export default function WorkspacePage() {
   }
 
   const handleChatFinalSubmit = async () => {
-    const finalContent = chatContent
+    if (!currentSessionId) return
 
-    await handleSaveEntry(finalContent, [chatType], false)
+    const { session: updatedSession, dockItemId } = await confirmChatSession(
+      userId,
+      currentSessionId,
+      chatContent,
+      chatTopic,
+      chatType
+    )
 
-    const doneMsg = { id: `sys-done-${Date.now()}`, role: 'assistant' as const, content: '✨ 已成功入 Dock！', timestamp: Date.now() };
-    const finalMessages = [...chatMessages, doneMsg];
-    setChatMessages(finalMessages)
-    setChatStep('done')
+    if (updatedSession) {
+      const doneMsg = { id: `sys-done-${Date.now()}`, role: 'assistant' as const, content: '✨ 已成功入 Dock！', timestamp: Date.now() };
+      const finalMessages = [...chatMessages, doneMsg];
+      setChatMessages(finalMessages)
+      setChatStep('done')
 
-    if (currentSessionId) {
       await updateChatSession(userId, currentSessionId, {
-        topic: chatTopic,
-        selectedType: chatType,
-        content: chatContent,
         messages: toBackendMessages(finalMessages),
-        status: 'confirmed',
       }).catch(console.error)
+
       setChatSessions(prev => prev.map(s =>
         s.id === currentSessionId
-          ? { ...s, topic: chatTopic, selectedType: chatType, content: chatContent, status: 'confirmed' as const, messages: finalMessages, updatedAt: new Date() }
+          ? {
+            ...s,
+            topic: chatTopic,
+            selectedType: chatType,
+            content: chatContent,
+            status: 'confirmed' as const,
+            messages: finalMessages,
+            dockItemId: dockItemId,
+            updatedAt: new Date()
+          }
           : s
       ))
+      await refreshList()
     }
   }
 
-  const handleChatCancel = () => {
-    setChatMessages(prev => [...prev, { id: `s-cancel-${Date.now()}`, role: 'system', content: '你想取消本次记录，还是重新记录？', timestamp: Date.now() }])
-    setChatStep('cancelled')
+  const handleChatRefill = async (option: 'topic' | 'type' | 'content') => {
+    if (!currentSessionId) return
+
+    const patch = buildRefillPatch(option)
+    const updatedSession = await updateChatSession(userId, currentSessionId, {
+      ...patch,
+      status: 'active'
+    })
+
+    if (updatedSession) {
+      const step = option === 'topic' ? 'awaiting_topic' : option === 'type' ? 'awaiting_type' : 'awaiting_content'
+      const prompt = option === 'topic' ? '这次记录是什么主题呢' : option === 'type' ? '这次记录是什么类型呢' : '你想记录些什么呢'
+
+      setChatStep(step)
+      setChatTopic(updatedSession.topic || '')
+      setChatType(updatedSession.selectedType || '')
+      setChatContent(updatedSession.content)
+
+      const refillMsg = { id: `s-refill-${Date.now()}`, role: 'assistant' as const, content: `好的，已为您重置${option === 'topic' ? '标题及后续' : option === 'type' ? '类型及内容' : '内容'}。${prompt}`, timestamp: Date.now() }
+      const updatedMessages = [...chatMessages, refillMsg]
+      setChatMessages(updatedMessages)
+
+      await updateChatSession(userId, currentSessionId, {
+        messages: toBackendMessages(updatedMessages)
+      })
+
+      setChatSessions(prev => prev.map(s => s.id === currentSessionId ? {
+        ...s,
+        topic: updatedSession.topic,
+        selectedType: updatedSession.selectedType,
+        content: updatedSession.content,
+        messages: updatedMessages,
+        status: 'active',
+        updatedAt: new Date()
+      } : s))
+    }
   }
 
-  const handleChatRefill = (option: 'topic' | 'type' | 'content') => {
-    if (option === 'topic') {
-      setChatStep('awaiting_topic')
-      setChatMessages(prev => [...prev, { id: `s-refill-${Date.now()}`, role: 'system', content: '这次记录是什么主题呢', timestamp: Date.now() }])
-    } else if (option === 'type') {
-      setChatStep('awaiting_type')
-      setChatMessages(prev => [...prev, { id: `s-refill-${Date.now()}`, role: 'system', content: '这次记录是什么类型呢', timestamp: Date.now() }])
-    } else if (option === 'content') {
-      setChatStep('awaiting_content')
-      setChatMessages(prev => [...prev, { id: `s-refill-${Date.now()}`, role: 'system', content: '你想记录些什么呢', timestamp: Date.now() }])
+  const handleChatRefield = async (option: 'topic' | 'type' | 'content') => {
+    if (!currentSessionId) return
+
+    const patch = buildRefieldPatch(option)
+    const updatedSession = await updateChatSession(userId, currentSessionId, {
+      ...patch,
+      status: 'active'
+    })
+
+    if (updatedSession) {
+      const step = option === 'topic' ? 'awaiting_topic' : option === 'type' ? 'awaiting_type' : 'awaiting_content'
+      const prompt = option === 'topic' ? '这次记录是什么主题呢' : option === 'type' ? '这次记录是什么类型呢' : '你想记录些什么呢'
+
+      setChatStep(step)
+      setChatTopic(updatedSession.topic || '')
+      setChatType(updatedSession.selectedType || '')
+      setChatContent(updatedSession.content)
+
+      const refieldMsg = { id: `s-refield-${Date.now()}`, role: 'assistant' as const, content: `好的，已为您重新开启${option === 'topic' ? '标题' : option === 'type' ? '类型' : '内容'}修改。${prompt}`, timestamp: Date.now() }
+      const updatedMessages = [...chatMessages, refieldMsg]
+      setChatMessages(updatedMessages)
+
+      await updateChatSession(userId, currentSessionId, {
+        messages: toBackendMessages(updatedMessages)
+      })
+
+      setChatSessions(prev => prev.map(s => s.id === currentSessionId ? {
+        ...s,
+        topic: updatedSession.topic,
+        selectedType: updatedSession.selectedType,
+        content: updatedSession.content,
+        messages: updatedMessages,
+        status: 'active',
+        updatedAt: new Date()
+      } : s))
     }
   }
 
@@ -620,6 +740,10 @@ export default function WorkspacePage() {
     await wrapAction(() => removeTagFromItem(userId, id, tagName))
   }
 
+  const handleUpdateDockItemText = async (itemId: number, rawText: string, topic?: string) => {
+    await wrapAction(() => updateDockItemText(userId, itemId, rawText, topic))
+  }
+
   const handleDismissSuggestion = (itemId: number, tagName: string) => {
     setDismissedSuggestions((prev) => ({
       ...prev,
@@ -661,15 +785,53 @@ export default function WorkspacePage() {
     }
   }
 
-  const handleSelectItem = (id: number) => {
-    setSelectedItemId((prev) => (prev === id ? null : id))
-  }
+  const handleNavigateToItem = useCallback((id: number) => {
+    setSelectedItemId(id)
+    setSelectedArchivedEntryId(null)
+    setActiveNav('dock')
+    getChainProvenance(userId, id).then(setSelectedProvenance).catch(() => setSelectedProvenance(null))
+  }, [userId])
 
-  const handleSelectArchivedEntry = (id: number) => {
-    setSelectedArchivedEntryId((prev) => (prev === id ? null : id))
+  const handleSelectItem = useCallback((id: number) => {
+    setSelectedItemId((prev) => {
+      const next = prev === id ? null : id
+      if (!next) setSelectedProvenance(null)
+      return next
+    })
+    setSelectedArchivedEntryId(null)
+    if (id) {
+      getChainProvenance(userId, id).then(setSelectedProvenance).catch(() => setSelectedProvenance(null))
+    }
+  }, [userId])
+
+  const handleSelectArchivedEntry = useCallback((id: number) => {
+    setSelectedArchivedEntryId((prev) => {
+      const next = prev === id ? null : id
+      if (!next) setSelectedProvenance(null)
+      return next
+    })
+    setSelectedItemId(null)
     if (activeNav !== 'entries') setActiveNav('entries')
     recordEvent(userId, { type: 'browse_revisit', entryId: id })
-  }
+
+    const entry = archivedEntries.find(e => e.id === id)
+    if (entry?.sourceDockItemId) {
+      getChainProvenance(userId, entry.sourceDockItemId).then(setSelectedProvenance).catch(() => setSelectedProvenance(null))
+    }
+  }, [userId, activeNav, archivedEntries])
+
+  const handleDerive = useCallback(async (parentId: number, initialText: string) => {
+    setActionLoading(true)
+    try {
+      const sourceId = items.find(i => i.id === parentId)?.sourceId ?? parentId
+      const newId = await createDockItem(userId, initialText, 'text', { sourceId, parentId })
+      await loadItems()
+      setActiveNav('dock')
+      handleSelectItem(newId)
+    } finally {
+      setActionLoading(false)
+    }
+  }, [userId, items, loadItems, handleSelectItem])
 
   const dockItemStatusMap = new Map(items.map((i) => [i.id, i.status]))
 
@@ -928,7 +1090,17 @@ export default function WorkspacePage() {
                               setChatTopic(session.topic || '')
                               setChatType(session.selectedType || '')
                               setChatContent(session.content)
-                              setChatStep(session.topic ? (session.content ? 'awaiting_confirmation' : (session.selectedType ? 'awaiting_content' : 'awaiting_type')) : 'awaiting_topic')
+                              if (session.status === 'confirmed') {
+                                setChatStep('done')
+                              } else if (session.status === 'cancelled') {
+                                setChatStep('cancelled')
+                              } else {
+                                if (session.topic) {
+                                  setChatStep(session.content ? 'awaiting_confirmation' : (session.selectedType ? 'awaiting_content' : 'awaiting_type'))
+                                } else {
+                                  setChatStep('idle')
+                                }
+                              }
                             }}
                             onUpdateSessions={setChatSessions}
                           />
@@ -945,22 +1117,56 @@ export default function WorkspacePage() {
                             }}
                             className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 py-4 pb-8 space-y-3"
                           >
-                            {chatMessages.map((msg) => (
-                              <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                <div className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-[14px] leading-relaxed ${
-                                  msg.role === 'user'
-                                    ? 'bg-blue-500 text-white rounded-br-md'
-                                    : 'bg-slate-100 dark:bg-white/10 text-slate-700 dark:text-slate-200 rounded-bl-md'
-                                }`}>
-                                  {msg.content}
-                                </div>
-                              </div>
-                            ))}
+                              {chatMessages.map((msg, idx) => {
+                                const prevMsg = chatMessages[idx - 1]
+                                const showTimestamp = !prevMsg || (msg.timestamp - prevMsg.timestamp > 5 * 60 * 1000)
+
+                                return (
+                                  <React.Fragment key={msg.id}>
+                                    {showTimestamp && (
+                                      <div className="flex justify-center my-4">
+                                        <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                                          {new Date(msg.timestamp).toLocaleString('zh-CN', {
+                                            month: 'short',
+                                            day: 'numeric',
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                            hour12: false
+                                          })}
+                                        </span>
+                                      </div>
+                                    )}
+                                    <div className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                                      <div className={`imessage-bubble ${msg.role === 'user' ? 'user' : 'assistant'}`}>
+                                        <LightweightMarkdown content={msg.content} />
+                                      </div>
+                                      {msg.role !== 'user' && (msg.content.includes('落库') || msg.content.includes('生成可以么')) && (
+                                        <ContentPreviewBubble
+                                          topic={chatTopic}
+                                          type={chatType}
+                                          content={chatContent}
+                                          onEnlarge={() => setEnlargedPreviewData({ topic: chatTopic, type: chatType, content: chatContent })}
+                                        />
+                                      )}
+                                    </div>
+                                  </React.Fragment>
+                                )
+                              })}
                           </div>
 
                           {/* Done state buttons - outside messages container so they don't get scrolled away */}
                           {chatStep === 'done' && (
                             <div className="flex-shrink-0 flex justify-center gap-3 py-3 px-6 border-t border-slate-100 dark:border-white/5 bg-white/50 dark:bg-[#1C1C1E]/50">
+                              <button
+                                onClick={() => {
+                                  setPrevChatStep(chatStep)
+                                  setChatStep('cancelled')
+                                  setChatMessages(prev => [...prev, { id: `s-reedit-${Date.now()}`, role: 'assistant', content: '你想如何重新编辑此记录？', timestamp: Date.now() }])
+                                }}
+                                className="px-4 py-2 text-sm font-medium bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-white/20 transition-colors flex items-center gap-2"
+                              >
+                                <RotateCcw size={14} /> 重新编辑
+                              </button>
                               <button
                                 onClick={startNewChatSession}
                                 className="px-4 py-2 text-sm font-medium bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors flex items-center gap-2"
@@ -994,8 +1200,14 @@ export default function WorkspacePage() {
                                 step={chatStep}
                                 setStep={handleChatNextStep}
                                 onSubmit={handleChatFinalSubmit}
-                                onCancel={handleChatCancel}
+                                onCancel={() => {
+                                  setPrevChatStep(chatStep)
+                                  setChatStep('cancelled')
+                                  setChatMessages(prev => [...prev, { id: `s-cancel-${Date.now()}`, role: 'assistant', content: '你想取消本次记录，还是重新记录？', timestamp: Date.now() }])
+                                }}
+                                onBack={() => setChatStep(prevChatStep)}
                                 onRefill={handleChatRefill}
+                                onRefield={handleChatRefield}
                               />
                             </div>
                           </div>
@@ -1033,6 +1245,25 @@ export default function WorkspacePage() {
             )}
           </div>
 
+          {enlargedPreviewData && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300" onClick={() => setEnlargedPreviewData(null)}>
+              <div className="bg-white dark:bg-[#1C1C1E] rounded-3xl p-8 max-w-2xl w-full shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-3">
+                    <span className="px-2 py-1 bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 rounded-lg text-xs font-bold uppercase">{enlargedPreviewData.type || '未分类'}</span>
+                    <h2 className="text-xl font-bold text-slate-900 dark:text-white">{enlargedPreviewData.topic}</h2>
+                  </div>
+                  <button onClick={() => setEnlargedPreviewData(null)} className="p-2 hover:bg-slate-100 dark:hover:bg-white/10 rounded-full transition-colors">
+                    <X size={20} className="text-slate-400" />
+                  </button>
+                </div>
+                <div className="text-slate-700 dark:text-slate-300 leading-relaxed text-lg whitespace-pre-wrap max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+                  {enlargedPreviewData.content}
+                </div>
+              </div>
+            </div>
+          )}
+
           {fullScreenEditData && (
             <FullScreenEditModal
               data={fullScreenEditData}
@@ -1065,11 +1296,15 @@ export default function WorkspacePage() {
                 if (selectedItem) handleDismissSuggestion(selectedItem.id, tagName)
               }}
               onUpdateEntry={handleUpdateEntry}
-              onUpdateDockItem={handleUpdateDockItem}
+              onUpdateDockItem={handleUpdateDockItemText}
+              onUpdateDockItemText={handleUpdateDockItemText}
               onUpdateSelectedActions={handleUpdateSelectedActions}
               onUpdateSelectedProject={handleUpdateSelectedProject}
               onFullScreenEdit={setFullScreenEditData}
-              onClose={() => { setSelectedItemId(null); setSelectedArchivedEntryId(null) }}
+              onDerive={handleDerive}
+              onNavigateToItem={handleNavigateToItem}
+              provenance={selectedProvenance}
+              onClose={() => { setSelectedItemId(null); setSelectedArchivedEntryId(null); setSelectedProvenance(null) }}
               actionLoading={actionLoading}
               uniqueProjects={uniqueProjects}
             />
@@ -1327,9 +1562,11 @@ function DockCard({ item, isSelected, onSelect, viewMode = 'card' }: { item: Doc
         <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${statusConfig.bg} ${statusConfig.color} flex-shrink-0`}>
           {statusConfig.label}
         </span>
-        <p className="text-slate-700 dark:text-slate-300 text-sm flex-1 line-clamp-2">
-          {item.rawText}
-        </p>
+        <div className="flex-1 min-w-0">
+          <p className="text-slate-800 dark:text-slate-100 text-sm font-bold truncate">
+            {item.topic || '无标题'}
+          </p>
+        </div>
         {item.sourceType === 'chat' && (
           <span className="px-1.5 py-0.5 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[10px] rounded font-medium flex-shrink-0">
             Chat
@@ -1351,13 +1588,13 @@ function DockCard({ item, isSelected, onSelect, viewMode = 'card' }: { item: Doc
           : 'border-slate-100 dark:border-white/5 hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:hover:shadow-[0_8px_30px_rgba(0,0,0,0.4)]'
       }`}
     >
-      <div className="flex items-start justify-between">
-        <p className="text-slate-700 dark:text-slate-300 text-[15px] leading-relaxed flex-1 line-clamp-2 transition-colors">
+      <div className="flex flex-col gap-1.5">
+        <h3 className="text-slate-900 dark:text-white text-base font-bold truncate">
+          {item.topic || '无标题'}
+        </h3>
+        <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed line-clamp-3">
           {item.rawText}
         </p>
-        <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2 flex-shrink-0 group/btn">
-          <ChevronRight size={16} className="text-slate-300 dark:text-slate-500 group-hover/btn:text-slate-600 dark:group-hover/btn:text-slate-300" />
-        </div>
       </div>
 
       <div className="flex items-center justify-between mt-1 pt-2 border-t border-slate-50 dark:border-white/5">
@@ -1545,6 +1782,26 @@ function ReviewView({ stats, archivedEntries, onSelectArchivedEntry, userId }: {
   )
 }
 
+function ContentPreviewBubble({ topic, type, content, onEnlarge }: { topic: string | null; type: string | null; content: string; onEnlarge: () => void }) {
+  return (
+    <div
+      onClick={onEnlarge}
+      className="mt-2 p-3 bg-white/80 dark:bg-black/40 rounded-2xl border border-slate-200/50 dark:border-white/10 shadow-sm cursor-pointer hover:shadow-md transition-all group max-w-[280px] animate-in slide-in-from-top-1 duration-300"
+    >
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 rounded font-bold uppercase">{type || '未分类'}</span>
+        <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate flex-1">{topic || '无标题'}</span>
+      </div>
+      <div className="text-[11px] text-slate-600 dark:text-slate-400 line-clamp-3 leading-relaxed">
+        {content}
+      </div>
+      <div className="mt-2 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+        <Maximize2 size={12} className="text-slate-400" />
+      </div>
+    </div>
+  )
+}
+
 function ModeSwitch({ mode, setMode }: { mode: AppMode; setMode: (m: AppMode) => void }) {
   return (
     <div className="relative flex items-center p-1 bg-white/60 dark:bg-[#2C2C2E]/60 backdrop-blur-md rounded-full shadow-[0_2px_10px_rgb(0,0,0,0.05)] dark:shadow-none border border-slate-200/50 dark:border-white/10 transition-colors">
@@ -1578,6 +1835,8 @@ function ChatInputBar({
   onSubmit,
   onCancel,
   onRefill,
+  onRefield,
+  onBack
 }: {
   draft: string
   setDraft: (v: string) => void
@@ -1586,9 +1845,58 @@ function ChatInputBar({
   onSubmit: () => Promise<void>
   onCancel: () => void
   onRefill: (option: 'topic' | 'type' | 'content') => void
+  onRefield: (option: 'topic' | 'type' | 'content') => void
+  onBack?: () => void
 }) {
   const [saving, setSaving] = useState(false)
+  const [refillMode, setRefillMode] = useState<'refill' | 'refield' | null>(null)
   const [placeholder] = useState(() => CHAT_PLACEHOLDERS[Math.floor(Math.random() * CHAT_PLACEHOLDERS.length)])
+  const [isComposing, setIsComposing] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+
+    textarea.style.height = 'auto'
+    const newHeight = Math.min(textarea.scrollHeight, 200) // max-height: 200px
+    textarea.style.height = `${newHeight}px`
+  }, [draft])
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isComposing) return
+
+    if (e.key === 'Enter') {
+      if (e.metaKey || e.ctrlKey) {
+        // Command+Enter: insert newline
+        e.preventDefault()
+        const start = e.currentTarget.selectionStart
+        const end = e.currentTarget.selectionEnd
+        const value = e.currentTarget.value
+        const newValue = value.substring(0, start) + '\n' + value.substring(end)
+        setDraft(newValue)
+
+        // After state update, we need to restore selection.
+        // Simple way: wait for next tick or use a ref.
+        setTimeout(() => {
+          if (textareaRef.current) {
+            textareaRef.current.selectionStart = textareaRef.current.selectionEnd = start + 1
+          }
+        }, 0)
+        return
+      }
+
+      if (e.shiftKey) {
+        // Shift+Enter: default behavior (newline)
+        return
+      }
+
+      e.preventDefault()
+      if (draft.trim()) {
+        setStep()
+      }
+    }
+  }
 
   const handleFinalSubmit = async () => {
     if (saving) return
@@ -1624,29 +1932,61 @@ function ChatInputBar({
       <div className="bg-white dark:bg-[#1C1C1E] rounded-2xl shadow-[0_20px_60px_rgb(0,0,0,0.12)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-slate-100 dark:border-white/5 p-4 transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)]">
         <div className="px-3 py-1 mb-3 border-b border-slate-50 dark:border-white/5 flex items-center justify-between">
           <span className="text-[10px] font-semibold px-2 py-0.5 bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-400 rounded-md flex items-center gap-1"><RotateCcw size={10} /> 重新记录</span>
-        </div>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">你想重新记录哪一部分？</p>
-        <div className="flex gap-2">
-          <button onClick={() => onRefill('topic')} className="px-4 py-2 text-sm font-medium bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-500/20 transition-colors">
-            标题
-          </button>
-          <button onClick={() => onRefill('type')} className="px-4 py-2 text-sm font-medium bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-500/20 transition-colors">
-            类型
-          </button>
-          <button onClick={() => onRefill('content')} className="px-4 py-2 text-sm font-medium bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-500/20 transition-colors">
-            内容
+          <button
+            onClick={() => {
+              if (refillMode) setRefillMode(null)
+              else onBack?.()
+            }}
+            className="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+          >
+            返回
           </button>
         </div>
+        {!refillMode ? (
+          <div className="flex gap-2">
+            <button onClick={() => setRefillMode('refill')} className="flex-1 px-4 py-3 text-sm font-medium bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-500/20 transition-all border border-blue-100 dark:border-blue-500/20 flex flex-col items-center gap-1 group/opt">
+              <span className="font-bold group-hover/opt:scale-105 transition-transform">重走流程</span>
+              <span className="text-[10px] opacity-60">清空后续字段</span>
+            </button>
+            <button onClick={() => setRefillMode('refield')} className="flex-1 px-4 py-3 text-sm font-medium bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400 rounded-xl hover:bg-purple-100 dark:hover:bg-purple-500/20 transition-all border border-purple-100 dark:border-purple-500/20 flex flex-col items-center gap-1 group/opt">
+              <span className="font-bold group-hover/opt:scale-105 transition-transform">单修模块</span>
+              <span className="text-[10px] opacity-60">只改当前字段</span>
+            </button>
+          </div>
+        ) : (
+          <div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
+              {refillMode === 'refill' ? '你想从哪里开始' : '修改哪个字段？'}
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => {
+                if (refillMode === 'refill') onRefill('topic')
+                else onRefield('topic')
+                setRefillMode(null)
+              }} className="flex-1 px-3 py-2 text-xs font-medium bg-slate-50 dark:bg-black/20 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 transition-colors border border-slate-100 dark:border-white/5">标题</button>
+              <button onClick={() => {
+                if (refillMode === 'refill') onRefill('type')
+                else onRefield('type')
+                setRefillMode(null)
+              }} className="flex-1 px-3 py-2 text-xs font-medium bg-slate-50 dark:bg-black/20 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 transition-colors border border-slate-100 dark:border-white/5">类型</button>
+              <button onClick={() => {
+                if (refillMode === 'refill') onRefill('content')
+                else onRefield('content')
+                setRefillMode(null)
+              }} className="flex-1 px-3 py-2 text-xs font-medium bg-slate-50 dark:bg-black/20 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 transition-colors border border-slate-100 dark:border-white/5">内容</button>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
 
   return (
-    <div className="bg-white/95 dark:bg-[#2C2C2E]/95 backdrop-blur-xl rounded-2xl shadow-[0_20px_60px_rgb(0,0,0,0.12)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-white dark:border-white/10 p-2.5 flex items-center transition-all duration-300 focus-within:ring-2 focus-within:ring-blue-100/50 dark:focus-within:ring-blue-500/30 focus-within:border-blue-200 dark:focus-within:border-blue-400 group relative w-full">
+    <div className="bg-white/95 dark:bg-[#2C2C2E]/95 backdrop-blur-xl rounded-2xl shadow-[0_20px_60px_rgb(0,0,0,0.12)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-white dark:border-white/10 p-2.5 flex items-end transition-all duration-300 focus-within:ring-2 focus-within:ring-blue-100/50 dark:focus-within:ring-blue-500/30 focus-within:border-blue-200 dark:focus-within:border-blue-400 group relative w-full">
       <div className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none">
         <div className="absolute inset-0 bg-gradient-to-r from-blue-400/5 via-transparent to-purple-400/5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-700" />
       </div>
-      <div className="flex-shrink-0 flex items-center space-x-1 pl-1 relative z-10">
+      <div className="flex-shrink-0 flex items-center space-x-1 pl-1 pb-1 relative z-10">
         <ToolButton icon={Mic} tooltip="语音闪记" />
         <ToolButton icon={Paperclip} tooltip="附件" />
         <ToolButton icon={ImageIcon} tooltip="图片" />
@@ -1656,19 +1996,19 @@ function ChatInputBar({
           <ToolButton icon={List} tooltip="列表" />
         </div>
       </div>
-      <input
-        type="text"
+      <textarea
+        ref={textareaRef}
         placeholder={placeholder}
-        className="min-w-0 flex-1 bg-transparent border-none focus:outline-none text-slate-700 dark:text-slate-200 px-3 placeholder:text-slate-400 dark:placeholder:text-slate-500 text-[15px] relative z-10"
+        className="min-w-0 flex-1 bg-transparent border-none focus:outline-none text-slate-700 dark:text-slate-200 px-3 placeholder:text-slate-400 dark:placeholder:text-slate-500 text-[15px] relative z-10 resize-none py-2 leading-relaxed"
+        rows={1}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && draft.trim() && !e.nativeEvent.isComposing) {
-            setStep()
-          }
-        }}
+        onKeyDown={handleKeyDown}
+        onCompositionStart={() => setIsComposing(true)}
+        onCompositionEnd={() => setIsComposing(false)}
+        autoFocus
       />
-      <div className={`flex items-center space-x-1 pl-2 border-l border-slate-100 dark:border-white/10 transition-opacity relative z-10 ${
+      <div className={`flex items-end space-x-1 pl-2 pb-1 border-l border-slate-100 dark:border-white/10 transition-opacity relative z-10 ${
         draft.trim() ? 'opacity-100' : 'opacity-60 group-focus-within:opacity-100 group-hover:opacity-100'
       }`}>
         <button
@@ -1697,6 +2037,21 @@ function ExpandedEditor({ text, setText, onSave, onClose, hideHeader = false }: 
   hideHeader?: boolean
 }) {
   const [saving, setSaving] = useState(false)
+  const [showCommands, setShowCommands] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const handleFormat = (cmd: 'bold' | 'italic' | 'code' | 'link') => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    const start = textarea.selectionStart
+    const end = textarea.selectionEnd
+    const result = applyEditorCommand(cmd, text, { start, end, text })
+    setText(result.text)
+    setTimeout(() => {
+      textarea.focus()
+      textarea.setSelectionRange(result.selectionStart, result.selectionEnd)
+    }, 0)
+  }
 
   const handleSave = async () => {
     if (!text.trim() || saving) return
@@ -1729,7 +2084,14 @@ function ExpandedEditor({ text, setText, onSave, onClose, hideHeader = false }: 
         </div>
       )}
       <div className="p-5 relative flex-1 flex flex-col">
+        {showCommands && (
+          <CommandMenu onSelect={(cmd) => {
+            if (cmd === 'bold' || cmd === 'italic' || cmd === 'code' || cmd === 'link') handleFormat(cmd)
+            setShowCommands(false)
+          }} />
+        )}
         <textarea
+          ref={textareaRef}
           autoFocus
           placeholder="输入记录内容... 支持沉浸式长文本写作"
           className="w-full flex-1 min-h-[200px] bg-transparent border-none focus:outline-none resize-none text-slate-700 dark:text-slate-200 text-[15px] placeholder:text-slate-300 dark:placeholder:text-slate-600 leading-relaxed font-sans"
@@ -1738,20 +2100,21 @@ function ExpandedEditor({ text, setText, onSave, onClose, hideHeader = false }: 
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSave()
             if (e.key === 'Escape' && onClose) onClose()
+            if (e.key === '/') setShowCommands(true)
           }}
         />
       </div>
       <div className="px-4 py-3 bg-white dark:bg-[#1C1C1E] border-t border-slate-50 dark:border-white/5 flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center space-x-1">
-          <ToolButton icon={Bold} tooltip="加粗" />
-          <ToolButton icon={Italic} tooltip="斜体" />
-          <ToolButton icon={Link} tooltip="链接" />
-          <ToolButton icon={Code} tooltip="代码块" />
+          <ToolButton icon={Bold} tooltip="加粗" onClick={() => handleFormat('bold')} />
+          <ToolButton icon={Italic} tooltip="斜体" onClick={() => handleFormat('italic')} />
+          <ToolButton icon={Link} tooltip="链接" onClick={() => handleFormat('link')} />
+          <ToolButton icon={Code} tooltip="代码块" onClick={() => handleFormat('code')} />
           <div className="w-[1px] h-4 bg-slate-200 dark:bg-white/10 mx-2"></div>
           <ToolButton icon={ImageIcon} tooltip="图片" />
           <ToolButton icon={Paperclip} tooltip="附件" />
           <div className="w-[1px] h-4 bg-slate-200 dark:bg-white/10 mx-2"></div>
-          <ToolButton icon={Command} tooltip="命令 (/)" />
+          <ToolButton icon={Command} tooltip="命令 (/)" onClick={() => setShowCommands(!showCommands)} />
         </div>
         <div className="flex items-center space-x-3 ml-auto">
           <span className="text-[11px] text-slate-400 dark:text-slate-500 font-medium tracking-wide bg-slate-50 dark:bg-white/5 px-2 py-1 rounded-md">{text.length} 字</span>
@@ -1776,6 +2139,21 @@ function FullScreenEditModal({ data, onClose, onSave, actionLoading }: {
 }) {
   const [text, setText] = useState(data.content)
   const [saving, setSaving] = useState(false)
+  const [showCommands, setShowCommands] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const handleFormat = (cmd: 'bold' | 'italic' | 'code' | 'link') => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    const start = textarea.selectionStart
+    const end = textarea.selectionEnd
+    const result = applyEditorCommand(cmd, text, { start, end, text })
+    setText(result.text)
+    setTimeout(() => {
+      textarea.focus()
+      textarea.setSelectionRange(result.selectionStart, result.selectionEnd)
+    }, 0)
+  }
 
   const handleSave = async () => {
     if (!text.trim() || saving) return
@@ -1810,8 +2188,15 @@ function FullScreenEditModal({ data, onClose, onSave, actionLoading }: {
           </div>
         </div>
 
-        <div className="flex-1 p-8 md:p-12 overflow-y-auto">
+        <div className="flex-1 p-8 md:p-12 overflow-y-auto relative">
+          {showCommands && (
+            <CommandMenu onSelect={(cmd) => {
+              if (cmd === 'bold' || cmd === 'italic' || cmd === 'code' || cmd === 'link') handleFormat(cmd)
+              setShowCommands(false)
+            }} />
+          )}
           <textarea
+            ref={textareaRef}
             autoFocus
             placeholder="开始你的沉浸式创作..."
             className="w-full h-full bg-transparent border-none focus:outline-none resize-none text-slate-800 dark:text-slate-100 text-lg md:text-xl placeholder:text-slate-300 dark:placeholder:text-slate-700 leading-relaxed font-sans selection:bg-blue-100 dark:selection:bg-blue-900"
@@ -1820,21 +2205,22 @@ function FullScreenEditModal({ data, onClose, onSave, actionLoading }: {
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSave()
               if (e.key === 'Escape') onClose()
+              if (e.key === '/') setShowCommands(true)
             }}
           />
         </div>
 
         <div className="px-8 py-5 bg-slate-50/50 dark:bg-white/5 border-t border-slate-100 dark:border-white/5 flex items-center justify-between">
           <div className="flex items-center space-x-1">
-            <ToolButton icon={Bold} tooltip="加粗" />
-            <ToolButton icon={Italic} tooltip="斜体" />
-            <ToolButton icon={Link} tooltip="链接" />
-            <ToolButton icon={Code} tooltip="代码块" />
+            <ToolButton icon={Bold} tooltip="加粗" onClick={() => handleFormat('bold')} />
+            <ToolButton icon={Italic} tooltip="斜体" onClick={() => handleFormat('italic')} />
+            <ToolButton icon={Link} tooltip="链接" onClick={() => handleFormat('link')} />
+            <ToolButton icon={Code} tooltip="代码块" onClick={() => handleFormat('code')} />
             <div className="w-[1px] h-6 bg-slate-200 dark:bg-white/10 mx-3"></div>
             <ToolButton icon={ImageIcon} tooltip="插入图片" />
             <ToolButton icon={Paperclip} tooltip="添加附件" />
             <div className="w-[1px] h-6 bg-slate-200 dark:bg-white/10 mx-3"></div>
-            <ToolButton icon={Command} tooltip="快速命令 (/)" />
+            <ToolButton icon={Command} tooltip="快速命令 (/)" onClick={() => setShowCommands(!showCommands)} />
             <ToolButton icon={ExternalLink} tooltip="导出到 Obsidian" />
           </div>
           <div className="flex items-center gap-6">
@@ -1853,9 +2239,12 @@ function FullScreenEditModal({ data, onClose, onSave, actionLoading }: {
   )
 }
 
-function ToolButton({ icon: Icon, tooltip }: { icon: typeof ImageIcon; tooltip: string }) {
+function ToolButton({ icon: Icon, tooltip, onClick }: { icon: typeof ImageIcon; tooltip: string; onClick?: () => void }) {
   return (
-    <button className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/10 rounded-lg transition-colors relative group/btn focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
+    <button
+      onClick={onClick}
+      className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/10 rounded-lg transition-colors relative group/btn focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+    >
       <Icon size={18} strokeWidth={2.5} />
       <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 dark:bg-white text-white dark:text-slate-900 text-[10px] px-2 py-1 rounded opacity-0 group-hover/btn:opacity-100 transition-opacity pointer-events-none whitespace-nowrap shadow-md z-50">
         {tooltip}
@@ -1864,7 +2253,121 @@ function ToolButton({ icon: Icon, tooltip }: { icon: typeof ImageIcon; tooltip: 
   )
 }
 
-function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggestions, onSuggest, onArchive, onIgnore, onRestore, onReopen, onAddTag, onRemoveTag, onDismissSuggestion, onUpdateEntry, onUpdateDockItem, onUpdateSelectedActions, onUpdateSelectedProject, uniqueProjects, onClose, actionLoading, onFullScreenEdit }: {
+function LightweightMarkdown({ content }: { content: string }) {
+  // Split by potential markdown patterns and newlines
+  const parts = content.split(/(\*\*.*?\*\*|\*.*?\*|`.*?`|\[.*?\]\(.*?\))/g);
+
+  return (
+    <span className="break-words">
+      {parts.map((part, i) => {
+        if (!part) return null;
+        if (part.startsWith('**') && part.endsWith('**')) {
+          return <strong key={i} className="font-bold">{part.slice(2, -2)}</strong>;
+        }
+        if (part.startsWith('*') && part.endsWith('*')) {
+          return <em key={i} className="italic">{part.slice(1, -1)}</em>;
+        }
+        if (part.startsWith('`') && part.endsWith('`')) {
+          return <code key={i} className="bg-black/10 dark:bg-white/10 px-1 rounded text-[0.9em] font-mono">{part.slice(1, -1)}</code>;
+        }
+        const linkMatch = part.match(/\[(.*?)\]\((.*?)\)/);
+        if (linkMatch) {
+          return <a key={i} href={linkMatch[2]} target="_blank" rel="noopener noreferrer" className="text-blue-500 underline underline-offset-2 hover:text-blue-600 transition-colors">{linkMatch[1]}</a>;
+        }
+        return part;
+      })}
+    </span>
+  );
+}
+
+function ChainProvenanceView({ provenance, onNavigate, onDerive }: {
+  provenance: ChainProvenance | null,
+  onNavigate: (id: number) => void,
+  onDerive: () => void
+}) {
+  if (!provenance || (!provenance.parentId && !provenance.sourceId)) return null
+
+  return (
+    <div className="mb-6 p-4 bg-slate-50 dark:bg-black/20 rounded-xl border border-slate-100 dark:border-white/5">
+      <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+        <LinkIcon size={12} /> 知识链
+      </h4>
+      <div className="space-y-3">
+        {provenance.sourceId && (
+          <div className="flex items-start gap-2">
+            <div className="mt-1 p-1 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded">
+              <History size={10} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 mb-0.5">起源</p>
+              <button
+                onClick={() => provenance.sourceId && onNavigate(provenance.sourceId)}
+                className="text-xs text-slate-600 dark:text-slate-300 hover:text-blue-500 truncate w-full text-left font-medium"
+              >
+                {provenance.sourceTitle || '未命名来源'}
+              </button>
+            </div>
+          </div>
+        )}
+        {provenance.parentId && provenance.parentId !== provenance.sourceId && (
+          <div className="flex items-start gap-2">
+            <div className="mt-1 p-1 bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded">
+              <ChevronRight size={10} className="rotate-[-90deg]" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 mb-0.5">父级</p>
+              <button
+                onClick={() => provenance.parentId && onNavigate(provenance.parentId)}
+                className="text-xs text-slate-600 dark:text-slate-300 hover:text-blue-500 truncate w-full text-left font-medium"
+              >
+                {provenance.parentTitle || '未命名父级'}
+              </button>
+            </div>
+          </div>
+        )}
+        <div className="flex gap-2 pt-2">
+          <button
+            onClick={onDerive}
+            className="text-[10px] px-2 py-1 bg-white dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/10 transition-colors flex items-center gap-1"
+          >
+            <Plus size={10} /> 派生记录
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CommandMenu({ onSelect }: { onSelect: (cmd: string) => void }) {
+  const commands = [
+    { id: 'bold', label: '加粗', icon: Bold, key: 'B' },
+    { id: 'italic', label: '斜体', icon: Italic, key: 'I' },
+    { id: 'code', label: '代码块', icon: Code, key: 'C' },
+    { id: 'link', label: '插入链接', icon: LinkIcon, key: 'L' },
+  ]
+
+  return (
+    <div className="absolute top-10 left-0 z-[110] w-48 bg-white dark:bg-[#1C1C1E] rounded-xl shadow-2xl border border-slate-100 dark:border-white/10 overflow-hidden animate-in fade-in zoom-in duration-200">
+      <div className="p-2">
+        {commands.map(cmd => (
+          <button
+            key={cmd.id}
+            onClick={() => onSelect(cmd.id)}
+            className="w-full flex items-center justify-between px-3 py-2 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10 rounded-lg transition-colors group"
+          >
+            <div className="flex items-center gap-2">
+              <cmd.icon size={14} className="text-slate-400 group-hover:text-blue-500" />
+              <span>{cmd.label}</span>
+            </div>
+            <span className="text-[10px] text-slate-300 dark:text-slate-600">⌘{cmd.key}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggestions, onSuggest, onArchive, onIgnore, onRestore, onReopen, onAddTag, onRemoveTag, onDismissSuggestion, onUpdateEntry, onUpdateDockItem, onUpdateDockItemText, onUpdateSelectedActions, onUpdateSelectedProject, uniqueProjects, onClose, actionLoading, onFullScreenEdit, provenance, onDerive, onNavigateToItem }: {
   item: DockItem | null
   archivedEntry: StoredEntry | null
   existingTags: StoredTag[]
@@ -1879,10 +2382,14 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
   onDismissSuggestion: (tagName: string) => void
   onUpdateEntry: (entryId: number, updates: { tags?: string[]; project?: string | null; content?: string; title?: string }) => Promise<void>
   onUpdateDockItem: (itemId: number, rawText: string) => Promise<void>
+  onUpdateDockItemText: (itemId: number, rawText: string, topic?: string) => Promise<void>
   onUpdateSelectedActions: (itemId: number, actions: string[]) => Promise<void>
   onUpdateSelectedProject: (itemId: number, project: string | null) => Promise<void>
   onClose: () => void
   onFullScreenEdit: (data: { type: 'dock' | 'entry', id: number, content: string }) => void
+  onDerive: (parentId: number, initialText: string) => Promise<void>
+  onNavigateToItem: (id: number) => void
+  provenance: ChainProvenance | null
   actionLoading: boolean
   uniqueProjects: string[]
 }) {
@@ -1890,6 +2397,9 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
   const [editRawText, setEditRawText] = useState('')
   const [isCreatingProject, setIsCreatingProject] = useState(false)
   const [newProjectName, setNewProjectName] = useState('')
+  const [isEditingTitle, setIsEditingTitle] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [isHoveringTitle, setIsHoveringTitle] = useState(false)
 
   useEffect(() => {
     if (item) {
@@ -1899,7 +2409,7 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
   }, [item])
 
   if (archivedEntry) {
-    return <ArchivedEntryDetail archivedEntry={archivedEntry} onReopen={onReopen} onUpdateEntry={onUpdateEntry} onClose={onClose} actionLoading={actionLoading} onFullScreenEdit={onFullScreenEdit} />
+    return <ArchivedEntryDetail archivedEntry={archivedEntry} onReopen={onReopen} onUpdateEntry={onUpdateEntry} onClose={onClose} actionLoading={actionLoading} onFullScreenEdit={onFullScreenEdit} provenance={provenance} onDerive={onDerive} onNavigateToItem={onNavigateToItem} />
   }
 
   if (!item) return null
@@ -1913,10 +2423,65 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
 
   return (
     <div className="flex-1 bg-white dark:bg-[#1C1C1E] flex flex-col transition-colors duration-[800ms]">
-      <div className="h-16 flex items-center justify-between px-6 border-b border-slate-100 dark:border-white/5 z-10 flex-shrink-0">
-        <span className={`px-3 py-1 rounded-full text-xs font-medium border ${statusConfig.bg} ${statusConfig.color}`}>
-          {statusConfig.label}
-        </span>
+      <div className="h-16 flex items-center justify-between px-6 border-b border-slate-100 dark:border-white/5 z-10 flex-shrink-0 bg-white dark:bg-[#1C1C1E]">
+        <div className="flex items-center gap-4 flex-1 overflow-hidden">
+          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider flex-shrink-0 border ${statusConfig.bg} ${statusConfig.color}`}>
+            {statusConfig.label}
+          </span>
+
+          <div className="flex-1 flex items-center overflow-hidden">
+            {isEditingTitle ? (
+              <div className="flex items-center gap-2 w-full max-w-md">
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="flex-1 px-3 py-1 text-sm font-medium bg-slate-50 dark:bg-black/20 border border-blue-400 dark:border-blue-500 rounded-lg focus:outline-none"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      onUpdateDockItemText(item.id, item.rawText, editTitle)
+                      setIsEditingTitle(false)
+                    }
+                    if (e.key === 'Escape') setIsEditingTitle(false)
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    onUpdateDockItemText(item.id, item.rawText, editTitle)
+                    setIsEditingTitle(false)
+                  }}
+                  className="p-1.5 text-green-500 hover:bg-green-50 dark:hover:bg-green-500/10 rounded-lg"
+                >
+                  <Check size={16} />
+                </button>
+                <button
+                  onClick={() => setIsEditingTitle(false)}
+                  className="p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 rounded-lg"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <div
+                className="flex items-center gap-2 cursor-pointer group/title max-w-full overflow-hidden"
+                onMouseEnter={() => setIsHoveringTitle(true)}
+                onMouseLeave={() => setIsHoveringTitle(false)}
+                onClick={() => {
+                  setEditTitle(item.topic || '')
+                  setIsEditingTitle(true)
+                }}
+              >
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
+                  {item.topic || <span className="text-slate-400 italic font-normal">无标题记录</span>}
+                </h3>
+                {(isHoveringTitle || !item.topic) && (
+                  <PenTool size={12} className="text-blue-500 opacity-0 group-hover/title:opacity-100 transition-opacity flex-shrink-0" />
+                )}
+              </div>
+            )}
+          </div>
+        </div>
         <DetailHeaderActions onClose={onClose} />
       </div>
 
@@ -1966,8 +2531,12 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
             </div>
           ) : (
             <>
-              <p className="text-slate-800 dark:text-slate-100 whitespace-pre-wrap leading-relaxed text-[15px]">
+              <p
+                onClick={() => setEditing(true)}
+                className="text-slate-800 dark:text-slate-100 whitespace-pre-wrap leading-relaxed text-[15px] cursor-pointer hover:bg-slate-50 dark:hover:bg-white/5 p-3 rounded-xl transition-all border border-transparent hover:border-slate-100 dark:hover:border-white/5 group/content relative"
+              >
                 {item.rawText}
+                <span className="absolute top-2 right-2 opacity-0 group-hover/content:opacity-100 text-[10px] text-blue-500 font-medium bg-white/80 dark:bg-slate-800/80 px-1.5 py-0.5 rounded border border-blue-100 dark:border-blue-500/20 shadow-sm transition-opacity">点击编辑</span>
               </p>
               <div className="flex items-center justify-between mt-3">
                 <p className="text-xs text-slate-400 dark:text-slate-500">
@@ -2012,7 +2581,7 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
                         <X size={12} />
                       </button>
                       {s.reason && (
-                        <span className="text-[10px] text-slate-400" title={s.reason}>?</span>
+                        <button className="text-[10px] text-slate-400 ml-0.5 hover:text-slate-600 transition-colors" title={s.reason}>ⓘ</button>
                       )}
                     </div>
                   ))}
@@ -2147,6 +2716,12 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
           </div>
         </div>
 
+        <ChainProvenanceView
+          provenance={provenance}
+          onNavigate={(id) => onNavigateToItem(id)}
+          onDerive={() => onDerive(item.id, item.rawText)}
+        />
+
         <div className="flex flex-wrap gap-2 pt-2">
           {item.status === 'pending' && (
             <button onClick={() => onSuggest(item.id)} disabled={actionLoading} className="px-4 py-2 text-sm font-medium bg-blue-500 text-white rounded-xl hover:bg-blue-600 disabled:opacity-50 transition-colors flex items-center gap-1.5">
@@ -2186,12 +2761,15 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
   )
 }
 
-function ArchivedEntryDetail({ archivedEntry, onReopen, onUpdateEntry, onClose, actionLoading, onFullScreenEdit }: {
+function ArchivedEntryDetail({ archivedEntry, onReopen, onUpdateEntry, onClose, actionLoading, onFullScreenEdit, provenance, onDerive, onNavigateToItem }: {
   archivedEntry: StoredEntry
   onReopen: (dockItemId: number) => Promise<void>
   onUpdateEntry: (entryId: number, updates: { tags?: string[]; project?: string | null; content?: string; title?: string }) => Promise<void>
   onClose: () => void
   onFullScreenEdit: (data: { type: 'dock' | 'entry', id: number, content: string }) => void
+  onDerive: (parentId: number, initialText: string) => Promise<void>
+  onNavigateToItem: (id: number) => void
+  provenance: ChainProvenance | null
   actionLoading: boolean
 }) {
   const [editing, setEditing] = useState(false)
@@ -2199,6 +2777,9 @@ function ArchivedEntryDetail({ archivedEntry, onReopen, onUpdateEntry, onClose, 
   const [editTags, setEditTags] = useState(archivedEntry.tags)
   const [editProject, setEditProject] = useState(archivedEntry.project ?? '')
   const [newTagInput, setNewTagInput] = useState('')
+  const [isEditingTitle, setIsEditingTitle] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [isHoveringTitle, setIsHoveringTitle] = useState(false)
 
   const handleSave = async () => {
     const updates: { tags?: string[]; content?: string; project?: string | null } = {}
@@ -2221,19 +2802,71 @@ function ArchivedEntryDetail({ archivedEntry, onReopen, onUpdateEntry, onClose, 
 
   return (
     <div className="flex-1 bg-white dark:bg-[#1C1C1E] flex flex-col transition-colors duration-[800ms]">
-      <div className="h-16 flex items-center justify-between px-6 border-b border-slate-100 dark:border-white/5 z-10 flex-shrink-0">
-        <span className="px-3 py-1 rounded-full text-xs font-medium border bg-green-50 dark:bg-green-500/10 border-green-200 dark:border-green-500/20 text-green-600 dark:text-green-400">
-          {TYPE_LABELS[archivedEntry.type] ?? archivedEntry.type}
-        </span>
+      <div className="h-16 flex items-center justify-between px-6 border-b border-slate-100 dark:border-white/5 z-10 flex-shrink-0 bg-white dark:bg-[#1C1C1E]">
+        <div className="flex items-center gap-4 flex-1 overflow-hidden">
+          <span className="px-3 py-1 rounded-full text-xs font-medium border bg-green-50 dark:bg-green-500/10 border-green-200 dark:border-green-500/20 text-green-600 dark:text-green-400 flex-shrink-0">
+            {TYPE_LABELS[archivedEntry.type] ?? archivedEntry.type}
+          </span>
+
+          <div className="flex-1 flex items-center overflow-hidden">
+            {isEditingTitle ? (
+              <div className="flex items-center gap-2 w-full max-w-md">
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="flex-1 px-3 py-1 text-sm font-medium bg-slate-50 dark:bg-black/20 border border-blue-400 dark:border-blue-500 rounded-lg focus:outline-none"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      onUpdateEntry(archivedEntry.id, { title: editTitle })
+                      setIsEditingTitle(false)
+                    }
+                    if (e.key === 'Escape') setIsEditingTitle(false)
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    onUpdateEntry(archivedEntry.id, { title: editTitle })
+                    setIsEditingTitle(false)
+                  }}
+                  className="p-1.5 text-green-500 hover:bg-green-50 dark:hover:bg-green-500/10 rounded-lg"
+                >
+                  <Check size={16} />
+                </button>
+                <button
+                  onClick={() => setIsEditingTitle(false)}
+                  className="p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 rounded-lg"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <div
+                className="flex items-center gap-2 cursor-pointer group/title max-w-full overflow-hidden"
+                onMouseEnter={() => setIsHoveringTitle(true)}
+                onMouseLeave={() => setIsHoveringTitle(false)}
+                onClick={() => {
+                  setEditTitle(archivedEntry.title || '')
+                  setIsEditingTitle(true)
+                }}
+              >
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
+                  {archivedEntry.title || <span className="text-slate-400 italic font-normal">无标题记录</span>}
+                </h3>
+                {(isHoveringTitle || !archivedEntry.title) && (
+                  <PenTool size={12} className="text-blue-500 opacity-0 group-hover/title:opacity-100 transition-opacity flex-shrink-0" />
+                )}
+              </div>
+            )}
+          </div>
+        </div>
         <DetailHeaderActions onClose={onClose} />
       </div>
 
       <div className="flex-1 overflow-y-auto">
         <div className="p-8 max-w-4xl mx-auto">
 
-        <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-3">
-          {archivedEntry.title}
-        </h2>
 
         {editing ? (
           <div className="flex flex-col h-full space-y-4">
@@ -2303,8 +2936,12 @@ function ArchivedEntryDetail({ archivedEntry, onReopen, onUpdateEntry, onClose, 
         ) : (
           <>
             <div className="mb-4">
-              <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed text-[15px]">
+              <p
+                onClick={() => setEditing(true)}
+                className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed text-[15px] cursor-pointer hover:bg-slate-50 dark:hover:bg-white/5 p-3 rounded-xl transition-all border border-transparent hover:border-slate-100 dark:hover:border-white/5 group/content relative"
+              >
                 {archivedEntry.content}
+                <span className="absolute top-2 right-2 opacity-0 group-hover/content:opacity-100 text-[10px] text-blue-500 font-medium bg-white/80 dark:bg-slate-800/80 px-1.5 py-0.5 rounded border border-blue-100 dark:border-blue-500/20 shadow-sm transition-opacity">点击编辑</span>
               </p>
             </div>
 
@@ -2344,6 +2981,12 @@ function ArchivedEntryDetail({ archivedEntry, onReopen, onUpdateEntry, onClose, 
             <p className="text-xs text-slate-400 dark:text-slate-500 mb-4">
               归档于 {new Date(archivedEntry.archivedAt).toLocaleString('zh-CN')}
             </p>
+
+            <ChainProvenanceView
+              provenance={provenance}
+              onNavigate={(id) => onNavigateToItem(id)}
+              onDerive={() => onDerive(archivedEntry.sourceDockItemId, archivedEntry.content)}
+            />
 
             <div className="flex gap-2 pt-4 border-t border-slate-100 dark:border-white/5">
               <button onClick={() => setEditing(true)} className="px-4 py-2 text-sm font-medium bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-white/20 transition-colors">
@@ -2415,15 +3058,18 @@ function ChatHistorySidebar({
         <div key={group.label}>
           <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-2 mb-1">{group.label}</p>
           {group.items.map((session: LocalChatSession) => (
-            <div key={session.id} className="flex items-center gap-1 px-2 py-1.5 rounded-xl transition-colors group/session-item"
-              style={{ backgroundColor: session.id === currentSessionId ? 'rgb(239 246 255)' : undefined }}
-              onMouseEnter={(e) => { if (session.id !== currentSessionId) (e.currentTarget as HTMLElement).style.backgroundColor = 'rgb(241 245 249)' }}
-              onMouseLeave={(e) => { if (session.id !== currentSessionId) (e.currentTarget as HTMLElement).style.backgroundColor = 'undefined' }}
-            >
+            <div key={session.id} className={`flex items-center gap-1 px-2 py-1 rounded-xl transition-all group/session-item ${
+              session.id === currentSessionId
+                ? 'bg-blue-50 dark:bg-blue-500/10'
+                : 'hover:bg-slate-100 dark:hover:bg-white/5'
+            }`}>
               <button
                 onClick={() => onSelectSession(session)}
-                className="flex-1 text-left px-1.5 py-1 rounded-lg text-xs truncate transition-colors"
-                style={{ color: session.id === currentSessionId ? 'rgb(37 99 235)' : 'rgb(71 85 105)' }}
+                className={`flex-1 text-left px-1.5 py-1.5 rounded-lg text-xs truncate transition-colors ${
+                  session.id === currentSessionId
+                    ? 'text-blue-600 dark:text-blue-400 font-medium'
+                    : 'text-slate-600 dark:text-slate-400'
+                }`}
               >
                 <span className="truncate">{session.topic || ('Chat ' + session.id)}</span>
               </button>
@@ -2448,8 +3094,11 @@ function ChatHistorySidebar({
                     })
                   }
                 }}
-                className="p-1 rounded opacity-0 group-hover/session-item:opacity-100 transition-opacity flex-shrink-0"
-                style={{ color: session.pinned ? 'rgb(245 158 11)' : 'rgb(203 213 225)' }}
+                className={`p-1.5 rounded transition-all flex-shrink-0 ${
+                  session.pinned
+                    ? 'opacity-100 text-amber-500'
+                    : 'opacity-0 group-hover/session-item:opacity-100 text-slate-300 dark:text-slate-500'
+                }`}
                 title={session.pinned ? '取消置顶' : '置顶'}
               >
                 <span className="text-xs">{session.pinned ? '📌' : '📍'}</span>
