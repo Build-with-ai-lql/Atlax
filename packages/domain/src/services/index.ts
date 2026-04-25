@@ -1,4 +1,5 @@
 export * from './ChainLinkService'
+export * from './CalendarWidgetService'
 export * from './ChatGuidanceService'
 export * from './DockItemService'
 export * from './EditorCommandTransform'

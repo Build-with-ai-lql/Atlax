@@ -6,7 +6,8 @@ import {
   Image as ImageIcon, CheckSquare, List, Minimize2,
   Mic, MessageSquare, PenTool, ChevronRight, Clock, Check,
   Sparkles, Loader2, Sun, Moon, LogOut, RotateCcw, X, Tag, BarChart3, Filter, SlidersHorizontal,
-  PanelLeftClose, PanelLeftOpen, Bold, Italic, Link, Code, Command, ExternalLink, Link as LinkIcon, Maximize2
+  PanelLeftClose, PanelLeftOpen, Bold, Italic, Link, Code, Command, ExternalLink, Link as LinkIcon, Maximize2,
+  LayoutGrid, Calendar, ChevronLeft
 } from 'lucide-react'
 
 import { DetailHeaderActions } from './_components/DetailHeaderActions'
@@ -37,10 +38,16 @@ import {
   unpinChatSession,
   getChainProvenance,
   confirmChatSession,
+  activateWidget,
+  deactivateWidget,
+  getActiveWidget,
+  queryCalendarMonth,
   type DockItem,
   type StoredEntry,
   type StoredTag,
   type ChainProvenance,
+  type CalendarMonthOverview,
+  type StoredWidget,
 } from '@/lib/repository'
 import type { EntryStatus } from '@/lib/types'
 import { computeMetrics, getEventLog, recordEvent, type AppMode, type MetricsResult } from '@/lib/events'
@@ -188,6 +195,20 @@ export default function WorkspacePage() {
   })
 
   const [fullScreenEditData, setFullScreenEditData] = useState<{ type: 'dock' | 'entry', id: number, content: string } | null>(null)
+
+  const [activeWidget, setActiveWidget] = useState<StoredWidget | null>(null)
+  const [isWidgetPanelOpen, setIsWidgetPanelOpen] = useState(false)
+  const [calendarMonthOverview, setCalendarMonthOverview] = useState<CalendarMonthOverview | null>(null)
+  const [calendarSelectedDate, setCalendarSelectedDate] = useState<string | null>(null)
+  const [calendarViewYear, setCalendarViewYear] = useState(() => new Date().getFullYear())
+  const [calendarViewMonth, setCalendarViewMonth] = useState(() => new Date().getMonth() + 1)
+
+  useEffect(() => {
+    if (!isWidgetPanelOpen) return
+    const handleClickOutside = () => setIsWidgetPanelOpen(false)
+    document.addEventListener('click', handleClickOutside)
+    return () => document.removeEventListener('click', handleClickOutside)
+  }, [isWidgetPanelOpen])
 
   useEffect(() => {
     if (isAtBottomRef.current && messagesContainerRef.current) {
@@ -352,6 +373,16 @@ export default function WorkspacePage() {
     if (user) loadItems()
   }, [user, loadItems])
 
+  useEffect(() => {
+    if (!userId) return
+    getActiveWidget(userId).then(setActiveWidget)
+  }, [userId])
+
+  useEffect(() => {
+    if (!userId || !activeWidget || activeWidget.widgetType !== 'calendar') return
+    queryCalendarMonth(userId, calendarViewYear, calendarViewMonth).then(setCalendarMonthOverview)
+  }, [userId, activeWidget, calendarViewYear, calendarViewMonth])
+
   const handleAuthenticated = () => setUser(getCurrentUser())
 
   const handleLogout = () => {
@@ -368,6 +399,26 @@ export default function WorkspacePage() {
     setDockViewMode(mode)
     localStorage.setItem('atlax-dock-view-mode', mode)
   }
+
+  const handleActivateWidget = useCallback(async (widgetType: 'calendar') => {
+    const widget = await activateWidget(userId, widgetType)
+    setActiveWidget(widget)
+    setIsWidgetPanelOpen(false)
+  }, [userId])
+
+  const handleDeactivateWidget = useCallback(async () => {
+    const deactivated = await deactivateWidget(userId)
+    if (deactivated) {
+      setActiveWidget(null)
+      setCalendarSelectedDate(null)
+      setCalendarMonthOverview(null)
+    }
+  }, [userId])
+
+  const handleCalendarDateClick = useCallback((date: string) => {
+    setCalendarSelectedDate(date)
+    setActiveNav('entries')
+  }, [])
 
   const handleModeChange = (newMode: AppMode) => {
     if (newMode === inputMode) return
@@ -400,7 +451,10 @@ export default function WorkspacePage() {
   const handleViewChange = (view: ViewType) => {
     setActiveNav(view)
     if (view !== 'dock') setSelectedItemId(null)
-    if (view !== 'entries') setSelectedArchivedEntryId(null)
+    if (view !== 'entries') {
+      setSelectedArchivedEntryId(null)
+      setCalendarSelectedDate(null)
+    }
     if (view === 'review') recordEvent(userId, { type: 'weekly_review_opened' })
   }
 
@@ -836,6 +890,11 @@ export default function WorkspacePage() {
   const dockItemStatusMap = new Map(items.map((i) => [i.id, i.status]))
 
   const filteredEntries = archivedEntries.filter((entry) => {
+    if (calendarSelectedDate && activeNav === 'entries') {
+      const entryDate = new Date(entry.archivedAt)
+      const entryDateStr = `${entryDate.getFullYear()}-${String(entryDate.getMonth() + 1).padStart(2, '0')}-${String(entryDate.getDate()).padStart(2, '0')}`
+      if (entryDateStr !== calendarSelectedDate) return false
+    }
     if (entryFilterType && entry.type !== entryFilterType) return false
     if (entryFilterTag && !entry.tags.includes(entryFilterTag)) return false
     if (entryFilterProject && entry.project !== entryFilterProject) return false
@@ -848,13 +907,14 @@ export default function WorkspacePage() {
 
 
   const uniqueTags = Array.from(new Set(archivedEntries.flatMap((e) => e.tags)))
-  const hasActiveFilters = entryFilterType || entryFilterTag || entryFilterProject || entryFilterStatus
+  const hasActiveFilters = entryFilterType || entryFilterTag || entryFilterProject || entryFilterStatus || (calendarSelectedDate && activeNav === 'entries')
 
   const clearEntryFilters = () => {
     setEntryFilterType('')
     setEntryFilterTag('')
     setEntryFilterProject('')
     setEntryFilterStatus('')
+    setCalendarSelectedDate(null)
   }
 
   if (!authChecked) {
@@ -897,6 +957,14 @@ export default function WorkspacePage() {
           onRecordClick={() => {
             setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')
           }}
+          activeWidget={activeWidget}
+          onDeactivateWidget={handleDeactivateWidget}
+          calendarMonthOverview={calendarMonthOverview}
+          calendarSelectedDate={calendarSelectedDate}
+          onCalendarDateClick={handleCalendarDateClick}
+          calendarViewYear={calendarViewYear}
+          calendarViewMonth={calendarViewMonth}
+          onCalendarViewChange={(year, month) => { setCalendarViewYear(year); setCalendarViewMonth(month) }}
         />
 
         <div className="flex-1 flex relative overflow-hidden">
@@ -916,12 +984,27 @@ export default function WorkspacePage() {
                 )}
                 {activeNav === 'entries' && hasActiveFilters && !hasSelectedItem && (
                   <span className="text-[10px] text-slate-400 dark:text-slate-500">
-                    (已筛选，共 {archivedEntries.length} 条)
+                    {calendarSelectedDate ? `${calendarSelectedDate} · ` : ''}(已筛选，共 {filteredEntries.length} 条)
                   </span>
                 )}
               </div>
               {!hasSelectedItem && (
-                <div className="flex items-center space-x-2 text-slate-500 dark:text-slate-400">
+                <div className="flex items-center space-x-2 text-slate-500 dark:text-slate-400 relative">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setIsWidgetPanelOpen(!isWidgetPanelOpen) }}
+                    className={`p-2 rounded-full transition-colors ${activeWidget ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-500' : 'hover:bg-white/50 dark:hover:bg-white/10'}`}
+                    title="Widgets"
+                  >
+                    <LayoutGrid size={20} />
+                  </button>
+                  {isWidgetPanelOpen && (
+                    <WidgetPanel
+                      activeWidget={activeWidget}
+                      onActivate={handleActivateWidget}
+                      onDeactivate={handleDeactivateWidget}
+                      onClose={() => setIsWidgetPanelOpen(false)}
+                    />
+                  )}
                   <button className="p-2 hover:bg-white/50 dark:hover:bg-white/10 rounded-full transition-colors">
                     <Search size={20} />
                   </button>
@@ -1000,6 +1083,20 @@ export default function WorkspacePage() {
                       hasActiveFilters={!!hasActiveFilters}
                       onClear={clearEntryFilters}
                     />
+                    {calendarSelectedDate && (
+                      <div className="flex items-center gap-2 px-1">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs rounded-lg font-medium border border-blue-100 dark:border-blue-500/20">
+                          <Calendar size={12} />
+                          {calendarSelectedDate}
+                          <button
+                            onClick={() => setCalendarSelectedDate(null)}
+                            className="ml-0.5 p-0.5 hover:bg-blue-100 dark:hover:bg-blue-500/20 rounded transition-colors"
+                          >
+                            <X size={10} />
+                          </button>
+                        </span>
+                      </div>
+                    )}
                     {filteredEntries.length === 0 ? (
                       <div className="flex flex-col items-center justify-center py-20 text-slate-400 dark:text-slate-500 animate-in fade-in slide-in-from-bottom-4 duration-700">
                         <div className="w-16 h-16 bg-white dark:bg-white/5 rounded-3xl shadow-sm flex items-center justify-center mb-6 border border-slate-100 dark:border-white/5">
@@ -1315,6 +1412,170 @@ export default function WorkspacePage() {
   )
 }
 
+function WidgetPanel({ activeWidget, onActivate, onDeactivate, onClose }: {
+  activeWidget: StoredWidget | null
+  onActivate: (type: 'calendar') => void
+  onDeactivate: () => void
+  onClose: () => void
+}) {
+  return (
+    <div className="absolute right-0 top-12 w-72 bg-white dark:bg-[#2C2C2E] rounded-2xl shadow-[0_20px_60px_rgb(0,0,0,0.15)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-slate-100 dark:border-white/10 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200" onClick={(e) => e.stopPropagation()}>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-white/5">
+        <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">Widgets</span>
+        <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 transition-colors">
+          <X size={14} />
+        </button>
+      </div>
+      <div className="p-3 space-y-2">
+        <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-black/20 border border-slate-100 dark:border-white/5 transition-colors">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-blue-50 dark:bg-blue-500/10 flex items-center justify-center">
+              <Calendar size={18} className="text-blue-500 dark:text-blue-400" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-slate-800 dark:text-slate-100">Calendar</p>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500">按日期浏览归档</p>
+            </div>
+          </div>
+          {activeWidget?.widgetType === 'calendar' ? (
+            <button
+              onClick={onDeactivate}
+              className="px-3 py-1 text-xs font-medium text-red-500 bg-red-50 dark:bg-red-500/10 rounded-lg hover:bg-red-100 dark:hover:bg-red-500/20 transition-colors"
+            >
+              关闭
+            </button>
+          ) : (
+            <button
+              onClick={() => onActivate('calendar')}
+              className="px-3 py-1 text-xs font-medium text-blue-500 bg-blue-50 dark:bg-blue-500/10 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-500/20 transition-colors"
+            >
+              激活
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CalendarWidget({ monthOverview, selectedDate, onDateClick, viewYear, viewMonth, onViewChange, onClose }: {
+  monthOverview: CalendarMonthOverview | null
+  selectedDate: string | null
+  onDateClick: (date: string) => void
+  viewYear: number
+  viewMonth: number
+  onViewChange: (year: number, month: number) => void
+  onClose: () => void
+}) {
+  const [isHovering, setIsHovering] = useState(false)
+
+  const daysInMonth = new Date(viewYear, viewMonth, 0).getDate()
+  const firstDayOfWeek = new Date(viewYear, viewMonth - 1, 1).getDay()
+  const adjustedFirstDay = firstDayOfWeek === 0 ? 6 : firstDayOfWeek - 1
+
+  const daysWithEntries = new Set(monthOverview?.daysWithEntries ?? [])
+
+  const monthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
+  const weekDayLabels = ['一', '二', '三', '四', '五', '六', '日']
+
+  const handlePrevMonth = () => {
+    if (viewMonth === 1) {
+      onViewChange(viewYear - 1, 12)
+    } else {
+      onViewChange(viewYear, viewMonth - 1)
+    }
+  }
+
+  const handleNextMonth = () => {
+    if (viewMonth === 12) {
+      onViewChange(viewYear + 1, 1)
+    } else {
+      onViewChange(viewYear, viewMonth + 1)
+    }
+  }
+
+  const formatDateString = (day: number) => {
+    return `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+  }
+
+  const today = new Date()
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+  const cells: React.ReactNode[] = []
+  for (let i = 0; i < adjustedFirstDay; i++) {
+    cells.push(<div key={`empty-${i}`} className="w-7 h-7" />)
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = formatDateString(day)
+    const hasEntries = daysWithEntries.has(dateStr)
+    const isSelected = selectedDate === dateStr
+    const isToday = dateStr === todayStr
+
+    cells.push(
+      <button
+        key={day}
+        onClick={() => onDateClick(dateStr)}
+        className={`w-7 h-7 rounded-lg text-[11px] font-medium flex items-center justify-center relative transition-all ${
+          isSelected
+            ? 'bg-blue-500 text-white shadow-sm'
+            : hasEntries
+              ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-500/20'
+              : isToday
+                ? 'bg-slate-100 dark:bg-white/10 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-white/15'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/5'
+        }`}
+      >
+        {day}
+        {hasEntries && !isSelected && (
+          <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-blue-400 dark:bg-blue-500" />
+        )}
+      </button>
+    )
+  }
+
+  return (
+    <div
+      className="bg-slate-50/50 dark:bg-black/20 rounded-2xl border border-slate-100 dark:border-white/5 overflow-hidden transition-colors"
+      onMouseEnter={() => setIsHovering(true)}
+      onMouseLeave={() => setIsHovering(false)}
+    >
+      <div className="flex items-center justify-between px-3 py-2">
+        <div className="flex items-center gap-1">
+          <button onClick={handlePrevMonth} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded hover:bg-slate-200/50 dark:hover:bg-white/10 transition-colors">
+            <ChevronLeft size={14} />
+          </button>
+          <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 min-w-[80px] text-center">
+            {viewYear} {monthNames[viewMonth - 1]}
+          </span>
+          <button onClick={handleNextMonth} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded hover:bg-slate-200/50 dark:hover:bg-white/10 transition-colors">
+            <ChevronRight size={14} />
+          </button>
+        </div>
+        {isHovering && (
+          <button
+            onClick={onClose}
+            className="p-1 text-slate-400 hover:text-red-500 dark:hover:text-red-400 rounded hover:bg-slate-200/50 dark:hover:bg-white/10 transition-all"
+            title="关闭 Calendar Widget"
+          >
+            <X size={12} />
+          </button>
+        )}
+      </div>
+      <div className="grid grid-cols-7 gap-0.5 px-2 pb-1">
+        {weekDayLabels.map((label) => (
+          <div key={label} className="w-7 h-5 flex items-center justify-center text-[9px] font-medium text-slate-400 dark:text-slate-500 uppercase">
+            {label}
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-0.5 px-2 pb-3">
+        {cells}
+      </div>
+    </div>
+  )
+}
+
 function ThemeToggle({ mode, setMode }: { mode: string; setMode: (m: 'system' | 'light' | 'dark') => void }) {
   const cycleMode = () => {
     if (mode === 'system') setMode('light')
@@ -1354,7 +1615,7 @@ function ThemeToggle({ mode, setMode }: { mode: string; setMode: (m: 'system' | 
   )
 }
 
-function Sidebar({ activeNav, setActiveNav, user, onLogout, dockCount, isCollapsed, onToggleCollapse, onRecordClick }: {
+function Sidebar({ activeNav, setActiveNav, user, onLogout, dockCount, isCollapsed, onToggleCollapse, onRecordClick, activeWidget, onDeactivateWidget, calendarMonthOverview, calendarSelectedDate, onCalendarDateClick, calendarViewYear, calendarViewMonth, onCalendarViewChange }: {
   activeNav: ViewType
   setActiveNav: (nav: ViewType) => void
   user: LocalUser
@@ -1363,6 +1624,14 @@ function Sidebar({ activeNav, setActiveNav, user, onLogout, dockCount, isCollaps
   isCollapsed: boolean
   onToggleCollapse: () => void
   onRecordClick: () => void
+  activeWidget: StoredWidget | null
+  onDeactivateWidget: () => void
+  calendarMonthOverview: CalendarMonthOverview | null
+  calendarSelectedDate: string | null
+  onCalendarDateClick: (date: string) => void
+  calendarViewYear: number
+  calendarViewMonth: number
+  onCalendarViewChange: (year: number, month: number) => void
 }) {
   const navItems: { id: ViewType; icon: typeof Dock; label: string }[] = [
     { id: 'dock', icon: Dock, label: 'Dock' },
@@ -1435,6 +1704,20 @@ function Sidebar({ activeNav, setActiveNav, user, onLogout, dockCount, isCollaps
           )
         })}
       </nav>
+
+      {activeWidget && !isCollapsed && (
+        <div className="px-4 mb-2 group/widget-zone">
+          <CalendarWidget
+            monthOverview={calendarMonthOverview}
+            selectedDate={calendarSelectedDate}
+            onDateClick={onCalendarDateClick}
+            viewYear={calendarViewYear}
+            viewMonth={calendarViewMonth}
+            onViewChange={onCalendarViewChange}
+            onClose={onDeactivateWidget}
+          />
+        </div>
+      )}
 
       <div className={`p-4 ${isCollapsed ? 'px-2 flex justify-center' : ''}`}>
         <div className={`bg-slate-100/50 dark:bg-black/20 rounded-2xl border border-white dark:border-white/5 flex items-center transition-colors ${isCollapsed ? 'p-2 flex-col gap-2' : 'p-4 space-x-3'}`}>

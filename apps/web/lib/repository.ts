@@ -9,10 +9,15 @@ import {
   generateSuggestions,
   makeTagId,
   normalizeTagName,
+  queryEntriesByDate,
+  queryMonthOverview,
   validateChainLinkWithContext,
+  type CalendarDayResult,
+  type CalendarMonthOverview,
   type ChainProvenance,
   type EntryStatus,
   type SourceType,
+  type WidgetType,
 } from '@atlax/domain'
 
 import type {
@@ -28,6 +33,7 @@ import {
   entriesTable,
   dockItemsTable,
   tagsTable,
+  widgetsTable,
   type ChatSessionRecord,
   type EntryRecord,
   type DockItemRecord,
@@ -35,13 +41,18 @@ import {
   type PersistedEntry,
   type PersistedChatSession,
   type PersistedTag,
+  type PersistedWidget,
   type TagRecord,
+  type WidgetRecord,
 } from './db'
 
 export type DockItem = DomainDockItem
 export type { PersistedEntry as StoredEntry }
 export type { PersistedTag as StoredTag }
+export type { PersistedWidget as StoredWidget }
 export type { ChainProvenance }
+export type { CalendarDayResult }
+export type { CalendarMonthOverview }
 
 function toPersistedDockItem(item: DockItemRecord | undefined): PersistedDockItem | null {
   if (!item || typeof item.id !== 'number') {
@@ -732,4 +743,73 @@ export async function confirmChatSession(
     session: toPersistedChatSession(await chatSessionsTable.get(id)),
     dockItemId: boundDockItemId,
   }
+}
+
+function toPersistedWidget(widget: WidgetRecord | undefined): PersistedWidget | null {
+  if (!widget || typeof widget.id !== 'number') {
+    return null
+  }
+
+  return {
+    ...widget,
+    id: widget.id,
+    active: widget.active ?? false,
+    config: widget.config ?? {},
+  }
+}
+
+export async function getActiveWidget(userId: string): Promise<PersistedWidget | null> {
+  const widget = await widgetsTable
+    .where('userId')
+    .equals(userId)
+    .and((w) => w.active === true)
+    .first()
+  return toPersistedWidget(widget)
+}
+
+export async function activateWidget(userId: string, widgetType: WidgetType): Promise<PersistedWidget> {
+  const existing = await widgetsTable
+    .where('userId')
+    .equals(userId)
+    .toArray()
+
+  for (const w of existing) {
+    await widgetsTable.update(w.id, { active: false, updatedAt: new Date() })
+  }
+
+  const match = existing.find((w) => w.widgetType === widgetType)
+  if (match) {
+    await widgetsTable.update(match.id, { active: true, updatedAt: new Date() })
+    return toPersistedWidget(await widgetsTable.get(match.id)) as PersistedWidget
+  }
+
+  const now = new Date()
+  const id = await widgetsTable.add({
+    userId,
+    widgetType,
+    active: true,
+    config: {},
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  return toPersistedWidget(await widgetsTable.get(id as number)) as PersistedWidget
+}
+
+export async function deactivateWidget(userId: string): Promise<PersistedWidget | null> {
+  const active = await getActiveWidget(userId)
+  if (!active) return null
+
+  await widgetsTable.update(active.id, { active: false, updatedAt: new Date() })
+  return toPersistedWidget(await widgetsTable.get(active.id))
+}
+
+export async function queryCalendarDay(userId: string, date: string): Promise<CalendarDayResult> {
+  const entries = await entriesTable.where('userId').equals(userId).toArray()
+  return queryEntriesByDate(entries, userId, date)
+}
+
+export async function queryCalendarMonth(userId: string, year: number, month: number): Promise<CalendarMonthOverview> {
+  const entries = await entriesTable.where('userId').equals(userId).toArray()
+  return queryMonthOverview(entries, userId, year, month)
 }

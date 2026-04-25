@@ -1068,7 +1068,7 @@ await addChatMessage('user-123', session.id, {
 
 **ChatSession dockItemId 映射**：
 - domain ports/db/repository 全链路增加 `dockItemId: number | null`
-- v10 migration 给旧 session 填 `null`
+- v11 migration 给旧 session 填 `null`
 - 新增 `confirmChatSession(userId, id, content, topic, type)`：
   - 已绑定 dockItemId → 更新原 DockItem（文本/topic 变化走 `updateDockItemText`/EditSavePolicy；type 变化更新 tags）
   - 未绑定 → 创建新 DockItem（含 topic）并绑定，type 作为 tag
@@ -1093,7 +1093,7 @@ await addChatMessage('user-123', session.id, {
 | `packages/domain/src/ports/repository.ts` | M | ChatSession/CreateInput/UpdateInput 增加 dockItemId；DockItem 增加 topic |
 | `packages/domain/src/types.ts` | M | ArchiveInput 增加 topic |
 | `packages/domain/src/services/ChatGuidanceService.ts` | M | 修正 refillStateFromOption 语义，新增 buildRefillPatch |
-| `apps/web/lib/db.ts` | M | ChatSessionRecord 增加 dockItemId，DockItemRecord 增加 topic，v10 migration |
+| `apps/web/lib/db.ts` | M | ChatSessionRecord 增加 dockItemId，DockItemRecord 增加 topic，v11 migration |
 | `apps/web/lib/repository.ts` | M | createDockItem/updateDockItemText 支持 topic，confirmChatSession 含 topic/type，新增 dockItemId |
 | `apps/web/tests/chat-session.test.ts` | M | 新增 11 个 dockItemId/confirmChatSession 测试 |
 | `packages/domain/tests/ChatGuidanceService.test.ts` | M | 修正 refill 断言，新增 4 个 buildRefillPatch 测试 |
@@ -1129,7 +1129,7 @@ await addChatMessage('user-123', session.id, {
 |------|------|------|
 | confirmChatSession 重复确认时 DockItem 被删 | 低 | 若已绑定 DockItem 不存在，fallback 创建新 DockItem |
 | 前端未调用 confirmChatSession | 中 | 前端需迁移到新 API，旧路径仍可用 |
-| v10 migration 兼容性 | 低 | 仅新增字段默认 null，不影响现有数据 |
+| v11 migration 兼容性 | 低 | 仅新增字段默认 null，不影响现有数据 |
 
 ### 8. 是否可进入下一轮
 
@@ -1137,7 +1137,81 @@ await addChatMessage('user-123', session.id, {
 
 ---
 
-## 历史记录
+## Round 12 Backend — Widget/Calendar 主线 + devlog 口径修正
+
+**时间**: 2026-04-26 04:50
+**轮次**: Phase 3 Round 12
+**状态**: ✅ 已解决
+
+### 0. 口径修正
+
+- devlog 中 v10 migration → v11（与代码 db.version(11) 一致）
+- 明确当前仅 chat/editor 修补轮通过，Phase 3 主线仍剩 Widget/Calendar、Graph Tree、Review Insight
+
+### 1. 问题
+
+| # | 问题 | 等级 | 说明 |
+|---|------|------|------|
+| 1 | 无 Widget 持久化模型 | P0 | Phase 3 Widget/Calendar 主线未启动 |
+| 2 | 无 Calendar 日期查询能力 | P0 | 前端无法按日期定位归档内容 |
+
+### 2. 解决方案
+
+**WidgetRegistry**：
+- DB 新增 `widgets` 表（v12 migration），字段：id, userId, widgetType, active, config, createdAt, updatedAt
+- 仅支持内置 `calendar` widget 类型
+- 每用户仅允许一个 active widget（activateWidget 自动 deactivate 旧 widget）
+- userId 隔离
+
+**CalendarWidgetService**（domain 纯函数）：
+- `queryEntriesByDate(entries, userId, date)` → 按日期过滤归档条目
+- `queryMonthOverview(entries, userId, year, month)` → 返回有归档条目的日期列表
+- Repository 层封装：`queryCalendarDay(userId, date)` / `queryCalendarMonth(userId, year, month)`
+
+### 3. 变更内容
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `packages/domain/src/services/CalendarWidgetService.ts` | A | Calendar 日期查询纯函数 |
+| `packages/domain/src/services/index.ts` | M | 导出 CalendarWidgetService |
+| `packages/domain/tests/CalendarWidgetService.test.ts` | A | 8 个 domain 测试 |
+| `apps/web/lib/db.ts` | M | WidgetRecord/PersistedWidget，v12 migration，widgetsTable |
+| `apps/web/lib/repository.ts` | M | Widget CRUD + Calendar 查询 |
+| `apps/web/tests/widget-calendar.test.ts` | A | 12 个 repository 测试 |
+| `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | v10→v11 修正，Round 12 日志 |
+
+### 4. 遇到的问题
+
+无。
+
+### 5. 验证结果
+
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm lint` | ✅ 0 errors |
+| `pnpm typecheck` | ✅ PASS |
+| domain tests | ✅ 249 tests / 16 files |
+| web tests | ✅ 215 tests / 10 files |
+| `pnpm build` | ✅ PASS |
+
+### 6. 手工验证标准
+
+1. 仅允许一个生效 widget（activateWidget 自动 deactivate 旧 widget）
+2. 点击某日期时能返回该日期真实归档内容
+3. 空日期返回真实空状态
+4. 不同用户之间日期结果不串数据
+
+### 7. 风险评估
+
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| 前端未适配 Widget UI | 中 | 后端 API 就绪，前端需新增 Widget 容器组件 |
+| Calendar 查询全表扫描 | 低 | 当前数据量可接受，后续可加索引优化 |
+| 仅支持 calendar 类型 | 低 | Phase 3 范围限定，后续可扩展 |
+
+### 8. 是否可进入下一轮
+
+✅ 是。Widget/Calendar 后端能力已就绪，待前端适配。Phase 3 主线仍剩 Graph Tree、Review Insight。
 
 （无）
 

@@ -72,6 +72,22 @@ export interface PersistedChatSession extends ChatSessionRecord {
   id: number
 }
 
+export type WidgetType = 'calendar'
+
+export interface WidgetRecord {
+  id?: number
+  userId: string
+  widgetType: WidgetType
+  active: boolean
+  config: Record<string, unknown>
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface PersistedWidget extends WidgetRecord {
+  id: number
+}
+
 const FALLBACK_USER_ID = '_legacy'
 
 export function runV8Upgrade(tx: {
@@ -108,6 +124,7 @@ const db = new Dexie('AtlaxDB') as Dexie & {
   tags: EntityTable<TagRecord, 'id'>
   entries: EntityTable<EntryRecord, 'id'>
   chatSessions: EntityTable<ChatSessionRecord, 'id'>
+  widgets: EntityTable<WidgetRecord, 'id'>
 }
 
 db.version(1).stores({
@@ -203,8 +220,17 @@ db.version(11).stores({
   })
 })
 
+db.version(12).stores({
+  dockItems: '++id, userId, rawText, topic, sourceType, status, createdAt',
+  tags: 'id, userId, name, [userId+name]',
+  entries: '++id, userId, sourceDockItemId, type, archivedAt',
+  chatSessions: '++id, userId, status, pinned, dockItemId, createdAt, updatedAt',
+  widgets: '++id, userId, widgetType, active, createdAt, updatedAt',
+})
+
 export { db }
 export const dockItemsTable = db.table('dockItems')
 export const tagsTable = db.table('tags')
 export const entriesTable = db.table('entries')
 export const chatSessionsTable = db.table('chatSessions')
+export const widgetsTable = db.table('widgets')

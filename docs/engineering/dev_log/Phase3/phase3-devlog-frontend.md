@@ -1138,4 +1138,82 @@ listChatSessions(current.id).then(sessions => {
 - **极低**。本次变更为纯粹的质量加固和逻辑修复，未改变核心交互流程。
 
 ### 是否可进入下一阶段
-**是**。Phase 3 全部任务已收口。
+**是**。chat/editor/history 修补轮已通过，Phase 3 主线仍剩 Widget/Calendar、Graph Tree、Review Insight。
+
+---
+
+## Round 19 (2026-04-26): Widget/Calendar 主线接入
+
+### 变更内容
+1. **修正日志口径**：将 Round 18 "Phase 3 全部任务已收口" 改为 "chat/editor/history 修补轮已通过，Phase 3 主线仍剩 Widget/Calendar、Graph Tree、Review Insight"
+2. **Widget 入口 UI**：header 右上角新增 LayoutGrid 图标按钮，点击弹出 Widget 面板
+3. **WidgetPanel 组件**：弹出面板展示 built-in widgets 列表，本轮仅 calendar；支持激活/关闭切换
+4. **CalendarWidget 组件**：sidebar gap 区（nav 与用户卡片之间）展示月历，支持月份切换、日期点击、hover 显示关闭按钮
+5. **日历日期筛选**：点击日历日期 → 自动切换到 Entries 视图 → filteredEntries 增加日期筛选条件 → 筛选栏显示日期标签（可单独清除）
+6. **Widget 生命周期**：activateWidget/deactivateWidget 接入，Phase 3 仅允许一个 widget 生效
+7. **点击外部关闭面板**：WidgetPanel 通过 document click + stopPropagation 实现点击外部关闭
+8. **修复已有 lint 错误**：widget-calendar.test.ts 中 `!` non-null assertion 改为 `?` optional chaining
+
+### 遇到的问题
+- 无
+
+### 解决方式
+- N/A
+
+### 是否解决
+- 是
+
+### 收口验证
+- `pnpm lint` ✅
+- `pnpm typecheck` ✅
+- `pnpm test` ✅（249 + 215 = 464 tests passed）
+- `pnpm build` ✅
+
+### 手工验证方式和标准
+1. 右上角可打开 widget 面板，并只激活一个 calendar widget
+2. calendar widget 可关闭、可重新激活
+3. 点击某日期后能看到当天真实 archived entries
+4. 空日期显示空状态
+5. chat/history/title/preview/重编辑体验不回归
+
+### 风险评估
+- **低**。新增 Widget/Calendar 功能为纯增量，未修改已有 chat/editor/history/title/preview/重编辑逻辑。日历筛选通过 filteredEntries 增加条件实现，清除筛选即恢复原状。
+
+### 是否可进入下一轮
+**是**。Widget/Calendar 主线已接入，Phase 3 主线仍剩 Graph Tree、Review Insight。
+
+---
+
+## Round 19 Patch 1 (2026-04-26): Entries 筛选数量显示修复
+
+### 变更内容
+- 修复 Calendar 日期筛选生效时，header 提示"已筛选，共 N 条"显示 `archivedEntries.length`（总条数）而非 `filteredEntries.length`（实际筛选后条数），导致数字与列表不一致。
+
+### 遇到的问题
+- 原实现用 `archivedEntries.length` 表达"筛选前总量"，但用户期望看到筛选后实际条数。
+
+### 解决方式
+- 将 `archivedEntries.length` 改为 `filteredEntries.length`。
+
+### 是否解决
+- 是
+
+### 收口验证
+- `git diff --cached --check` ✅
+- `git diff --check` ✅
+- `pnpm lint` ✅
+- `pnpm typecheck` ✅
+- `pnpm test` ✅
+- `pnpm build` ✅
+
+### 手工验证方式和标准
+1. 点击 Calendar 中有归档的日期后，Entries 列表数量和顶部"已筛选，共 N 条"一致
+2. 空日期显示 0 条或真实空状态
+3. 清除筛选后恢复全部 Entries
+4. Widget/Calendar 和 Chat 已有体验不回归
+
+### 风险评估
+- **极低**。单行文案数字源修正，不涉及逻辑变更。
+
+### 是否可进入下一轮
+**是**。
