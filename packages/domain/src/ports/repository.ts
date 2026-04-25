@@ -3,6 +3,49 @@ import type { Entry as DomainEntry, Tag as DomainTag } from '../types'
 
 export type DockItemId = number
 export type UserId = string
+export type ChatSessionId = number
+
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: Date
+}
+
+export type ChatSessionStatus = 'active' | 'confirmed' | 'cancelled'
+
+export interface ChatSession {
+  id: number
+  userId: string
+  title: string | null
+  topic: string | null
+  selectedType: string | null
+  content: string
+  status: ChatSessionStatus
+  pinned: boolean
+  messages: ChatMessage[]
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface ChatSessionCreateInput {
+  userId: string
+  title?: string | null
+  topic?: string | null
+  selectedType?: string | null
+  content?: string
+  messages?: ChatMessage[]
+  pinned?: boolean
+}
+
+export interface ChatSessionUpdateInput {
+  title?: string | null
+  topic?: string | null
+  selectedType?: string | null
+  content?: string
+  status?: ChatSessionStatus
+  messages?: ChatMessage[]
+  pinned?: boolean
+}
 
 export interface DockItem {
   id: number
@@ -12,6 +55,10 @@ export interface DockItem {
   status: EntryStatus
   suggestions: SuggestionItem[]
   userTags: string[]
+  selectedActions: string[]
+  selectedProject: string | null
+  sourceId: number | null
+  parentId: number | null
   processedAt: Date | null
   createdAt: Date
 }
@@ -44,6 +91,9 @@ export interface DockItemRepository {
   count(userId: string): Promise<number>
   updateText(userId: string, id: number, rawText: string): Promise<DockItem | null>
   updateTags(userId: string, id: number, userTags: string[]): Promise<DockItem | null>
+  updateSelectedActions(userId: string, id: number, actions: string[]): Promise<DockItem | null>
+  updateSelectedProject(userId: string, id: number, project: string | null): Promise<DockItem | null>
+  updateChainLinks(userId: string, id: number, sourceId: number | null, parentId: number | null): Promise<DockItem | null>
   addTag(userId: string, id: number, tagName: string): Promise<DockItem | null>
   removeTag(userId: string, id: number, tagName: string): Promise<DockItem | null>
   archive(userId: string, id: number): Promise<DockItem | null>
@@ -73,4 +123,24 @@ export interface TagRepository {
 
 export interface StatsRepository {
   getWorkspaceStats(userId: string): Promise<WorkspaceStats>
+}
+
+export interface ChatSessionRepository {
+  create(input: ChatSessionCreateInput): Promise<ChatSession>
+  findById(userId: string, id: ChatSessionId): Promise<ChatSession | null>
+  listByUser(userId: string): Promise<ChatSession[]>
+  listActiveByUser(userId: string): Promise<ChatSession[]>
+  update(userId: string, id: ChatSessionId, updates: ChatSessionUpdateInput): Promise<ChatSession | null>
+  delete(userId: string, id: ChatSessionId): Promise<boolean>
+  addMessage(userId: string, id: ChatSessionId, message: ChatMessage): Promise<ChatSession | null>
+}
+
+export function isValidChatSessionInput(input: ChatSessionCreateInput): boolean {
+  const hasMessages = input.messages !== undefined && input.messages.length > 0
+  const hasUserMessage = input.messages?.some((m) => m.role === 'user' && m.content.trim().length > 0) ?? false
+  const hasTopic = input.topic !== undefined && input.topic !== null && input.topic.trim().length > 0
+  const hasType = input.selectedType !== undefined && input.selectedType !== null && input.selectedType.trim().length > 0
+  const hasContent = input.content !== undefined && input.content.trim().length > 0
+
+  return hasUserMessage || hasTopic || hasType || hasContent
 }

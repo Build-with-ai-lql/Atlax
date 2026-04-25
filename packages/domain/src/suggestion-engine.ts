@@ -4,6 +4,7 @@ import type {
   SuggestionResult,
   SuggestionType,
 } from './types'
+import { sanitizeSuggestionLabel } from './types'
 
 const ENGINE_VERSION = '1.0.0'
 
@@ -74,22 +75,26 @@ function matchRule(text: string, rule: Rule): boolean {
 function applyRules(itemId: number, text: string, rules: Rule[]): SuggestionItem[] {
   return rules
     .filter((rule) => matchRule(text, rule))
-    .map((rule) => ({
-      id: makeSuggestionId(itemId, rule.type, rule.label),
-      type: rule.type,
-      label: rule.label,
-      confidence: rule.confidence,
-      reason: rule.reason,
-    }))
+    .map((rule) => {
+      const sanitizedLabel = sanitizeSuggestionLabel(rule.label)
+      return {
+        id: makeSuggestionId(itemId, rule.type, sanitizedLabel),
+        type: rule.type,
+        label: sanitizedLabel,
+        confidence: rule.confidence,
+        reason: rule.reason,
+      }
+    })
 }
 
 function matchCategory(itemId: number, text: string): SuggestionItem {
   const matchedRule = CATEGORY_RULES.find((rule) => matchRule(text, rule)) ?? DEFAULT_CATEGORY
+  const sanitizedLabel = sanitizeSuggestionLabel(matchedRule.label)
 
   return {
-    id: makeSuggestionId(itemId, matchedRule.type, matchedRule.label),
+    id: makeSuggestionId(itemId, matchedRule.type, sanitizedLabel),
     type: matchedRule.type,
-    label: matchedRule.label,
+    label: sanitizedLabel,
     confidence: matchedRule.confidence,
     reason: matchedRule.reason,
   }
@@ -106,12 +111,13 @@ function matchActions(itemId: number, text: string): SuggestionItem[] {
     return baseActions
   }
 
+  const sanitizedLabel = sanitizeSuggestionLabel('需要拆分')
   return [
     ...baseActions,
     {
-      id: makeSuggestionId(itemId, 'action', '需要拆分'),
+      id: makeSuggestionId(itemId, 'action', sanitizedLabel),
       type: 'action',
-      label: '需要拆分',
+      label: sanitizedLabel,
       confidence: 0.6,
       reason: '内容较长，建议拆分处理',
     },
@@ -121,10 +127,11 @@ function matchActions(itemId: number, text: string): SuggestionItem[] {
 export function generateSuggestions(item: SuggestionEntryInput): SuggestionResult {
   const tagSuggestions = applyRules(item.id, item.rawText, TAG_RULES).slice(0, 5)
   if (tagSuggestions.length === 0) {
+    const sanitizedLabel = sanitizeSuggestionLabel('待整理')
     tagSuggestions.push({
-      id: makeSuggestionId(item.id, 'tag', '待整理'),
+      id: makeSuggestionId(item.id, 'tag', sanitizedLabel),
       type: 'tag',
-      label: '待整理',
+      label: sanitizedLabel,
       confidence: 0.3,
       reason: '未匹配到特定标签，建议稍后整理',
     })

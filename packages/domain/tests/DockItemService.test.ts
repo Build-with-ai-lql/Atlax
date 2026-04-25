@@ -60,6 +60,10 @@ describe('DockItemService', () => {
         status: 'suggested' as const,
         suggestions: [{ id: 's1', type: 'tag' as const, label: 'work', confidence: 0.9 }],
         userTags: ['work'],
+        selectedActions: [],
+        selectedProject: null,
+        sourceId: null,
+        parentId: null,
         processedAt: new Date(),
         createdAt: new Date(),
       }
@@ -84,6 +88,10 @@ describe('DockItemService', () => {
         status: 'suggested' as const,
         suggestions: [],
         userTags: ['important', 'review'],
+        selectedActions: [],
+        selectedProject: null,
+        sourceId: null,
+        parentId: null,
         processedAt: new Date(),
         createdAt: new Date(),
       }
@@ -111,6 +119,10 @@ describe('DockItemService', () => {
         status: 'suggested' as const,
         suggestions: [],
         userTags: [],
+        selectedActions: [],
+        selectedProject: null,
+        sourceId: null,
+        parentId: null,
         processedAt: null,
         createdAt: new Date(),
       }
@@ -138,6 +150,10 @@ describe('DockItemService', () => {
         status: 'suggested' as const,
         suggestions: [],
         userTags: [],
+        selectedActions: [],
+        selectedProject: null,
+        sourceId: null,
+        parentId: null,
         processedAt: null,
         createdAt: new Date(),
       }

@@ -14,16 +14,23 @@ import {
 
 import type {
   DockItem as DomainDockItem,
+  ChatMessage,
+  ChatSessionCreateInput,
+  ChatSessionUpdateInput,
 } from '@atlax/domain/ports'
+import { isValidChatSessionInput } from '@atlax/domain/ports'
 
 import {
+  chatSessionsTable,
   entriesTable,
   dockItemsTable,
   tagsTable,
+  type ChatSessionRecord,
   type EntryRecord,
   type DockItemRecord,
   type PersistedDockItem,
   type PersistedEntry,
+  type PersistedChatSession,
   type PersistedTag,
   type TagRecord,
 } from './db'
@@ -41,6 +48,10 @@ function toPersistedDockItem(item: DockItemRecord | undefined): PersistedDockIte
     ...item,
     id: item.id,
     userTags: item.userTags ?? [],
+    selectedActions: item.selectedActions ?? [],
+    selectedProject: item.selectedProject ?? null,
+    sourceId: item.sourceId ?? null,
+    parentId: item.parentId ?? null,
   }
 }
 
@@ -86,6 +97,10 @@ export async function createDockItem(userId: string, rawText: string, sourceType
     status: 'pending',
     suggestions: [],
     userTags: [],
+    selectedActions: [],
+    selectedProject: null,
+    sourceId: null,
+    parentId: null,
     processedAt: null,
     createdAt: new Date(),
   })
@@ -208,6 +223,8 @@ export async function archiveItem(userId: string, id: number): Promise<Persisted
       rawText: item.rawText,
       suggestions: item.suggestions,
       userTags: item.userTags,
+      selectedProject: item.selectedProject,
+      selectedActions: item.selectedActions,
       createdAt: item.createdAt,
     },
     0,
@@ -314,6 +331,40 @@ export async function updateItemTags(userId: string, id: number, userTags: strin
   return getPersistedDockItem(id)
 }
 
+export async function updateSelectedActions(userId: string, id: number, actions: string[]): Promise<PersistedDockItem | null> {
+  const item = await getDockItemForUser(userId, id)
+  if (!item) return null
+
+  await dockItemsTable.update(id, {
+    selectedActions: actions,
+  })
+
+  return getPersistedDockItem(id)
+}
+
+export async function updateSelectedProject(userId: string, id: number, project: string | null): Promise<PersistedDockItem | null> {
+  const item = await getDockItemForUser(userId, id)
+  if (!item) return null
+
+  await dockItemsTable.update(id, {
+    selectedProject: project,
+  })
+
+  return getPersistedDockItem(id)
+}
+
+export async function updateChainLinks(userId: string, id: number, sourceId: number | null, parentId: number | null): Promise<PersistedDockItem | null> {
+  const item = await getDockItemForUser(userId, id)
+  if (!item) return null
+
+  await dockItemsTable.update(id, {
+    sourceId,
+    parentId,
+  })
+
+  return getPersistedDockItem(id)
+}
+
 export async function addTagToItem(userId: string, id: number, tagName: string): Promise<PersistedDockItem | null> {
   const item = await getDockItemForUser(userId, id)
   if (!item) return null
@@ -402,4 +453,156 @@ export async function updateArchivedEntry(
   }
 
   return toPersistedEntry(await entriesTable.get(entryId))
+}
+
+function toPersistedChatSession(session: ChatSessionRecord | undefined): PersistedChatSession | null {
+  if (!session || typeof session.id !== 'number') {
+    return null
+  }
+
+  return {
+    ...session,
+    id: session.id,
+    title: session.title ?? null,
+    pinned: session.pinned ?? false,
+    messages: session.messages ?? [],
+  }
+}
+
+async function getChatSessionForUser(userId: string, id: number): Promise<PersistedChatSession | null> {
+  const session = await chatSessionsTable.get(id)
+  if (!session || session.userId !== userId) {
+    return null
+  }
+  return toPersistedChatSession(session)
+}
+
+export async function createChatSession(input: ChatSessionCreateInput): Promise<PersistedChatSession | null> {
+  if (!isValidChatSessionInput(input)) {
+    return null
+  }
+
+  const now = new Date()
+  const id = await chatSessionsTable.add({
+    userId: input.userId,
+    title: input.title ?? null,
+    topic: input.topic ?? null,
+    selectedType: input.selectedType ?? null,
+    content: input.content ?? '',
+    status: 'active',
+    pinned: input.pinned ?? false,
+    messages: input.messages ?? [],
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  return toPersistedChatSession(await chatSessionsTable.get(id as number))
+}
+
+export async function getChatSession(userId: string, id: number): Promise<PersistedChatSession | null> {
+  return getChatSessionForUser(userId, id)
+}
+
+export async function listChatSessions(userId: string): Promise<PersistedChatSession[]> {
+  const sessions = await chatSessionsTable.where('userId').equals(userId).toArray()
+
+  const sorted = sessions.sort((a, b) => {
+    if (a.pinned !== b.pinned) {
+      return a.pinned ? -1 : 1
+    }
+    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  })
+
+  return sorted.flatMap((session) => {
+    const persisted = toPersistedChatSession(session)
+    return persisted ? [persisted] : []
+  })
+}
+
+export async function listActiveChatSessions(userId: string): Promise<PersistedChatSession[]> {
+  const sessions = await chatSessionsTable
+    .where('userId')
+    .equals(userId)
+    .and((s) => s.status === 'active')
+    .toArray()
+
+  const sorted = sessions.sort((a, b) => {
+    if (a.pinned !== b.pinned) {
+      return a.pinned ? -1 : 1
+    }
+    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  })
+
+  return sorted.flatMap((session) => {
+    const persisted = toPersistedChatSession(session)
+    return persisted ? [persisted] : []
+  })
+}
+
+export async function updateChatSession(
+  userId: string,
+  id: number,
+  updates: ChatSessionUpdateInput,
+): Promise<PersistedChatSession | null> {
+  const session = await getChatSessionForUser(userId, id)
+  if (!session) return null
+
+  const patch: Partial<ChatSessionRecord> = {
+    ...updates,
+    updatedAt: new Date(),
+  }
+
+  await chatSessionsTable.update(id, patch)
+
+  return toPersistedChatSession(await chatSessionsTable.get(id))
+}
+
+export async function pinChatSession(userId: string, id: number): Promise<PersistedChatSession | null> {
+  const session = await getChatSessionForUser(userId, id)
+  if (!session) return null
+
+  await chatSessionsTable.update(id, {
+    pinned: true,
+    updatedAt: new Date(),
+  })
+
+  return toPersistedChatSession(await chatSessionsTable.get(id))
+}
+
+export async function unpinChatSession(userId: string, id: number): Promise<PersistedChatSession | null> {
+  const session = await getChatSessionForUser(userId, id)
+  if (!session) return null
+
+  await chatSessionsTable.update(id, {
+    pinned: false,
+    updatedAt: new Date(),
+  })
+
+  return toPersistedChatSession(await chatSessionsTable.get(id))
+}
+
+export async function deleteChatSession(userId: string, id: number): Promise<boolean> {
+  const session = await getChatSessionForUser(userId, id)
+  if (!session) return false
+
+  await chatSessionsTable.delete(id)
+  return true
+}
+
+export async function addChatMessage(
+  userId: string,
+  id: number,
+  message: ChatMessage,
+): Promise<PersistedChatSession | null> {
+  const session = await getChatSessionForUser(userId, id)
+  if (!session) return null
+
+  const updatedMessages = [...session.messages, message]
+
+  await chatSessionsTable.update(id, {
+    messages: updatedMessages,
+    updatedAt: new Date(),
+  })
+
+  return toPersistedChatSession(await chatSessionsTable.get(id))
 }

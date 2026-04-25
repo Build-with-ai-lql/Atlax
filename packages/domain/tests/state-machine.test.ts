@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { canTransition, VALID_TRANSITIONS } from '../src'
+import { canTransition, VALID_TRANSITIONS } from '../src/state-machine'
 
 describe('state-machine', () => {
   it('allows valid transitions', () => {

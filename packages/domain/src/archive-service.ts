@@ -33,6 +33,11 @@ export function buildEntryFromArchive(input: ArchiveInput, assignedId: number): 
   const suggestedTagNames = grouped.tags.map((t) => t.label)
   const resolved = resolveTags(suggestedTagNames, input.userTags)
 
+  const project = input.selectedProject ?? resolveProject(input.suggestions)
+  const actions = input.selectedActions.length > 0
+    ? input.selectedActions
+    : resolveActions(input.suggestions)
+
   return {
     id: assignedId,
     sourceDockItemId: input.dockItemId,
@@ -40,8 +45,8 @@ export function buildEntryFromArchive(input: ArchiveInput, assignedId: number): 
     content: input.rawText,
     type: resolveCategory(input.suggestions),
     tags: resolved.final,
-    project: resolveProject(input.suggestions),
-    actions: resolveActions(input.suggestions),
+    project,
+    actions,
     createdAt: input.createdAt,
     archivedAt: new Date(),
   }

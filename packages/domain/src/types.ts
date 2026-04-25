@@ -14,6 +14,10 @@ export interface SuggestionItem {
   reason?: string
 }
 
+export function sanitizeSuggestionLabel(label: string): string {
+  return label.replace(/[\n\r\t]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100)
+}
+
 export interface SuggestionResult {
   dockItemId: number
   suggestions: SuggestionItem[]
@@ -70,5 +74,7 @@ export interface ArchiveInput {
   rawText: string
   suggestions: SuggestionItem[]
   userTags: string[]
+  selectedProject: string | null
+  selectedActions: string[]
   createdAt: Date
 }

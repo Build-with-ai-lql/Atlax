@@ -10,7 +10,7 @@ export type AppMode = 'classic' | 'chat'
 
 export type SourceType = 'text' | 'voice' | 'import' | 'chat'
 
-export type PersistedEvent = AppEvent & { _ts: number }
+export type PersistedEvent = AppEvent & { _ts: number; userId: string }
 
 export type EventListener = (event: AppEvent) => void
 
@@ -18,11 +18,11 @@ const listeners: EventListener[] = []
 
 let memoryLog: PersistedEvent[] | null = null
 
-function getMemoryLog(): PersistedEvent[] {
+function getMemoryLog(userId: string): PersistedEvent[] {
   if (memoryLog === null) {
     memoryLog = []
   }
-  return memoryLog
+  return memoryLog.filter(e => e.userId === userId)
 }
 
 function hasLocalStorage(): boolean {
@@ -47,50 +47,57 @@ export function emit(event: AppEvent): void {
   }
 }
 
-const EVENT_LOG_KEY = 'atlax_event_log'
+function getEventLogKey(userId: string) {
+  return `atlax_event_log_${userId}`
+}
 
-function loadEventLog(): PersistedEvent[] {
+function loadEventLog(userId: string): PersistedEvent[] {
   if (hasLocalStorage()) {
     try {
-      const raw = localStorage.getItem(EVENT_LOG_KEY)
+      const raw = localStorage.getItem(getEventLogKey(userId))
       if (raw) return JSON.parse(raw) as PersistedEvent[]
     } catch {
       // fall through to memory
     }
   }
-  return getMemoryLog()
+  return getMemoryLog(userId)
 }
 
-function saveEventLog(events: PersistedEvent[]): void {
+function saveEventLog(userId: string, events: PersistedEvent[]): void {
   const trimmed = events.slice(-500)
   if (hasLocalStorage()) {
     try {
-      localStorage.setItem(EVENT_LOG_KEY, JSON.stringify(trimmed))
+      localStorage.setItem(getEventLogKey(userId), JSON.stringify(trimmed))
       return
     } catch {
       // fall through to memory
     }
   }
-  memoryLog = trimmed
+  const otherEvents = (memoryLog || []).filter(e => e.userId !== userId)
+  memoryLog = [...otherEvents, ...trimmed]
 }
 
-export function recordEvent(event: AppEvent): void {
+export function recordEvent(userId: string, event: AppEvent): void {
   emit(event)
-  const log = loadEventLog()
-  const persisted: PersistedEvent = { ...event, _ts: Date.now() }
+  if (!userId) return
+  const log = loadEventLog(userId)
+  const persisted: PersistedEvent = { ...event, _ts: Date.now(), userId }
   log.push(persisted)
-  saveEventLog(log)
+  saveEventLog(userId, log)
 }
 
-export function getEventLog(): PersistedEvent[] {
-  return loadEventLog()
+export function getEventLog(userId: string): PersistedEvent[] {
+  if (!userId) return []
+  return loadEventLog(userId)
 }
 
-export function clearEventLog(): void {
-  memoryLog = []
+export function clearEventLog(userId: string): void {
+  if (memoryLog !== null) {
+    memoryLog = memoryLog.filter(e => e.userId !== userId)
+  }
   if (hasLocalStorage()) {
     try {
-      localStorage.removeItem(EVENT_LOG_KEY)
+      localStorage.removeItem(getEventLogKey(userId))
     } catch {
       // ignore
     }

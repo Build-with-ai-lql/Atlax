@@ -1,2 +1,4 @@
+export * from './ChatGuidanceService'
 export * from './DockItemService'
+export * from './EditSavePolicy'
 export * from './EntryService'

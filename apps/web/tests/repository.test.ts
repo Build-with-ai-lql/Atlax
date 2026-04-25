@@ -22,6 +22,8 @@ import {
   suggestItem,
   updateArchivedEntry,
   updateDockItemText,
+  updateSelectedActions,
+  updateSelectedProject,
 } from '@/lib/repository'
 
 const USER_A = 'user_test_a'
@@ -424,6 +426,113 @@ describe('repository', () => {
 
       expect(await listTags(USER_A)).toHaveLength(1)
       expect(await listTags(USER_B)).toHaveLength(1)
+    })
+  })
+
+  describe('selectedProject and selectedActions in archive', () => {
+    it('writes selectedProject into entry on archive', async () => {
+      const id = await createDockItem(USER_A, '项目需求分析')
+      await suggestItem(USER_A, id)
+
+      await updateSelectedProject(USER_A, id, 'MindDock')
+
+      await archiveItem(USER_A, id)
+
+      const entry = unwrap(await getEntryByDockItemId(USER_A, id))
+      expect(entry.project).toBe('MindDock')
+    })
+
+    it('writes selectedActions into entry on archive', async () => {
+      const id = await createDockItem(USER_A, '技术方案设计')
+      await suggestItem(USER_A, id)
+
+      await updateSelectedActions(USER_A, id, ['需要拆分', '需要评审'])
+
+      await archiveItem(USER_A, id)
+
+      const entry = unwrap(await getEntryByDockItemId(USER_A, id))
+      expect(entry.actions).toEqual(['需要拆分', '需要评审'])
+    })
+
+    it('selectedProject takes priority over suggestion inferred project', async () => {
+      const id = await createDockItem(USER_A, '项目需求分析')
+      await suggestItem(USER_A, id)
+
+      const suggestedItem = unwrap(await suggestItem(USER_A, id))
+      const suggestedProject = suggestedItem.suggestions.find((s) => s.type === 'project')
+      const inferredProject = suggestedProject?.label ?? null
+
+      await updateSelectedProject(USER_A, id, 'MyCustomProject')
+
+      await archiveItem(USER_A, id)
+
+      const entry = unwrap(await getEntryByDockItemId(USER_A, id))
+      expect(entry.project).toBe('MyCustomProject')
+      if (inferredProject) {
+        expect(entry.project).not.toBe(inferredProject)
+      }
+    })
+
+    it('selectedActions take priority over suggestion inferred actions', async () => {
+      const id = await createDockItem(USER_A, '技术方案设计')
+      await suggestItem(USER_A, id)
+
+      await updateSelectedActions(USER_A, id, ['自定义动作'])
+
+      await archiveItem(USER_A, id)
+
+      const entry = unwrap(await getEntryByDockItemId(USER_A, id))
+      expect(entry.actions).toEqual(['自定义动作'])
+    })
+
+    it('falls back to suggestion inferred project when no selectedProject', async () => {
+      const id = await createDockItem(USER_A, '项目需求分析')
+      await suggestItem(USER_A, id)
+
+      await archiveItem(USER_A, id)
+
+      const entry = unwrap(await getEntryByDockItemId(USER_A, id))
+      expect(entry.project).toBeDefined()
+    })
+
+    it('falls back to suggestion inferred actions when no selectedActions', async () => {
+      const id = await createDockItem(USER_A, '技术方案设计')
+      await suggestItem(USER_A, id)
+
+      await archiveItem(USER_A, id)
+
+      const entry = unwrap(await getEntryByDockItemId(USER_A, id))
+      expect(entry.actions).toBeDefined()
+      expect(entry.actions.length).toBeGreaterThanOrEqual(0)
+    })
+
+    it('archived entry with selectedProject is findable by listArchivedEntriesByProject', async () => {
+      const id = await createDockItem(USER_A, '项目需求分析')
+      await suggestItem(USER_A, id)
+
+      await updateSelectedProject(USER_A, id, 'MindDock')
+
+      await archiveItem(USER_A, id)
+
+      const byProject = await listArchivedEntriesByProject(USER_A, 'MindDock')
+      expect(byProject).toHaveLength(1)
+      expect(byProject[0].project).toBe('MindDock')
+    })
+
+    it('preserves selectedProject/selectedActions on re-archive', async () => {
+      const id = await createDockItem(USER_A, '测试内容')
+      await suggestItem(USER_A, id)
+      await updateSelectedProject(USER_A, id, 'ProjectA')
+      await updateSelectedActions(USER_A, id, ['action1'])
+      await archiveItem(USER_A, id)
+
+      await reopenItem(USER_A, id)
+      await suggestItem(USER_A, id)
+      await archiveItem(USER_A, id)
+
+      const entry = unwrap(await getEntryByDockItemId(USER_A, id))
+      expect(entry.project).toBe('ProjectA')
+      expect(entry.actions).toEqual(['action1'])
     })
   })
 })

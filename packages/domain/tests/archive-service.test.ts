@@ -14,6 +14,8 @@ describe('buildEntryFromArchive', () => {
       { id: '42:project:关联项目', type: 'project' as const, label: '关联项目', confidence: 0.5, reason: '包含项目相关关键词' },
     ],
     userTags: ['产品'],
+    selectedProject: null,
+    selectedActions: [] as string[],
     createdAt: new Date('2026-04-20T10:00:00.000Z'),
   }
 
@@ -80,5 +82,45 @@ describe('buildEntryFromArchive', () => {
     const entry = buildEntryFromArchive(baseInput, 1)
     expect(entry.archivedAt).toBeInstanceOf(Date)
     expect(entry.archivedAt.getTime()).toBeGreaterThan(0)
+  })
+
+  it('uses selectedProject over suggestion inferred project', () => {
+    const input = {
+      ...baseInput,
+      selectedProject: 'MyCustomProject',
+      selectedActions: [] as string[],
+    }
+    const entry = buildEntryFromArchive(input, 1)
+    expect(entry.project).toBe('MyCustomProject')
+  })
+
+  it('uses selectedActions over suggestion inferred actions', () => {
+    const input = {
+      ...baseInput,
+      selectedProject: null,
+      selectedActions: ['自定义动作1', '自定义动作2'],
+    }
+    const entry = buildEntryFromArchive(input, 1)
+    expect(entry.actions).toEqual(['自定义动作1', '自定义动作2'])
+  })
+
+  it('falls back to suggestion inferred project when selectedProject is null', () => {
+    const input = {
+      ...baseInput,
+      selectedProject: null,
+      selectedActions: [] as string[],
+    }
+    const entry = buildEntryFromArchive(input, 1)
+    expect(entry.project).toBe('关联项目')
+  })
+
+  it('falls back to suggestion inferred actions when selectedActions is empty', () => {
+    const input = {
+      ...baseInput,
+      selectedProject: null,
+      selectedActions: [] as string[],
+    }
+    const entry = buildEntryFromArchive(input, 1)
+    expect(entry.actions).toEqual(['待办提取'])
   })
 })

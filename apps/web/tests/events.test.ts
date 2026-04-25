@@ -8,75 +8,93 @@ import {
   type PersistedEvent,
 } from '@/lib/events'
 
+const TEST_USER = 'test-user'
+const USER_A = 'user_test_a'
+const USER_B = 'user_test_b'
+
+function clearAll() {
+  clearEventLog(TEST_USER)
+  clearEventLog(USER_A)
+  clearEventLog(USER_B)
+}
+
 describe('event tracking completeness', () => {
-  afterEach(clearEventLog)
+  afterEach(() => clearEventLog(TEST_USER))
 
   it('records capture_created event', () => {
-    recordEvent({ type: 'capture_created', sourceType: 'text', dockItemId: 1 })
-    const log = getEventLog()
+    recordEvent(TEST_USER, { type: 'capture_created', sourceType: 'text', dockItemId: 1 })
+    const log = getEventLog(TEST_USER)
     expect(log).toHaveLength(1)
     expect(log[0]).toMatchObject({ type: 'capture_created', sourceType: 'text', dockItemId: 1 })
   })
 
   it('records chat_guided_capture_created event', () => {
-    recordEvent({ type: 'chat_guided_capture_created', dockItemId: 2, rawText: 'test' })
-    const log = getEventLog()
+    recordEvent(TEST_USER, { type: 'chat_guided_capture_created', dockItemId: 2, rawText: 'test' })
+    const log = getEventLog(TEST_USER)
     expect(log).toHaveLength(1)
     expect(log[0]).toMatchObject({ type: 'chat_guided_capture_created', dockItemId: 2 })
   })
 
   it('records archive_completed event', () => {
-    recordEvent({ type: 'archive_completed', dockItemId: 1, sourceType: 'text' })
-    const log = getEventLog()
+    recordEvent(TEST_USER, { type: 'archive_completed', dockItemId: 1, sourceType: 'text' })
+    const log = getEventLog(TEST_USER)
     expect(log).toHaveLength(1)
     expect(log[0]).toMatchObject({ type: 'archive_completed', sourceType: 'text' })
   })
 
   it('records archive_completed with chat sourceType', () => {
-    recordEvent({ type: 'archive_completed', dockItemId: 2, sourceType: 'chat' })
-    const log = getEventLog()
+    recordEvent(TEST_USER, { type: 'archive_completed', dockItemId: 2, sourceType: 'chat' })
+    const log = getEventLog(TEST_USER)
     expect(log[0]).toMatchObject({ type: 'archive_completed', sourceType: 'chat' })
   })
 
   it('records mode_switched event', () => {
-    recordEvent({ type: 'mode_switched', from: 'classic', to: 'chat' })
-    const log = getEventLog()
+    recordEvent(TEST_USER, { type: 'mode_switched', from: 'classic', to: 'chat' })
+    const log = getEventLog(TEST_USER)
     expect(log).toHaveLength(1)
     expect(log[0]).toMatchObject({ type: 'mode_switched', from: 'classic', to: 'chat' })
   })
 
   it('records weekly_review_opened event', () => {
-    recordEvent({ type: 'weekly_review_opened' })
-    const log = getEventLog()
+    recordEvent(TEST_USER, { type: 'weekly_review_opened' })
+    const log = getEventLog(TEST_USER)
     expect(log).toHaveLength(1)
     expect(log[0]).toMatchObject({ type: 'weekly_review_opened' })
   })
 
   it('records browse_revisit event', () => {
-    recordEvent({ type: 'browse_revisit', entryId: 42 })
-    const log = getEventLog()
+    recordEvent(TEST_USER, { type: 'browse_revisit', entryId: 42 })
+    const log = getEventLog(TEST_USER)
     expect(log).toHaveLength(1)
     expect(log[0]).toMatchObject({ type: 'browse_revisit', entryId: 42 })
   })
 
   it('all events include _ts timestamp', () => {
-    recordEvent({ type: 'capture_created', sourceType: 'text', dockItemId: 1 })
-    recordEvent({ type: 'archive_completed', dockItemId: 1, sourceType: 'text' })
-    recordEvent({ type: 'weekly_review_opened' })
+    recordEvent(TEST_USER, { type: 'capture_created', sourceType: 'text', dockItemId: 1 })
+    recordEvent(TEST_USER, { type: 'archive_completed', dockItemId: 1, sourceType: 'text' })
+    recordEvent(TEST_USER, { type: 'weekly_review_opened' })
 
-    const log = getEventLog()
+    const log = getEventLog(TEST_USER)
     for (const event of log) {
       expect(event._ts).toBeTypeOf('number')
       expect(event._ts).toBeGreaterThan(0)
     }
   })
+
+  it('all events include userId', () => {
+    recordEvent(TEST_USER, { type: 'capture_created', sourceType: 'text', dockItemId: 1 })
+    const log = getEventLog(TEST_USER)
+    for (const event of log) {
+      expect(event.userId).toBe(TEST_USER)
+    }
+  })
 })
 
 describe('metrics computation', () => {
-  afterEach(clearEventLog)
+  afterEach(() => clearEventLog(TEST_USER))
 
   function makeEvent(type: string, extra: Record<string, unknown> = {}, tsOffset = 0): PersistedEvent {
-    return { type, ...extra, _ts: Date.now() - tsOffset } as PersistedEvent
+    return { type, ...extra, _ts: Date.now() - tsOffset, userId: TEST_USER } as PersistedEvent
   }
 
   it('DAU is 1 when capture events exist today', () => {
@@ -203,5 +221,59 @@ describe('metrics computation', () => {
     ]
     const metrics = computeMetrics(events)
     expect(metrics.retention7d).toBe(0)
+  })
+})
+
+describe('event userId isolation', () => {
+  afterEach(clearAll)
+
+  it('user A cannot see user B events via getEventLog', () => {
+    recordEvent(USER_A, { type: 'capture_created', sourceType: 'text', dockItemId: 1 })
+    recordEvent(USER_B, { type: 'capture_created', sourceType: 'text', dockItemId: 2 })
+
+    const logA = getEventLog(USER_A)
+    const logB = getEventLog(USER_B)
+
+    expect(logA).toHaveLength(1)
+    expect(logB).toHaveLength(1)
+    expect(logA[0].userId).toBe(USER_A)
+    expect(logB[0].userId).toBe(USER_B)
+    expect((logA[0] as { dockItemId: number }).dockItemId).toBe(1)
+    expect((logB[0] as { dockItemId: number }).dockItemId).toBe(2)
+  })
+
+  it('clearing user A log does not affect user B', () => {
+    recordEvent(USER_A, { type: 'capture_created', sourceType: 'text', dockItemId: 1 })
+    recordEvent(USER_B, { type: 'capture_created', sourceType: 'text', dockItemId: 2 })
+
+    clearEventLog(USER_A)
+
+    expect(getEventLog(USER_A)).toHaveLength(0)
+    expect(getEventLog(USER_B)).toHaveLength(1)
+  })
+
+  it('metrics computed from getEventLog are isolated per user', () => {
+    recordEvent(USER_A, { type: 'capture_created', sourceType: 'text', dockItemId: 1 })
+    recordEvent(USER_A, { type: 'capture_created', sourceType: 'text', dockItemId: 2 })
+    recordEvent(USER_B, { type: 'capture_created', sourceType: 'text', dockItemId: 3 })
+
+    const metricsA = computeMetrics(getEventLog(USER_A))
+    const metricsB = computeMetrics(getEventLog(USER_B))
+
+    expect(metricsA.dailyCapturesPerUser).toBe(2)
+    expect(metricsB.dailyCapturesPerUser).toBe(1)
+  })
+
+  it('multiple event types are isolated per user', () => {
+    recordEvent(USER_A, { type: 'capture_created', sourceType: 'text', dockItemId: 1 })
+    recordEvent(USER_A, { type: 'archive_completed', dockItemId: 1, sourceType: 'text' })
+    recordEvent(USER_B, { type: 'weekly_review_opened' })
+
+    const logA = getEventLog(USER_A)
+    const logB = getEventLog(USER_B)
+
+    expect(logA).toHaveLength(2)
+    expect(logB).toHaveLength(1)
+    expect(logB[0].type).toBe('weekly_review_opened')
   })
 })

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Dock, Archive, Hash, Search, Plus, Send, Paperclip,
+  Dock, Archive, Hash, Search, Plus, Send, Paperclip, History,
   Image as ImageIcon, CheckSquare, List, Minimize2,
   Mic, MessageSquare, PenTool, ChevronRight, Clock,
   Sparkles, Loader2, Sun, Moon, LogOut, RotateCcw, X, Tag, BarChart3, Filter, SlidersHorizontal,
@@ -28,6 +28,13 @@ import {
   suggestItem,
   updateArchivedEntry,
   updateDockItemText,
+  updateSelectedActions,
+  updateSelectedProject,
+  createChatSession,
+  listChatSessions,
+  updateChatSession,
+  pinChatSession,
+  unpinChatSession,
   type DockItem,
   type StoredEntry,
   type StoredTag,
@@ -38,13 +45,42 @@ import { computeMetrics, getEventLog, recordEvent, type AppMode, type MetricsRes
 import AuthGate from './_components/AuthGate'
 
 type ViewType = 'dock' | 'entries' | 'review'
-type ChatStep = 'input' | 'confirm' | 'context' | 'tags' | 'done'
+type ChatStep = 'idle' | 'awaiting_topic' | 'awaiting_type' | 'awaiting_content' | 'awaiting_confirmation' | 'done' | 'cancelled'
 
-interface ChatMessage {
+type ChatSessionStatus = 'active' | 'confirmed' | 'cancelled'
+
+interface LocalChatMessage {
   id: string
-  role: 'user' | 'system'
+  role: 'user' | 'assistant' | 'system'
   content: string
   timestamp: number
+}
+
+interface LocalChatSession {
+  id: number
+  userId: string
+  topic: string | null
+  selectedType: string | null
+  content: string
+  status: ChatSessionStatus
+  messages: LocalChatMessage[]
+  pinned: boolean
+  createdAt: Date
+  updatedAt: Date
+}
+
+type BackendChatMessage = {
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: Date
+}
+
+function toBackendMessages(msgs: LocalChatMessage[]): BackendChatMessage[] {
+  return msgs.map(m => ({
+    role: m.role === 'system' ? 'assistant' : m.role,
+    content: m.content,
+    timestamp: new Date(m.timestamp),
+  }))
 }
 
 const STATUS_LABELS: Record<EntryStatus, { label: string; color: string; bg: string }> = {
@@ -93,10 +129,16 @@ export default function WorkspacePage() {
   const [authChecked, setAuthChecked] = useState(false)
   const [activeNav, setActiveNav] = useState<ViewType>('dock')
   const [inputMode, setInputMode] = useState<AppMode>('chat')
-  const [isInputExpanded, setIsInputExpanded] = useState(false)
   const [inputText, setInputText] = useState('')
   const [isSidebarManuallyCollapsed, setIsSidebarManuallyCollapsed] = useState(false)
-  const [isChatMinimized, setIsChatMinimized] = useState(false)
+  const [recorderState, setRecorderState] = useState<'closed' | 'classic' | 'chat'>('closed')
+  const [isHistoryVisible, setIsHistoryVisible] = useState(true)
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setIsHistoryVisible(false)
+    }
+  }, [])
 
   const [items, setItems] = useState<DockItem[]>([])
   const [archivedEntries, setArchivedEntries] = useState<StoredEntry[]>([])
@@ -120,14 +162,16 @@ export default function WorkspacePage() {
   const [entryFilterProject, setEntryFilterProject] = useState('')
   const [entryFilterStatus, setEntryFilterStatus] = useState('')
 
-  const [chatStep, setChatStep] = useState<ChatStep>('input')
+  const [chatStep, setChatStep] = useState<ChatStep>('idle')
+  const [chatTopic, setChatTopic] = useState('')
+  const [chatType, setChatType] = useState('')
+  const [chatContent, setChatContent] = useState('')
   const [chatDraft, setChatDraft] = useState('')
-  const [chatContext, setChatContext] = useState('')
-  const [chatTags, setChatTags] = useState<string[]>([])
-  const [chatNewTag, setChatNewTag] = useState('')
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
-  const [chatImmersive, setChatImmersive] = useState(false)
-  const [chatSunk, setChatSunk] = useState(false)
+  const [chatMessages, setChatMessages] = useState<LocalChatMessage[]>([])
+  const [chatSessions, setChatSessions] = useState<LocalChatSession[]>([])
+  const [currentSessionId, setCurrentSessionId] = useState<number | null>(null)
+  const messagesContainerRef = React.useRef<HTMLDivElement>(null)
+  const isAtBottomRef = React.useRef(true)
   const [dockViewMode, setDockViewMode] = useState<'list' | 'card'>(() => {
     if (typeof window !== 'undefined') {
       return (localStorage.getItem('atlax-dock-view-mode') as 'list' | 'card') || 'card'
@@ -136,10 +180,100 @@ export default function WorkspacePage() {
   })
 
   useEffect(() => {
+    if (isAtBottomRef.current && messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTo({
+        top: messagesContainerRef.current.scrollHeight,
+        behavior: 'smooth'
+      })
+    }
+  }, [chatMessages, chatStep])
+
+  useEffect(() => {
     const current = getCurrentUser()
     setUser(current)
     setAuthChecked(true)
   }, [])
+
+  useEffect(() => {
+    if (user?.id) {
+      listChatSessions(user.id).then(sessions => {
+        const localSessions: LocalChatSession[] = sessions.map(s => ({
+          id: s.id,
+          userId: s.userId,
+          topic: s.topic,
+          selectedType: s.selectedType,
+          content: s.content,
+          status: s.status,
+          messages: s.messages.map((m, idx) => ({ id: `msg-${idx}`, role: m.role, content: m.content, timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : m.timestamp })),
+          pinned: s.pinned ?? false,
+          createdAt: s.createdAt,
+          updatedAt: s.updatedAt,
+        }))
+        setChatSessions(localSessions)
+
+        if (localSessions.length > 0) {
+          const activeSession = localSessions.find(s => s.status === 'active')
+          if (activeSession) {
+            setCurrentSessionId(activeSession.id)
+            setChatMessages(activeSession.messages)
+            setChatTopic(activeSession.topic || '')
+            setChatType(activeSession.selectedType || '')
+            setChatContent(activeSession.content)
+            if (activeSession.topic) {
+              setChatStep(activeSession.content ? 'awaiting_confirmation' : 'awaiting_content')
+            }
+          } else {
+            setCurrentSessionId(null)
+            const greeting = CHAT_PLACEHOLDERS[Math.floor(Math.random() * CHAT_PLACEHOLDERS.length)]
+            setChatMessages([{
+              id: `welcome-${Date.now()}`,
+              role: 'assistant' as const,
+              content: `你好，${user.name}！${greeting}`,
+              timestamp: Date.now()
+            }])
+          }
+        } else {
+          setCurrentSessionId(null)
+          const greeting = CHAT_PLACEHOLDERS[Math.floor(Math.random() * CHAT_PLACEHOLDERS.length)]
+          setChatMessages([{
+            id: `welcome-${Date.now()}`,
+            role: 'assistant' as const,
+            content: `你好，${user.name}！${greeting}`,
+            timestamp: Date.now()
+          }])
+        }
+      }).catch(err => {
+        console.error('Failed to load chat sessions:', err)
+        setCurrentSessionId(null)
+        const greeting = CHAT_PLACEHOLDERS[Math.floor(Math.random() * CHAT_PLACEHOLDERS.length)]
+        setChatMessages([{
+          id: `welcome-${Date.now()}`,
+          role: 'assistant' as const,
+          content: `你好，${user.name}！${greeting}`,
+          timestamp: Date.now()
+        }])
+      })
+    } else {
+      setChatSessions([])
+      setCurrentSessionId(null)
+      setChatMessages([])
+      setChatTopic('')
+      setChatType('')
+      setChatContent('')
+      setChatStep('idle')
+    }
+  }, [user?.id, user?.name])
+
+  const uniqueArchivedProjects = React.useMemo(() => {
+    const archivedProjects = archivedEntries.map(e => e.project).filter(Boolean) as string[]
+    return Array.from(new Set(archivedProjects))
+  }, [archivedEntries])
+
+  const uniqueProjects = React.useMemo(() => {
+    const archivedProjects = archivedEntries.map(e => e.project).filter(Boolean) as string[]
+    const dockProjects = items.map(i => i.selectedProject).filter(Boolean) as string[]
+    return Array.from(new Set([...archivedProjects, ...dockProjects]))
+  }, [archivedEntries, items])
 
   useEffect(() => {
     if (themeMode === 'system') {
@@ -193,39 +327,44 @@ export default function WorkspacePage() {
     setSelectedArchivedEntryId(null)
   }
 
-  const handleModeChange = (newMode: AppMode) => {
-    if (newMode === inputMode) return
-    recordEvent({ type: 'mode_switched', from: inputMode, to: newMode })
-    setInputMode(newMode)
-    if (newMode === 'classic') {
-      setChatStep('input')
-      setChatDraft('')
-      setChatContext('')
-      setChatTags([])
-      setChatImmersive(false)
-    }
-  }
-
-  const resetChatState = () => {
-    setChatStep('input')
-    setChatDraft('')
-    setChatContext('')
-    setChatTags([])
-    setChatImmersive(false)
-    setChatSunk(false)
-    setIsChatMinimized(false)
-  }
-
   const handleDockViewModeChange = (mode: 'list' | 'card') => {
     setDockViewMode(mode)
     localStorage.setItem('atlax-dock-view-mode', mode)
+  }
+
+  const handleModeChange = (newMode: AppMode) => {
+    if (newMode === inputMode) return
+    recordEvent(userId, { type: 'mode_switched', from: inputMode, to: newMode })
+    setInputMode(newMode)
+    if (newMode === 'classic') {
+      setRecorderState('classic')
+    } else {
+      setRecorderState('chat')
+    }
+  }
+
+  const startNewChatSession = async () => {
+    setCurrentSessionId(null)
+    const greeting = CHAT_PLACEHOLDERS[Math.floor(Math.random() * CHAT_PLACEHOLDERS.length)]
+    const welcomeMsg = {
+      id: `welcome-${Date.now()}`,
+      role: 'assistant' as const,
+      content: `你好，${user?.name || ''}！${greeting}`,
+      timestamp: Date.now()
+    }
+    setChatMessages([welcomeMsg])
+    setChatStep('idle')
+    setChatDraft('')
+    setChatTopic('')
+    setChatType('')
+    setChatContent('')
   }
 
   const handleViewChange = (view: ViewType) => {
     setActiveNav(view)
     if (view !== 'dock') setSelectedItemId(null)
     if (view !== 'entries') setSelectedArchivedEntryId(null)
-    if (view === 'review') recordEvent({ type: 'weekly_review_opened' })
+    if (view === 'review') recordEvent(userId, { type: 'weekly_review_opened' })
   }
 
   const refreshList = async () => {
@@ -250,13 +389,13 @@ export default function WorkspacePage() {
 
   const handleSaveEntry = async (content: string, tags?: string[], navigateToDock?: boolean) => {
     if (!content.trim()) return
-    const shouldNavigate = navigateToDock ?? (inputMode !== 'chat')
+    const shouldNavigate = navigateToDock ?? true
     try {
       const sourceType = inputMode === 'chat' ? 'chat' : 'text'
       const id = await createDockItem(userId, content, sourceType)
-      recordEvent({ type: 'capture_created', sourceType, dockItemId: id })
+      recordEvent(userId, { type: 'capture_created', sourceType, dockItemId: id })
       if (inputMode === 'chat') {
-        recordEvent({ type: 'chat_guided_capture_created', dockItemId: id, rawText: content })
+        recordEvent(userId, { type: 'chat_guided_capture_created', dockItemId: id, rawText: content })
       }
       if (tags && tags.length > 0) {
         for (const tagName of tags) {
@@ -272,26 +411,126 @@ export default function WorkspacePage() {
       setError('保存失败，请重试')
     }
     setInputText('')
-    setIsInputExpanded(false)
+  }
+
+  const handleChatNextStep = async () => {
+    if (!chatDraft.trim()) return
+
+    const userMsg = { id: `u-${Date.now()}`, role: 'user' as const, content: chatDraft, timestamp: Date.now() }
+    let nextSysMsg = null;
+    let newTopic = chatTopic;
+    let newType = chatType;
+    let newContent = chatContent;
+    let newStep = chatStep;
+
+    if (chatStep === 'idle' || chatStep === 'awaiting_topic') {
+      newTopic = chatDraft
+      newStep = 'awaiting_type'
+      nextSysMsg = { id: `s-${Date.now()}`, role: 'system' as const, content: '这次记录是什么类型呢', timestamp: Date.now() }
+    } else if (chatStep === 'awaiting_type') {
+      newType = chatDraft
+      newStep = 'awaiting_content'
+      nextSysMsg = { id: `s-${Date.now()}`, role: 'system' as const, content: '你想记录些什么呢', timestamp: Date.now() }
+    } else if (chatStep === 'awaiting_content') {
+      newContent = chatDraft
+      newStep = 'awaiting_confirmation'
+      nextSysMsg = { id: `s-${Date.now()}`, role: 'system' as const, content: '你看这样为你生成可以么', timestamp: Date.now() }
+    }
+
+    setChatTopic(newTopic)
+    setChatType(newType)
+    setChatContent(newContent)
+    setChatStep(newStep)
+
+    const messagesToAdd = nextSysMsg ? [userMsg, nextSysMsg] : [userMsg]
+    const updatedMessages = [...chatMessages, ...messagesToAdd]
+    setChatMessages(updatedMessages)
+    setChatDraft('')
+
+    let targetSessionId = currentSessionId
+    if (!targetSessionId) {
+      const newSession = await createChatSession({
+        userId,
+        topic: newTopic,
+        selectedType: newType,
+        content: newContent,
+        messages: toBackendMessages(updatedMessages),
+      })
+      if (newSession) {
+        targetSessionId = newSession.id
+        setCurrentSessionId(newSession.id)
+        const localSession: LocalChatSession = {
+          id: newSession.id,
+          userId: newSession.userId,
+          topic: newSession.topic,
+          selectedType: newSession.selectedType,
+          content: newSession.content,
+          status: newSession.status,
+          messages: newSession.messages.map((m, idx) => ({ id: `msg-${idx}`, role: m.role, content: m.content, timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : m.timestamp })),
+          pinned: newSession.pinned ?? false,
+          createdAt: newSession.createdAt,
+          updatedAt: newSession.updatedAt,
+        }
+        setChatSessions(prev => [localSession, ...prev])
+      }
+    } else {
+      await updateChatSession(userId, targetSessionId, {
+        topic: newTopic,
+        selectedType: newType,
+        content: newContent,
+        messages: toBackendMessages(updatedMessages),
+        status: 'active',
+      })
+      setChatSessions(prev => prev.map(s =>
+        s.id === targetSessionId
+          ? { ...s, topic: newTopic, selectedType: newType, content: newContent, messages: updatedMessages, updatedAt: new Date() }
+          : s
+      ))
+    }
   }
 
   const handleChatFinalSubmit = async () => {
-    const finalContent = chatContext.trim()
-      ? `${chatDraft}\n\n补充：${chatContext}`
-      : chatDraft
-    const userMsgId = `msg-${Date.now()}`
-    setChatMessages((prev) => [...prev, { id: userMsgId, role: 'user', content: chatDraft, timestamp: Date.now() }])
-    if (chatContext.trim()) {
-      setChatMessages((prev) => [...prev, { id: `ctx-${Date.now()}`, role: 'user', content: `补充：${chatContext}`, timestamp: Date.now() }])
-    }
-    setChatImmersive(true)
-    setChatSunk(true)
-    await handleSaveEntry(finalContent, chatTags, false)
-    setChatMessages((prev) => [...prev, { id: `sys-${Date.now()}`, role: 'system', content: '已成功入 Dock', timestamp: Date.now() }])
+    const finalContent = chatContent
+
+    await handleSaveEntry(finalContent, [chatType], false)
+
+    const doneMsg = { id: `sys-done-${Date.now()}`, role: 'assistant' as const, content: '✨ 已成功入 Dock！', timestamp: Date.now() };
+    const finalMessages = [...chatMessages, doneMsg];
+    setChatMessages(finalMessages)
     setChatStep('done')
-    setChatDraft('')
-    setChatContext('')
-    setChatTags([])
+
+    if (currentSessionId) {
+      await updateChatSession(userId, currentSessionId, {
+        topic: chatTopic,
+        selectedType: chatType,
+        content: chatContent,
+        messages: toBackendMessages(finalMessages),
+        status: 'confirmed',
+      }).catch(console.error)
+      setChatSessions(prev => prev.map(s =>
+        s.id === currentSessionId
+          ? { ...s, topic: chatTopic, selectedType: chatType, content: chatContent, status: 'confirmed' as const, messages: finalMessages, updatedAt: new Date() }
+          : s
+      ))
+    }
+  }
+
+  const handleChatCancel = () => {
+    setChatMessages(prev => [...prev, { id: `s-cancel-${Date.now()}`, role: 'system', content: '你想取消本次记录，还是重新记录？', timestamp: Date.now() }])
+    setChatStep('cancelled')
+  }
+
+  const handleChatRefill = (option: 'topic' | 'type' | 'content') => {
+    if (option === 'topic') {
+      setChatStep('awaiting_topic')
+      setChatMessages(prev => [...prev, { id: `s-refill-${Date.now()}`, role: 'system', content: '这次记录是什么主题呢', timestamp: Date.now() }])
+    } else if (option === 'type') {
+      setChatStep('awaiting_type')
+      setChatMessages(prev => [...prev, { id: `s-refill-${Date.now()}`, role: 'system', content: '这次记录是什么类型呢', timestamp: Date.now() }])
+    } else if (option === 'content') {
+      setChatStep('awaiting_content')
+      setChatMessages(prev => [...prev, { id: `s-refill-${Date.now()}`, role: 'system', content: '你想记录些什么呢', timestamp: Date.now() }])
+    }
   }
 
   const wrapAction = async (action: () => Promise<DockItem | null>) => {
@@ -331,7 +570,7 @@ export default function WorkspacePage() {
     await wrapAction(async () => {
       const result = await archiveItem(userId, id)
       if (result) {
-        recordEvent({ type: 'archive_completed', dockItemId: id, sourceType: sourceType as 'text' | 'voice' | 'import' | 'chat' })
+        recordEvent(userId, { type: 'archive_completed', dockItemId: id, sourceType: sourceType as 'text' | 'voice' | 'import' | 'chat' })
       }
       return result
     })
@@ -400,6 +639,20 @@ export default function WorkspacePage() {
     }
   }
 
+  const handleUpdateSelectedActions = async (itemId: number, actions: string[]) => {
+    const result = await updateSelectedActions(userId, itemId, actions)
+    if (result) {
+      setItems((current) => current.map((i) => (i.id === result.id ? result : i)))
+    }
+  }
+
+  const handleUpdateSelectedProject = async (itemId: number, project: string | null) => {
+    const result = await updateSelectedProject(userId, itemId, project)
+    if (result) {
+      setItems((current) => current.map((i) => (i.id === result.id ? result : i)))
+    }
+  }
+
   const handleSelectItem = (id: number) => {
     setSelectedItemId((prev) => (prev === id ? null : id))
   }
@@ -407,7 +660,7 @@ export default function WorkspacePage() {
   const handleSelectArchivedEntry = (id: number) => {
     setSelectedArchivedEntryId((prev) => (prev === id ? null : id))
     if (activeNav !== 'entries') setActiveNav('entries')
-    recordEvent({ type: 'browse_revisit', entryId: id })
+    recordEvent(userId, { type: 'browse_revisit', entryId: id })
   }
 
   const dockItemStatusMap = new Map(items.map((i) => [i.id, i.status]))
@@ -423,7 +676,7 @@ export default function WorkspacePage() {
     return true
   })
 
-  const uniqueProjects = Array.from(new Set(archivedEntries.map((e) => e.project).filter(Boolean))) as string[]
+
   const uniqueTags = Array.from(new Set(archivedEntries.flatMap((e) => e.tags)))
   const hasActiveFilters = entryFilterType || entryFilterTag || entryFilterProject || entryFilterStatus
 
@@ -469,10 +722,11 @@ export default function WorkspacePage() {
           user={user}
           onLogout={handleLogout}
           dockCount={pendingCount}
-          mode={inputMode}
-          onModeChange={handleModeChange}
           isCollapsed={effectiveSidebarCollapsed}
           onToggleCollapse={() => setIsSidebarManuallyCollapsed(!isSidebarManuallyCollapsed)}
+          onRecordClick={() => {
+            setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')
+          }}
         />
 
         <div className="flex-1 flex relative overflow-hidden">
@@ -564,7 +818,7 @@ export default function WorkspacePage() {
                       filterStatus={entryFilterStatus}
                       setFilterStatus={setEntryFilterStatus}
                       uniqueTags={uniqueTags}
-                      uniqueProjects={uniqueProjects}
+                      uniqueProjects={uniqueArchivedProjects}
                       hasActiveFilters={!!hasActiveFilters}
                       onClear={clearEntryFilters}
                     />
@@ -588,189 +842,172 @@ export default function WorkspacePage() {
                     )}
                   </>
                 ) : (
-                  <ReviewView stats={reviewStats} archivedEntries={archivedEntries} onSelectArchivedEntry={handleSelectArchivedEntry} />
+                  <ReviewView stats={reviewStats} archivedEntries={archivedEntries} onSelectArchivedEntry={handleSelectArchivedEntry} userId={userId} />
                 )}
               </div>
             </main>
 
-            {chatImmersive && inputMode === 'chat' && (
-              <div className="fixed inset-0 z-30 flex flex-col bg-[#F5F5F7]/80 dark:bg-[#0E0E11]/80 backdrop-blur-[12px] transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)]">
-                <div className="h-16 flex items-center justify-between px-8 bg-white/40 dark:bg-[#1C1C1E]/40 backdrop-blur-md border-b border-white/20 dark:border-white/5 flex-shrink-0">
-                  <div className="flex items-center gap-2">
-                    <MessageSquare size={18} className="text-blue-500" />
-                    <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">Chat</h2>
+
+
+            {/* Floating Recorder Panel - replaces full-page overlays */}
+            <div
+              className={`fixed bottom-6 right-6 z-50 transition-all duration-500 ease-[cubic-bezier(0.25,0.1,0.25,1)] ${
+                recorderState !== 'closed'
+                  ? 'opacity-100 translate-y-0 scale-100'
+                  : 'opacity-0 translate-y-8 scale-95 pointer-events-none'
+              }`}
+              style={{ width: 'min(92vw, 960px)', minWidth: '320px' }}
+            >
+              <div
+                className="bg-white/95 dark:bg-[#1C1C1E]/95 backdrop-blur-xl rounded-3xl shadow-[0_20px_60px_rgb(0,0,0,0.15)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-white dark:border-white/10 overflow-hidden flex flex-col h-auto"
+                style={{ maxHeight: 'min(86vh, calc(100vh - 48px))' }}
+              >
+                  {/* Header with mode switcher */}
+                  <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-white/5 bg-white/50 dark:bg-[#1C1C1E]/50">
+                    <div className="flex items-center gap-3">
+                      <ModeSwitch mode={inputMode} setMode={handleModeChange} />
+                      {inputMode === 'chat' && chatSessions.length > 0 && (
+                        <button
+                          onClick={() => setIsHistoryVisible(!isHistoryVisible)}
+                          className="p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 rounded-lg transition-colors flex items-center gap-2"
+                          title={isHistoryVisible ? "隐藏历史" : "显示历史"}
+                        >
+                          <History size={18} />
+                          <span className="text-xs hidden sm:inline">{isHistoryVisible ? "隐藏记录" : "历史记录"}</span>
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => setRecorderState('closed')}
+                      className="p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 rounded-lg transition-colors"
+                      title="关闭记录器"
+                    >
+                      <Minimize2 size={18} />
+                    </button>
                   </div>
-                  <button
-                    onClick={() => { setChatImmersive(false); setChatSunk(false) }}
-                    className="p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 rounded-lg transition-colors"
-                  >
-                    <Minimize2 size={18} />
-                  </button>
-                </div>
-                <div className="flex-1 overflow-y-auto px-8 py-6">
-                  <div className="max-w-3xl mx-auto space-y-4">
-                    {chatMessages.map((msg) => (
-                      <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[80%] px-4 py-3 rounded-2xl text-[15px] leading-relaxed ${
-                          msg.role === 'user'
-                            ? 'bg-blue-500 text-white rounded-br-md'
-                            : 'bg-white dark:bg-[#1C1C1E] text-slate-700 dark:text-slate-200 border border-slate-100 dark:border-white/5 rounded-bl-md shadow-sm'
-                        }`}>
-                          {msg.content}
+
+                  {/* Content area based on mode */}
+                  <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+                    {inputMode === 'chat' ? (
+                      /* Chat Mode */
+                      <div className="flex h-full min-h-0">
+                        {/* Chat History Sidebar */}
+                        <div className={`flex-shrink-0 border-r border-slate-100 dark:border-white/5 transition-all duration-300 overflow-hidden ${
+                          isHistoryVisible && chatSessions.length > 0 ? 'w-48' : 'w-0'
+                        } ${chatSessions.length > 0 ? 'block' : 'hidden'} lg:block`}>
+                          <ChatHistorySidebar
+                            sessions={chatSessions}
+                            currentSessionId={currentSessionId}
+                            userId={userId}
+                            onSelectSession={(session) => {
+                              setCurrentSessionId(session.id)
+                              setChatMessages(session.messages)
+                              setChatTopic(session.topic || '')
+                              setChatType(session.selectedType || '')
+                              setChatContent(session.content)
+                              setChatStep(session.topic ? (session.content ? 'awaiting_confirmation' : (session.selectedType ? 'awaiting_content' : 'awaiting_type')) : 'awaiting_topic')
+                            }}
+                            onUpdateSessions={setChatSessions}
+                          />
+                        </div>
+
+                        {/* Chat Messages Area */}
+                        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                          <div
+                            ref={messagesContainerRef}
+                            onScroll={(e) => {
+                              const target = e.currentTarget
+                              const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight
+                              isAtBottomRef.current = distanceFromBottom < 50
+                            }}
+                            className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 py-4 pb-8 space-y-3"
+                          >
+                            {chatMessages.map((msg) => (
+                              <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                <div className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-[14px] leading-relaxed ${
+                                  msg.role === 'user'
+                                    ? 'bg-blue-500 text-white rounded-br-md'
+                                    : 'bg-slate-100 dark:bg-white/10 text-slate-700 dark:text-slate-200 rounded-bl-md'
+                                }`}>
+                                  {msg.content}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Done state buttons - outside messages container so they don't get scrolled away */}
+                          {chatStep === 'done' && (
+                            <div className="flex-shrink-0 flex justify-center gap-3 py-3 px-6 border-t border-slate-100 dark:border-white/5 bg-white/50 dark:bg-[#1C1C1E]/50">
+                              <button
+                                onClick={startNewChatSession}
+                                className="px-4 py-2 text-sm font-medium bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors flex items-center gap-2"
+                              >
+                                <Plus size={14} /> 新会话
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setRecorderState('closed')
+                                  setChatMessages([])
+                                  setChatStep('idle')
+                                  setChatDraft('')
+                                  setChatTopic('')
+                                  setChatType('')
+                                  setChatContent('')
+                                  setActiveNav('dock')
+                                }}
+                                className="px-4 py-2 text-sm font-medium bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-white/20 transition-colors flex items-center gap-2"
+                              >
+                                <Dock size={14} /> 去 Dock 查看
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Chat Input Area */}
+                          <div className="flex-shrink-0 px-6 py-3 border-t border-slate-100 dark:border-white/5 bg-white/50 dark:bg-[#1C1C1E]/50">
+                            <div className="max-w-3xl mx-auto">
+                              <ChatInputBar
+                                draft={chatDraft}
+                                setDraft={setChatDraft}
+                                step={chatStep}
+                                setStep={handleChatNextStep}
+                                onSubmit={handleChatFinalSubmit}
+                                onCancel={handleChatCancel}
+                                onRefill={handleChatRefill}
+                              />
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    ))}
-                    {chatStep === 'done' && (
-                      <div className="flex justify-center gap-3 py-4">
-                        <button
-                          onClick={() => { setChatStep('input'); setChatDraft('') }}
-                          className="px-5 py-2.5 text-sm font-medium bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors flex items-center gap-2"
-                        >
-                          <Plus size={16} /> 留在 Chat
-                        </button>
-                        <button
-                          onClick={() => { setInputMode('classic'); resetChatState(); setChatMessages([]); setActiveNav('dock') }}
-                          className="px-5 py-2.5 text-sm font-medium bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-white/20 transition-colors flex items-center gap-2"
-                        >
-                          <Dock size={16} /> 去 Dock 查看
-                        </button>
+                    ) : (
+                      /* Classic Mode */
+                      <div className="p-6">
+                        <ExpandedEditor
+                          text={inputText}
+                          setText={setInputText}
+                          onSave={async (content) => {
+                            await handleSaveEntry(content)
+                            setRecorderState('closed')
+                          }}
+                          hideHeader
+                        />
                       </div>
                     )}
                   </div>
                 </div>
-                <div
-                  className={`w-full mt-auto transition-all duration-[700ms] ease-[cubic-bezier(0.23,1,0.32,1)] z-10 ${
-                    chatSunk
-                      ? 'px-8 pt-4 bg-white/60 dark:bg-[#1C1C1E]/60 backdrop-blur-xl border-t border-slate-100 dark:border-white/5 translate-y-0 opacity-100'
-                      : 'px-8 pt-0 bg-transparent border-t border-transparent translate-y-[-10vh] opacity-80'
-                  }`}
-                  style={{
-                    paddingBottom: chatSunk ? '1.5rem' : 'calc(50vh - 40px)'
-                  }}
+              </div>
+
+            {/* Floating Button - only show when recorder is closed */}
+            {recorderState === 'closed' && !hasSelectedItem && (
+              <div className="fixed bottom-8 right-8 z-50">
+                <button
+                  onClick={() => setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')}
+                  className="w-14 h-14 bg-blue-500 hover:bg-blue-600 text-white rounded-full shadow-[0_8px_30px_rgb(59,130,246,0.3)] flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
+                  title="打开记录器"
                 >
-                  <div className="max-w-3xl mx-auto">
-                    <ChatInputBar
-                      draft={chatDraft}
-                      setDraft={setChatDraft}
-                      step={chatStep}
-                      setStep={setChatStep}
-                      context={chatContext}
-                      setContext={setChatContext}
-                      tags={chatTags}
-                      setTags={setChatTags}
-                      newTag={chatNewTag}
-                      setNewTag={setChatNewTag}
-                      existingTags={existingTags}
-                      onSubmit={handleChatFinalSubmit}
-                      onGoToDock={() => { setInputMode('classic'); resetChatState(); setChatMessages([]); setActiveNav('dock') }}
-                      onEnterChat={() => { 
-                        setChatImmersive(true)
-                        requestAnimationFrame(() => {
-                          requestAnimationFrame(() => {
-                            setChatSunk(true)
-                          })
-                        })
-                      }}
-                      immersive={chatImmersive}
-                      sunk={chatSunk}
-                    />
-                  </div>
-                </div>
+                  <PenTool size={24} />
+                </button>
               </div>
             )}
-
-            {/* blur overlay for non-immersive chat mode */}
-            <div
-              onClick={() => {
-                if (inputMode === 'chat' && !chatImmersive) {
-                  setIsChatMinimized(true)
-                }
-              }}
-              className={`absolute inset-0 z-40 bg-[#F5F5F7]/40 dark:bg-[#0E0E11]/40 backdrop-blur-[8px] transition-all duration-[800ms] ease-[cubic-bezier(0.23,1,0.32,1)] ${
-                inputMode === 'chat' && !chatImmersive && !isChatMinimized && !hasSelectedItem ? 'opacity-100 pointer-events-none' : 'opacity-0 pointer-events-none'
-              }`}
-            />
-
-            <div
-              className={`absolute left-0 w-full flex flex-col items-center z-50 transition-all duration-[800ms] ease-[cubic-bezier(0.23,1,0.32,1)] ${
-                chatImmersive || isChatMinimized || hasSelectedItem ? 'opacity-0 pointer-events-none scale-95 translate-y-8' : 'opacity-100 scale-100 translate-y-0 pointer-events-none'
-              }`}
-              style={{ bottom: 0, paddingBottom: inputMode === 'chat' ? 'calc(50vh - 40px)' : '24px' }}
-            >
-              <div className="w-full max-w-4xl flex flex-col items-center pointer-events-auto relative">
-                <div className={`mb-3 transition-all duration-500 ease-out ${isInputExpanded || (inputMode === 'chat' && chatStep !== 'input') ? 'opacity-0 -translate-y-4 pointer-events-none absolute' : 'opacity-100 translate-y-0 relative'}`}>
-                  <ModeSwitch mode={inputMode} setMode={handleModeChange} />
-                </div>
-                {inputMode === 'chat' ? (
-                  <div className="w-full max-w-3xl">
-                    <ChatInputBar
-                      draft={chatDraft}
-                      setDraft={setChatDraft}
-                      step={chatStep}
-                      setStep={setChatStep}
-                      context={chatContext}
-                      setContext={setChatContext}
-                      tags={chatTags}
-                      setTags={setChatTags}
-                      newTag={chatNewTag}
-                      setNewTag={setChatNewTag}
-                      existingTags={existingTags}
-                      onSubmit={handleChatFinalSubmit}
-                      onGoToDock={() => { setInputMode('classic'); resetChatState(); setChatMessages([]); setActiveNav('dock') }}
-                      onEnterChat={() => { 
-                        setChatImmersive(true)
-                        requestAnimationFrame(() => {
-                          requestAnimationFrame(() => {
-                            setChatSunk(true)
-                          })
-                        })
-                      }}
-                      immersive={chatImmersive}
-                      sunk={false}
-                    />
-                  </div>
-                ) : (
-                  <div className="w-full max-w-4xl">
-                    <InputContainer
-                      expanded={isInputExpanded}
-                      setExpanded={setIsInputExpanded}
-                      text={inputText}
-                      setText={setInputText}
-                      onSave={handleSaveEntry}
-                      onClose={() => setIsInputExpanded(false)}
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Floating Chat Button when minimized or item selected */}
-            <div className={`fixed bottom-8 right-8 z-50 transition-all duration-500 ${((isChatMinimized || hasSelectedItem) && inputMode === 'chat') ? 'opacity-100 scale-100' : 'opacity-0 scale-75 pointer-events-none'}`}>
-              <button
-                onClick={() => {
-                  setIsChatMinimized(false)
-                  if (hasSelectedItem) {
-                    setSelectedItemId(null)
-                    setSelectedArchivedEntryId(null)
-                  }
-                }}
-                className="w-14 h-14 bg-blue-500 hover:bg-blue-600 text-white rounded-full shadow-[0_8px_30px_rgb(59,130,246,0.3)] flex items-center justify-center transition-transform hover:scale-105 active:scale-95 group"
-                title="恢复 Chat 界面"
-              >
-                <MessageSquare size={24} />
-                <div 
-                  className="absolute -top-1 -right-1 w-5 h-5 bg-slate-800 dark:bg-slate-700 rounded-full border-2 border-white dark:border-[#0E0E11] scale-0 group-hover:scale-100 transition-transform flex items-center justify-center" 
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setInputMode('classic')
-                    setIsChatMinimized(false)
-                  }}
-                  title="关闭 Chat 模式"
-                >
-                  <X size={10} className="text-white" />
-                </div>
-              </button>
-            </div>
           </div>
 
           {(selectedItem || selectedArchivedEntry) && (
@@ -791,8 +1028,11 @@ export default function WorkspacePage() {
               }}
               onUpdateEntry={handleUpdateEntry}
               onUpdateDockItem={handleUpdateDockItem}
+              onUpdateSelectedActions={handleUpdateSelectedActions}
+              onUpdateSelectedProject={handleUpdateSelectedProject}
               onClose={() => { setSelectedItemId(null); setSelectedArchivedEntryId(null) }}
               actionLoading={actionLoading}
+              uniqueProjects={uniqueProjects}
             />
           )}
         </div>
@@ -840,16 +1080,15 @@ function ThemeToggle({ mode, setMode }: { mode: string; setMode: (m: 'system' | 
   )
 }
 
-function Sidebar({ activeNav, setActiveNav, user, onLogout, dockCount, mode, onModeChange, isCollapsed, onToggleCollapse }: {
+function Sidebar({ activeNav, setActiveNav, user, onLogout, dockCount, isCollapsed, onToggleCollapse, onRecordClick }: {
   activeNav: ViewType
   setActiveNav: (nav: ViewType) => void
   user: LocalUser
   onLogout: () => void
   dockCount: number
-  mode: AppMode
-  onModeChange: (m: AppMode) => void
   isCollapsed: boolean
   onToggleCollapse: () => void
+  onRecordClick: () => void
 }) {
   const navItems: { id: ViewType; icon: typeof Dock; label: string }[] = [
     { id: 'dock', icon: Dock, label: 'Dock' },
@@ -858,9 +1097,9 @@ function Sidebar({ activeNav, setActiveNav, user, onLogout, dockCount, mode, onM
   ]
 
   return (
-    <div className={`${isCollapsed ? 'w-[72px]' : 'w-64'} h-full bg-white/60 dark:bg-[#1C1C1E]/60 backdrop-blur-xl border-r border-slate-200/50 dark:border-white/5 flex flex-col transition-all duration-[800ms] ease-[cubic-bezier(0.23,1,0.32,1)] relative z-20`}>
-      <button 
-        onClick={onToggleCollapse} 
+    <div className={`${isCollapsed ? 'w-[72px]' : 'w-64'} h-full bg-white/40 dark:bg-[#1C1C1E]/40 backdrop-blur-md border-r border-slate-200/30 dark:border-white/5 flex flex-col transition-all duration-[800ms] ease-[cubic-bezier(0.23,1,0.32,1)] relative z-20 shadow-[0_2px_20px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_20px_rgba(0,0,0,0.2)]`}>
+      <button
+        onClick={onToggleCollapse}
         className="absolute -right-3 top-6 bg-white dark:bg-[#2C2C2E] border border-slate-200 dark:border-white/10 rounded-full p-1 shadow-sm text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 z-50 transition-colors"
         title={isCollapsed ? '展开侧边栏' : '收起侧边栏'}
       >
@@ -885,11 +1124,15 @@ function Sidebar({ activeNav, setActiveNav, user, onLogout, dockCount, mode, onM
         )}
       </div>
 
-      <div className={`px-4 pb-2 ${isCollapsed ? 'hidden' : ''}`}>
-        <ModeSwitch mode={mode} setMode={onModeChange} />
-      </div>
 
       <nav className={`flex-1 space-y-1 mt-2 ${isCollapsed ? 'px-2' : 'px-4'}`}>
+        <button
+          onClick={onRecordClick}
+          className={`w-full flex items-center ${isCollapsed ? 'justify-center px-0' : 'px-4'} py-3 text-sm font-medium rounded-xl transition-all duration-300 mb-2 bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20`}
+        >
+          <MessageSquare size={18} className={isCollapsed ? '' : 'mr-3'} />
+          {!isCollapsed && <span>记录</span>}
+        </button>
         {navItems.map((item) => {
           const isActive = activeNav === item.id
           const Icon = item.icon
@@ -1148,7 +1391,7 @@ function EntryCard({ entry, isSelected, onSelect }: { entry: StoredEntry; isSele
   )
 }
 
-function ReviewView({ stats, archivedEntries, onSelectArchivedEntry }: { stats: { totalEntries: number; pendingCount: number; suggestedCount: number; archivedCount: number; ignoredCount: number; reopenedCount: number; tagCount: number }; archivedEntries: StoredEntry[]; onSelectArchivedEntry: (id: number) => void }) {
+function ReviewView({ stats, archivedEntries, onSelectArchivedEntry, userId }: { stats: { totalEntries: number; pendingCount: number; suggestedCount: number; archivedCount: number; ignoredCount: number; reopenedCount: number; tagCount: number }; archivedEntries: StoredEntry[]; onSelectArchivedEntry: (id: number) => void; userId: string }) {
   const statCards = [
     { label: '待处理', value: stats.pendingCount, color: 'text-yellow-600 dark:text-yellow-400', bg: 'bg-yellow-50 dark:bg-yellow-500/10' },
     { label: '已建议', value: stats.suggestedCount, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-500/10' },
@@ -1161,9 +1404,11 @@ function ReviewView({ stats, archivedEntries, onSelectArchivedEntry }: { stats: 
   const [metrics, setMetrics] = useState<MetricsResult | null>(null)
 
   useEffect(() => {
-    const events = getEventLog()
-    setMetrics(computeMetrics(events))
-  }, [])
+    if (userId) {
+      const events = getEventLog(userId)
+      setMetrics(computeMetrics(events))
+    }
+  }, [userId])
 
   const metricCards: { label: string; value: string; color: string; bg: string }[] = metrics ? [
     { label: 'DAU', value: String(metrics.dau), color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-500/10' },
@@ -1286,40 +1531,22 @@ function ModeSwitch({ mode, setMode }: { mode: AppMode; setMode: (m: AppMode) =>
   )
 }
 
-function ChatInputBar({ 
-  draft, 
-  setDraft, 
-  step, 
-  setStep, 
-  context, 
-  setContext, 
-  tags, 
-  setTags, 
-  newTag, 
-  setNewTag, 
-  existingTags, 
-  onSubmit, 
-  onGoToDock, 
-  onEnterChat, 
-  immersive: _immersive = false, 
-  sunk: _sunk = false 
+function ChatInputBar({
+  draft,
+  setDraft,
+  step,
+  setStep,
+  onSubmit,
+  onCancel,
+  onRefill,
 }: {
   draft: string
   setDraft: (v: string) => void
   step: ChatStep
-  setStep: (s: ChatStep) => void
-  context: string
-  setContext: (v: string) => void
-  tags: string[]
-  setTags: (v: string[]) => void
-  newTag: string
-  setNewTag: (v: string) => void
-  existingTags: StoredTag[]
+  setStep: () => void
   onSubmit: () => Promise<void>
-  onGoToDock: () => void
-  onEnterChat: () => void
-  immersive?: boolean
-  sunk?: boolean
+  onCancel: () => void
+  onRefill: (option: 'topic' | 'type' | 'content') => void
 }) {
   const [saving, setSaving] = useState(false)
   const [placeholder] = useState(() => CHAT_PLACEHOLDERS[Math.floor(Math.random() * CHAT_PLACEHOLDERS.length)])
@@ -1334,195 +1561,41 @@ function ChatInputBar({
     }
   }
 
-  if (step === 'confirm') {
+  if (step === 'awaiting_confirmation') {
     return (
       <div className="bg-white dark:bg-[#1C1C1E] rounded-2xl shadow-[0_20px_60px_rgb(0,0,0,0.12)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-slate-100 dark:border-white/5 p-4 transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)]">
         <div className="px-3 py-1 mb-3 border-b border-slate-50 dark:border-white/5 flex items-center justify-between">
-          <span className="text-[10px] font-semibold px-2 py-0.5 bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 rounded-md flex items-center gap-1"><MessageSquare size={10} /> 确认记录</span>
-          <button onClick={() => { setStep('input') }} className="p-1 text-slate-400 hover:bg-slate-200 dark:hover:bg-white/10 rounded-md transition-colors"><Minimize2 size={14} /></button>
+          <span className="text-[10px] font-semibold px-2 py-0.5 bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 rounded-md flex items-center gap-1"><MessageSquare size={10} /> 确认入 Dock</span>
         </div>
-        <p className="text-slate-700 dark:text-slate-200 text-sm leading-relaxed whitespace-pre-wrap mb-3">{draft}</p>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">确认记录这条内容，或继续补充：</p>
-        <div className="flex gap-2 mb-3">
-          <input
-            type="text"
-            placeholder="继续输入…"
-            className="flex-1 px-3 py-2 text-sm bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-1 focus:ring-blue-400 text-slate-700 dark:text-slate-200"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { setStep('context') }
-            }}
-          />
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => setStep('context')} className="px-4 py-2 text-sm font-medium bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors flex items-center gap-1.5">
-            确认，继续 <ChevronRight size={14} />
-          </button>
-          <button onClick={() => { setStep('input') }} className="px-4 py-2 text-sm font-medium bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-white/20 transition-colors">
-            重新输入
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  if (step === 'context') {
-    return (
-      <div className="bg-white dark:bg-[#1C1C1E] rounded-2xl shadow-[0_20px_60px_rgb(0,0,0,0.12)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-slate-100 dark:border-white/5 p-4 transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)]">
-        <div className="px-3 py-1 mb-3 border-b border-slate-50 dark:border-white/5 flex items-center justify-between">
-          <span className="text-[10px] font-semibold px-2 py-0.5 bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 rounded-md flex items-center gap-1"><Sparkles size={10} /> 补充上下文</span>
-          <button onClick={() => { setStep('input') }} className="p-1 text-slate-400 hover:bg-slate-200 dark:hover:bg-white/10 rounded-md transition-colors"><Minimize2 size={14} /></button>
-        </div>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">原内容：{draft.slice(0, 60)}{draft.length > 60 ? '…' : ''}</p>
-        <textarea
-          autoFocus
-          placeholder="补充更多上下文（可选）..."
-          className="w-full h-20 bg-transparent border-none focus:outline-none resize-none text-slate-700 dark:text-slate-200 text-sm placeholder:text-slate-300 dark:placeholder:text-slate-600 leading-relaxed"
-          value={context}
-          onChange={(e) => setContext(e.target.value)}
-        />
-        <div className="flex gap-2 pt-2">
-          <button onClick={() => setStep('tags')} className="px-4 py-2 text-sm font-medium bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors flex items-center gap-1.5">
-            继续 <ChevronRight size={14} />
-          </button>
-          <button onClick={() => setStep('tags')} className="px-4 py-2 text-sm font-medium bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-white/20 transition-colors">
-            跳过
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  if (step === 'tags') {
-    return (
-      <div className="bg-white dark:bg-[#1C1C1E] rounded-2xl shadow-[0_20px_60px_rgb(0,0,0,0.12)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-slate-100 dark:border-white/5 p-4 transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)]">
-        <div className="px-3 py-1 mb-3 border-b border-slate-50 dark:border-white/5 flex items-center justify-between">
-          <span className="text-[10px] font-semibold px-2 py-0.5 bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-400 rounded-md flex items-center gap-1"><Tag size={10} /> 确认标签</span>
-          <button onClick={() => { setStep('input') }} className="p-1 text-slate-400 hover:bg-slate-200 dark:hover:bg-white/10 rounded-md transition-colors"><Minimize2 size={14} /></button>
-        </div>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">为这条记录添加标签</p>
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          {tags.map((tag) => (
-            <span key={tag} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-md text-xs font-medium border border-blue-100 dark:border-blue-500/20">
-              {tag}
-              <button onClick={() => setTags(tags.filter((t) => t !== tag))} className="text-blue-400 hover:text-blue-600 dark:hover:text-blue-300"><X size={10} /></button>
-            </span>
-          ))}
-        </div>
-        <div className="flex gap-2 mb-2">
-          <input
-            autoFocus
-            type="text"
-            value={newTag}
-            onChange={(e) => setNewTag(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                const trimmed = newTag.trim()
-                if (trimmed && !tags.includes(trimmed)) {
-                  setTags([...tags, trimmed])
-                  setNewTag('')
-                }
-              }
-            }}
-            placeholder="输入标签…"
-            className="flex-1 px-2 py-1 text-xs bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-white/10 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 text-slate-700 dark:text-slate-200"
-          />
-          <button
-            onClick={() => {
-              const trimmed = newTag.trim()
-              if (trimmed && !tags.includes(trimmed)) {
-                setTags([...tags, trimmed])
-                setNewTag('')
-              }
-            }}
-            disabled={!newTag.trim()}
-            className="px-2 py-1 text-xs bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-200 dark:hover:bg-white/20 disabled:opacity-50 transition-colors"
-          >
-            添加
-          </button>
-        </div>
-        {existingTags.length > 0 && (
-          <div className="flex flex-wrap gap-1 mb-3">
-            {existingTags.slice(0, 8).map((tag) => (
-              <button
-                key={tag.id}
-                onClick={() => { if (!tags.includes(tag.name)) setTags([...tags, tag.name]) }}
-                disabled={tags.includes(tag.name)}
-                className={`px-1.5 py-0.5 text-[10px] rounded transition-colors ${
-                  tags.includes(tag.name)
-                    ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-400 dark:text-blue-500 cursor-not-allowed'
-                    : 'bg-slate-50 dark:bg-white/5 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10'
-                }`}
-              >
-                {tag.name}
-              </button>
-            ))}
-          </div>
-        )}
         <div className="flex gap-2 pt-2">
           <button onClick={handleFinalSubmit} disabled={saving} className="px-4 py-2 text-sm font-medium bg-green-500 hover:bg-green-600 text-white rounded-xl transition-colors flex items-center gap-1.5">
             {saving ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-            {saving ? '保存中…' : '确认入 Dock'}
+            {saving ? '保存中…' : '确认生成'}
           </button>
-          <button onClick={() => setStep('context')} className="px-4 py-2 text-sm font-medium bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-white/20 transition-colors">
-            返回
+          <button onClick={onCancel} className="px-4 py-2 text-sm font-medium bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-white/20 transition-colors">
+            取消记录
           </button>
         </div>
       </div>
     )
   }
 
-  if (step === 'done') {
+  if (step === 'cancelled') {
     return (
-      <div className="flex flex-col gap-2 w-full animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <div className="bg-green-500/10 dark:bg-green-500/20 backdrop-blur-md border border-green-200 dark:border-green-500/30 rounded-xl p-2 px-4 flex items-center gap-3">
-          <CheckSquare size={16} className="text-green-600 dark:text-green-400" />
-          <span className="text-sm font-medium text-green-700 dark:text-green-300 flex-1">已成功入 Dock</span>
-          <div className="flex gap-2 mr-2">
-            <button 
-              onClick={() => { setStep('input'); setDraft('') }}
-              className="text-xs text-blue-600 dark:text-blue-400 font-bold hover:underline"
-            >
-              继续输入
-            </button>
-            <span className="text-slate-300 dark:text-white/10">|</span>
-            <button 
-              onClick={onGoToDock}
-              className="text-xs text-slate-500 dark:text-slate-400 font-medium hover:underline"
-            >
-              去 Dock 查看
-            </button>
-          </div>
+      <div className="bg-white dark:bg-[#1C1C1E] rounded-2xl shadow-[0_20px_60px_rgb(0,0,0,0.12)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-slate-100 dark:border-white/5 p-4 transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)]">
+        <div className="px-3 py-1 mb-3 border-b border-slate-50 dark:border-white/5 flex items-center justify-between">
+          <span className="text-[10px] font-semibold px-2 py-0.5 bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-400 rounded-md flex items-center gap-1"><RotateCcw size={10} /> 重新记录</span>
         </div>
-        <div className="bg-white/95 dark:bg-[#2C2C2E]/95 backdrop-blur-3xl rounded-2xl shadow-[0_10px_40px_rgb(0,0,0,0.1)] dark:shadow-[0_10px_40px_rgba(0,0,0,0.4)] border border-white dark:border-white/10 p-2.5 flex items-center transition-all duration-300 group relative">
-          <div className="flex items-center space-x-1 pl-1 relative z-10 opacity-40 grayscale pointer-events-none">
-            <ToolButton icon={Mic} tooltip="语音闪记" />
-            <ToolButton icon={Paperclip} tooltip="附件" />
-          </div>
-          <input
-            autoFocus
-            type="text"
-            placeholder="继续记录你的想法…"
-            className="flex-1 bg-transparent border-none focus:outline-none text-slate-700 dark:text-slate-200 px-3 placeholder:text-slate-400 dark:placeholder:text-slate-500 text-[15px] relative z-10"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && draft.trim()) {
-                setStep('input'); // Reset to input step before submitting
-                setTimeout(() => setStep('confirm'), 0);
-              }
-            }}
-          />
-          <button
-            onClick={() => { if (draft.trim()) { setStep('input'); setTimeout(() => setStep('confirm'), 0); } }}
-            disabled={!draft.trim()}
-            className={`ml-1.5 p-2 rounded-xl transition-all duration-300 ${
-              draft.trim() ? 'bg-blue-500 text-white shadow-sm' : 'bg-slate-100 dark:bg-white/5 text-slate-300 dark:text-slate-500 cursor-not-allowed'
-            }`}
-          >
-            <Send size={18} />
+        <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">你想重新记录哪一部分？</p>
+        <div className="flex gap-2">
+          <button onClick={() => onRefill('topic')} className="px-4 py-2 text-sm font-medium bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-500/20 transition-colors">
+            标题
+          </button>
+          <button onClick={() => onRefill('type')} className="px-4 py-2 text-sm font-medium bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-500/20 transition-colors">
+            类型
+          </button>
+          <button onClick={() => onRefill('content')} className="px-4 py-2 text-sm font-medium bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-500/20 transition-colors">
+            内容
           </button>
         </div>
       </div>
@@ -1530,31 +1603,29 @@ function ChatInputBar({
   }
 
   return (
-    <div className="bg-white/95 dark:bg-[#2C2C2E]/95 backdrop-blur-3xl rounded-2xl shadow-[0_20px_60px_rgb(0,0,0,0.12)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-white dark:border-white/10 p-2.5 flex items-center transition-all duration-300 focus-within:ring-2 focus-within:ring-blue-100/50 dark:focus-within:ring-blue-500/30 focus-within:border-blue-200 dark:focus-within:border-blue-400 group relative">
+    <div className="bg-white/95 dark:bg-[#2C2C2E]/95 backdrop-blur-xl rounded-2xl shadow-[0_20px_60px_rgb(0,0,0,0.12)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-white dark:border-white/10 p-2.5 flex items-center transition-all duration-300 focus-within:ring-2 focus-within:ring-blue-100/50 dark:focus-within:ring-blue-500/30 focus-within:border-blue-200 dark:focus-within:border-blue-400 group relative w-full">
       <div className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none">
         <div className="absolute inset-0 bg-gradient-to-r from-blue-400/5 via-transparent to-purple-400/5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-700" />
       </div>
-      <div className="flex items-center space-x-1 pl-1 relative z-10">
+      <div className="flex-shrink-0 flex items-center space-x-1 pl-1 relative z-10">
         <ToolButton icon={Mic} tooltip="语音闪记" />
         <ToolButton icon={Paperclip} tooltip="附件" />
         <ToolButton icon={ImageIcon} tooltip="图片" />
-        <div className="w-[1px] h-4 bg-slate-200 dark:bg-white/10 mx-1" />
-        <ToolButton icon={CheckSquare} tooltip="待办" />
-        <ToolButton icon={List} tooltip="列表" />
+        <div className="w-[1px] h-4 bg-slate-200 dark:bg-white/10 mx-1 hidden sm:block" />
+        <div className="hidden sm:flex items-center space-x-1">
+          <ToolButton icon={CheckSquare} tooltip="待办" />
+          <ToolButton icon={List} tooltip="列表" />
+        </div>
       </div>
       <input
         type="text"
         placeholder={placeholder}
-        className="flex-1 bg-transparent border-none focus:outline-none text-slate-700 dark:text-slate-200 px-3 placeholder:text-slate-400 dark:placeholder:text-slate-500 text-[15px] relative z-10"
+        className="min-w-0 flex-1 bg-transparent border-none focus:outline-none text-slate-700 dark:text-slate-200 px-3 placeholder:text-slate-400 dark:placeholder:text-slate-500 text-[15px] relative z-10"
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && draft.trim()) {
-            if (!_sunk) {
-              onEnterChat()
-            } else {
-              setStep('confirm')
-            }
+          if (e.key === 'Enter' && draft.trim() && !e.nativeEvent.isComposing) {
+            setStep()
           }
         }}
       />
@@ -1564,11 +1635,7 @@ function ChatInputBar({
         <button
           onClick={() => {
             if (draft.trim()) {
-              if (!_sunk) {
-                onEnterChat()
-              } else {
-                setStep('confirm')
-              }
+              setStep()
             }
           }}
           disabled={!draft.trim()}
@@ -1583,34 +1650,12 @@ function ChatInputBar({
   )
 }
 
-function InputContainer({ expanded, setExpanded, text, setText, onSave, onClose }: {
-  expanded: boolean
-  setExpanded: (v: boolean) => void
+function ExpandedEditor({ text, setText, onSave, onClose, hideHeader = false }: {
   text: string
   setText: (v: string) => void
   onSave: (content: string) => Promise<void>
-  onClose: () => void
-}) {
-  if (!expanded) {
-    return (
-      <div className="w-full flex justify-center">
-        <button onClick={() => setExpanded(true)} className="bg-white/90 dark:bg-[#2C2C2E]/90 backdrop-blur-2xl rounded-full shadow-[0_4px_20px_rgb(0,0,0,0.06)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.3)] border border-white/80 dark:border-white/10 p-3 flex items-center justify-center space-x-2 text-blue-600 dark:text-blue-400 font-semibold transition-all duration-300 hover:scale-105 hover:shadow-[0_8px_30px_rgba(59,130,246,0.15)] dark:hover:shadow-[0_8px_30px_rgba(59,130,246,0.3)] group relative overflow-hidden">
-          <div className="absolute inset-0 bg-blue-50/50 dark:bg-blue-500/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out"></div>
-          <Plus size={20} className="relative z-10" />
-          <span className="relative z-10 tracking-wide">新建记录</span>
-        </button>
-      </div>
-    )
-  }
-
-  return <ExpandedEditor text={text} setText={setText} onSave={onSave} onClose={onClose} />
-}
-
-function ExpandedEditor({ text, setText, onSave, onClose }: {
-  text: string
-  setText: (v: string) => void
-  onSave: (content: string) => Promise<void>
-  onClose: () => void
+  onClose?: () => void
+  hideHeader?: boolean
 }) {
   const [saving, setSaving] = useState(false)
 
@@ -1626,12 +1671,16 @@ function ExpandedEditor({ text, setText, onSave, onClose }: {
 
   return (
     <div className="w-full bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-[0_20px_60px_rgb(0,0,0,0.12)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-slate-100 dark:border-white/5 overflow-hidden flex flex-col transition-all duration-500 relative">
-      <div className="px-5 py-3 border-b border-slate-50 dark:border-white/5 flex items-center justify-between bg-slate-50/50 dark:bg-black/20">
-        <span className="text-xs font-semibold px-2.5 py-1 bg-slate-200 dark:bg-white/10 text-slate-700 dark:text-slate-300 rounded-lg flex items-center gap-1.5"><PenTool size={12} /> Classic 模式</span>
-        <button onClick={onClose} className="p-1.5 text-slate-400 hover:bg-slate-200 dark:hover:bg-white/10 rounded-lg transition-colors">
-          <Minimize2 size={16} />
-        </button>
-      </div>
+      {!hideHeader && (
+        <div className="px-5 py-3 border-b border-slate-50 dark:border-white/5 flex items-center justify-between bg-slate-50/50 dark:bg-black/20">
+          <span className="text-xs font-semibold px-2.5 py-1 bg-slate-200 dark:bg-white/10 text-slate-700 dark:text-slate-300 rounded-lg flex items-center gap-1.5"><PenTool size={12} /> Classic 模式</span>
+          {onClose && (
+            <button onClick={onClose} className="p-1.5 text-slate-400 hover:bg-slate-200 dark:hover:bg-white/10 rounded-lg transition-colors">
+              <Minimize2 size={16} />
+            </button>
+          )}
+        </div>
+      )}
       <div className="p-5 relative">
         <textarea
           autoFocus
@@ -1678,7 +1727,7 @@ function ToolButton({ icon: Icon, tooltip }: { icon: typeof ImageIcon; tooltip: 
   )
 }
 
-function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggestions, onSuggest, onArchive, onIgnore, onRestore, onReopen, onAddTag, onRemoveTag, onDismissSuggestion, onUpdateEntry, onUpdateDockItem, onClose, actionLoading }: {
+function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggestions, onSuggest, onArchive, onIgnore, onRestore, onReopen, onAddTag, onRemoveTag, onDismissSuggestion, onUpdateEntry, onUpdateDockItem, onUpdateSelectedActions, onUpdateSelectedProject, uniqueProjects, onClose, actionLoading }: {
   item: DockItem | null
   archivedEntry: StoredEntry | null
   existingTags: StoredTag[]
@@ -1693,11 +1742,16 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
   onDismissSuggestion: (tagName: string) => void
   onUpdateEntry: (entryId: number, updates: { tags?: string[]; project?: string | null; content?: string; title?: string }) => Promise<void>
   onUpdateDockItem: (itemId: number, rawText: string) => Promise<void>
+  onUpdateSelectedActions: (itemId: number, actions: string[]) => Promise<void>
+  onUpdateSelectedProject: (itemId: number, project: string | null) => Promise<void>
   onClose: () => void
   actionLoading: boolean
+  uniqueProjects: string[]
 }) {
   const [editing, setEditing] = useState(false)
   const [editRawText, setEditRawText] = useState('')
+  const [isCreatingProject, setIsCreatingProject] = useState(false)
+  const [newProjectName, setNewProjectName] = useState('')
 
   useEffect(() => {
     if (item) {
@@ -1727,7 +1781,7 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
         </span>
         <DetailHeaderActions onClose={onClose} />
       </div>
-      
+
       <div className="flex-1 overflow-y-auto">
         <div className="p-8 max-w-4xl mx-auto">
 
@@ -1742,7 +1796,7 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
                 />
               </div>
               <div className="flex gap-2">
-                <button 
+                <button
                   onClick={async () => {
                     if (editRawText !== item.rawText) {
                       await onUpdateDockItem(item.id, editRawText)
@@ -1754,7 +1808,7 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
                 >
                   {actionLoading ? '保存中…' : '保存修改'}
                 </button>
-                <button 
+                <button
                   onClick={() => {
                     setEditRawText(item.rawText)
                     setEditing(false)
@@ -1774,7 +1828,7 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
                 <p className="text-xs text-slate-400 dark:text-slate-500">
                   {new Date(item.createdAt).toLocaleString('zh-CN')}
                 </p>
-                <button 
+                <button
                   onClick={() => setEditing(true)}
                   className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 transition-colors flex items-center gap-1"
                 >
@@ -1851,16 +1905,102 @@ function DetailSlidePanel({ item, archivedEntry, existingTags, dismissedSuggesti
 
         {item.suggestions.filter((s) => s.type === 'action').length > 0 && (
           <div className="mb-6 p-4 bg-amber-50/50 dark:bg-amber-500/5 rounded-xl border border-amber-100/50 dark:border-amber-500/10">
-            <h4 className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-2">动作建议</h4>
-            <div className="flex flex-wrap gap-1.5">
-              {item.suggestions.filter((s) => s.type === 'action').map((s) => (
-                <span key={s.id} className="px-2 py-0.5 bg-amber-100 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 rounded text-xs">
-                  {s.label}
-                </span>
-              ))}
+            <h4 className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+              <Sparkles size={12} /> 动作建议
+            </h4>
+            <div className="flex flex-wrap gap-2">
+              {item.suggestions.filter((s) => s.type === 'action').map((s) => {
+                const isSelected = item.selectedActions?.includes(s.label)
+                return (
+                  <button
+                    key={s.id}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all active:scale-95 shadow-sm ${
+                      isSelected
+                        ? 'bg-amber-500 text-white border-amber-600 dark:border-amber-500'
+                        : 'bg-white dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20 hover:bg-amber-100 dark:hover:bg-amber-500/20'
+                    }`}
+                    onClick={async () => {
+                      const newActions = isSelected
+                        ? (item.selectedActions || []).filter(a => a !== s.label)
+                        : [...(item.selectedActions || []), s.label]
+                      await onUpdateSelectedActions(item.id, newActions)
+                    }}
+                    disabled={actionLoading}
+                  >
+                    {s.label}
+                  </button>
+                )
+              })}
             </div>
           </div>
         )}
+
+        <div className="mb-6 p-4 bg-slate-50 dark:bg-black/20 rounded-xl border border-slate-100 dark:border-white/5">
+          <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+            <Hash size={12} /> 项目关联
+          </h4>
+          <div className="flex flex-col gap-2">
+            {!isCreatingProject ? (
+              <div className="relative group/proj">
+                <select
+                  className="w-full px-3 py-2 text-sm bg-white dark:bg-black/20 border border-slate-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400 text-slate-700 dark:text-slate-200 appearance-none cursor-pointer"
+                  value={item.selectedProject || ''}
+                  onChange={async (e) => {
+                    if (e.target.value === 'new') {
+                      setIsCreatingProject(true)
+                    } else {
+                      await onUpdateSelectedProject(item.id, e.target.value || null)
+                    }
+                  }}
+                  disabled={actionLoading}
+                >
+                  <option value="">未关联项目</option>
+                  {uniqueProjects.map(p => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                  <option value="new">+ 新建项目...</option>
+                </select>
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                  <ChevronRight size={14} className="rotate-90" />
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="输入新项目名称..."
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  className="flex-1 px-3 py-2 text-sm bg-white dark:bg-black/20 border border-slate-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400 text-slate-700 dark:text-slate-200"
+                  autoFocus
+                />
+                <button
+                  onClick={async () => {
+                    if (newProjectName.trim()) {
+                      await onUpdateSelectedProject(item.id, newProjectName.trim())
+                      setNewProjectName('')
+                    }
+                    setIsCreatingProject(false)
+                  }}
+                  disabled={actionLoading || !newProjectName.trim()}
+                  className="px-3 py-2 text-sm font-medium bg-blue-500 text-white rounded-xl hover:bg-blue-600 disabled:opacity-50 transition-colors"
+                >
+                  确认
+                </button>
+                <button
+                  onClick={() => {
+                    setIsCreatingProject(false)
+                    setNewProjectName('')
+                  }}
+                  disabled={actionLoading}
+                  className="px-3 py-2 text-sm font-medium bg-slate-200 dark:bg-white/10 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-300 dark:hover:bg-white/20 transition-colors"
+                >
+                  取消
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
 
         <div className="flex flex-wrap gap-2 pt-2">
           {item.status === 'pending' && (
@@ -2064,6 +2204,107 @@ function ArchivedEntryDetail({ archivedEntry, onReopen, onUpdateEntry, onClose, 
         )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function ChatHistorySidebar({
+  sessions,
+  currentSessionId,
+  userId,
+  onSelectSession,
+  onUpdateSessions,
+}: {
+  sessions: LocalChatSession[]
+  currentSessionId: number | null
+  userId: string
+  onSelectSession: (session: LocalChatSession) => void
+  onUpdateSessions: React.Dispatch<React.SetStateAction<LocalChatSession[]>>
+}) {
+  const validSessions = sessions.filter(s => {
+    const hasContent = s.topic || s.selectedType || s.content || s.messages.length > 1
+    return hasContent
+  })
+
+  if (validSessions.length === 0) {
+    return null
+  }
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const yesterday = new Date(today)
+  yesterday.setDate(yesterday.getDate() - 1)
+
+  const groups: { label: string; items: LocalChatSession[] }[] = []
+  const todayItems: LocalChatSession[] = []
+  const yesterdayItems: LocalChatSession[] = []
+  const earlierItems: LocalChatSession[] = []
+
+  validSessions.forEach((s: LocalChatSession) => {
+    const sessionDate = new Date(s.updatedAt)
+    sessionDate.setHours(0, 0, 0, 0)
+    if (sessionDate.getTime() === today.getTime()) {
+      todayItems.push(s)
+    } else if (sessionDate.getTime() === yesterday.getTime()) {
+      yesterdayItems.push(s)
+    } else {
+      earlierItems.push(s)
+    }
+  })
+
+  if (todayItems.length > 0) groups.push({ label: 'Today', items: todayItems })
+  if (yesterdayItems.length > 0) groups.push({ label: 'Yesterday', items: yesterdayItems })
+  if (earlierItems.length > 0) groups.push({ label: 'Earlier', items: earlierItems })
+
+  return (
+    <div className="w-48 h-full overflow-y-auto p-3 space-y-2 flex-shrink-0">
+      {groups.map(group => (
+        <div key={group.label}>
+          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-2 mb-1">{group.label}</p>
+          {group.items.map((session: LocalChatSession) => (
+            <div key={session.id} className="flex items-center gap-1 px-2 py-1.5 rounded-xl transition-colors group/session-item"
+              style={{ backgroundColor: session.id === currentSessionId ? 'rgb(239 246 255)' : undefined }}
+              onMouseEnter={(e) => { if (session.id !== currentSessionId) (e.currentTarget as HTMLElement).style.backgroundColor = 'rgb(241 245 249)' }}
+              onMouseLeave={(e) => { if (session.id !== currentSessionId) (e.currentTarget as HTMLElement).style.backgroundColor = 'undefined' }}
+            >
+              <button
+                onClick={() => onSelectSession(session)}
+                className="flex-1 text-left px-1.5 py-1 rounded-lg text-xs truncate transition-colors"
+                style={{ color: session.id === currentSessionId ? 'rgb(37 99 235)' : 'rgb(71 85 105)' }}
+              >
+                <span className="truncate">{session.topic || ('Chat ' + session.id)}</span>
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (session.pinned) {
+                    unpinChatSession(userId, session.id).then(updated => {
+                      if (updated) {
+                        onUpdateSessions(prev => prev.map(s =>
+                          s.id === session.id ? { ...s, pinned: false } : s
+                        ))
+                      }
+                    })
+                  } else {
+                    pinChatSession(userId, session.id).then(updated => {
+                      if (updated) {
+                        onUpdateSessions(prev => prev.map(s =>
+                          s.id === session.id ? { ...s, pinned: true } : s
+                        ))
+                      }
+                    })
+                  }
+                }}
+                className="p-1 rounded opacity-0 group-hover/session-item:opacity-100 transition-opacity flex-shrink-0"
+                style={{ color: session.pinned ? 'rgb(245 158 11)' : 'rgb(203 213 225)' }}
+                title={session.pinned ? '取消置顶' : '置顶'}
+              >
+                <span className="text-xs">{session.pinned ? '📌' : '📍'}</span>
+              </button>
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   )
 }
