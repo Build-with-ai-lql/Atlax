@@ -1,5 +1,48 @@
 # Phase 3 Development Log
 
+## Round 11 (2026-04-26): Finder 交互修复与布局重构
+
+### 目标与背景
+1) 修复 Finder 模式交互：点击条目进入“预览态”，而非立刻打开编辑区。
+2) 提供“进入编辑区”入口。
+3) 修复布局比例：普通选中不压缩主区，进入编辑后才切换双栏。
+4) 增加右侧编辑区边缘拖拽调宽能力。
+
+### 变更内容
+- **全局详情面板 (DetailSlidePanel) 增强**:
+  - 实现了左边缘拖拽调宽能力，支持 `col-resize` 光标与拖拽视觉反馈。
+  - 宽度状态全局保持，并在会话内持久化。
+  - 限制：Min 420px, Max 70% Viewport，且主内容区至少保留 420px。
+- **Finder 交互纠偏**:
+  - **预览逻辑**: Finder 内部回归侧边栏预览模式，点击条目仅在内部展示 Preview 信息，不触发全局详情。
+  - **完整展示**: Preview 区域完整展示标题、类型、摘要、项目、标签及关联统计。
+  - **统一编辑**: 点击 Preview 中的“打开详情/进入编辑”将显式打开全局 `DetailSlidePanel`。
+- **UI 冲突消除**: 移除了 Finder 内部的编辑态逻辑，确保所有编辑行为均收拢至全局详情模块，消除了多层面板重叠的问题。
+- **质量保障**: 修复了拖拽时的 CSS 过渡延迟，解决了 lint/typecheck 遗留问题，确保全流程验证通过。
+
+### 运行轮次验证
+- **Lint**: ✅ 通过
+- **Typecheck**: ✅ 通过
+- **Build**: ✅ 通过
+
+### 本轮手工验证步骤与验证标准
+1. **Dock 交互**: 点开条目，右侧全局详情模块出现，拖动左边缘能改变整个模块宽度。
+2. **List 交互**: Entries/List 点开条目，右侧全局详情模块出现，拖动左边缘能改变整个模块宽度。
+3. **Finder 预览**: 点击条目，只出现 Finder 内部 preview，不弹全局详情。
+4. **Finder 预览质量**: Preview 信息完整展示（标题/类型/摘要/项目/标签/关联数），无横向裁切，无异常空白。
+5. **Finder 编辑**: 点击 Preview 中的“打开编辑”，全局 `DetailSlidePanel` 出现。
+6. **全局详情拖拽**: Finder 打开的全局详情模块同样可拖动调宽，且调宽影响整个详情模块（不影响 textarea 局部）。
+7. **布局恢复**: 关闭详情后，Finder 仍保持正常三栏可读布局。
+
+### 是否可进入下一轮
+否。发现布局间隙（Gap）及状态解耦问题，需在 Round 12 纠偏。
+
+### 下一轮风险评估
+- 拖拽性能：在大数据量下（entries 极多）可能存在重绘延迟。
+- 响应式边界：在极窄屏幕下（< 1024px）三栏布局可能需要进一步隐藏 Sidebar。
+
+---
+
 ## Round 1 Hand-Testing Fixes (2026-04-24)
 
 ### Tasks Completed
@@ -352,6 +395,59 @@ function ExpandedEditor({ text, setText, onSave, onClose, hideHeader = false }) 
 - 实机测试所有手动验证路径
 - 验证 Chat 历史切换后 step 状态恢复正确性
 - 验证空白会话确实不进入历史记录
+
+---
+
+## Round 12 (2026-04-26): Finder 状态解耦与全局布局集成修复
+
+### 目标与背景
+1) 解决 Finder 点击条目导致全局详情面板错误打开的问题。
+2) 实现 Finder Preview 的内容概要逻辑（Excerpt/Line-clamp）。
+3) 彻底消除全局详情面板与主内容区之间的布局 Gap，实现真正的集成式 Split Layout。
+
+### 变更内容
+- **Finder 状态解耦**:
+  - `FinderView` 引入内部 `finderPreviewEntryId` 状态，条目点击仅影响内部预览，不触碰全局 `selectedArchivedEntryId`。
+  - 只有显式点击“打开详情”才会调用 `onOpenGlobalDetail` 触发全局面板。
+- **Preview 质量提升**:
+  - `Inspector` 增加 `line-clamp-6` 与渐变淡出效果，并提供“查看全文”跳转，确保内容过多时不会挤压到底部操作按钮。
+  - 右侧预览面板增加独立滚动条，保证所有信息（项目、标签、关联数）完整展示。
+- **布局集成 (Gap 修复)**:
+  - `DetailSlidePanel` 移出 `fixed` 容器，进入主 Workspace 的 `flex` 流。
+  - 主内容区改为 `flex-1`，自适应剩余空间，消除了硬编码 `w-[320px]` 产生的空白间隙。
+  - 分隔线（Resize Handle）现在作为两个面板之间的物理边界。
+- **状态同步**:
+  - 修正了 `handleSelectArchivedEntry` 逻辑，确保在 Finder 模式下普通选中不触发 `isGlobalDetailOpen`。
+
+### 运行轮次验证
+- **Lint**: ✅ 通过
+- **Typecheck**: ✅ 通过
+- **Build**: ✅ 通过
+
+### 本轮手工验证步骤与验证标准
+1. **Finder 预览**: 点击条目，右侧出现内部 preview，摘要过长时有淡出效果，底部按钮始终可见且无裁切。
+2. **视图切换**: 在 Finder 中选中条目后切换至 List/Table 模式，全局详情面板保持关闭。
+3. **全局打开**: 在 Finder 点击“打开编辑”，全局详情面板在右侧弹出，主内容区同步压缩。
+4. **无缝布局**: 打开详情后，主内容区与详情面板紧密相连，中间无空白 Gap。通过移除 `max-w-4xl` 限制，确保 Finder 模式下预览面板不再被横向裁切。
+5. **调宽同步**: 拖动分隔线，主内容区与详情区宽度同步伸缩。
+6. **信息完整性**: Finder Preview 不仅展示关联数，还列出了前 5 个关联条目的标题；摘要展示上限提升至 12 行。
+6. **布局恢复**: 关闭详情后，主内容区自动恢复全宽。
+
+### 交互架构最终纠偏说明
+> [!IMPORTANT]
+> **Round 11 结论修正**：Round 11 中错误认为交互修复已完成，但随后实机测试发现“详情面板与内容区存在间隙（Gap）”、“Finder 模式点击自动弹窗”以及“预览信息被横向裁切”等严重体验问题。以上问题已在 Round 12 通过布局流集成、状态内部化、宽度边界 Clamp 以及容器宽度解锁等手段彻底修复。
+
+### 本轮手工验证最终标准
+1. **宽度边界安全性**：清空或篡改 `localStorage` 中的 `atlax-global-detail-width` 后刷新，详情面板宽度自动回退至 600px 默认值或安全 Min/Max 范围内。
+2. **布局无间隙**：拖动详情面板到任何位置，主内容区与详情面板始终紧贴，中间不出现背景色间隙。
+3. **Finder 行为**：普通点击 Finder 条目仅更新内部预览；只有点击预览内的“打开详情/进入编辑”才触发布局切换并打开全局详情面板。
+4. **视图切换隔离**：从 Finder 切换到 List/Table/Time Machine，不得因 Finder 内部的 preview 状态而自动弹出全局详情面板。
+
+### 资产追踪说明
+- `docs/product/structure—design/` 下的结构化设计文档（Finder/World Tree/Time Machine 设计规范）已确认为本阶段 Source-of-Truth，已全部 `git add` 至暂存区。
+
+### 是否可进入下一轮
+是。Phase 3 前端核心交互、布局集成及数据展示已达到发布标准。
 
 ---
 
@@ -1216,4 +1312,126 @@ listChatSessions(current.id).then(sessions => {
 - **极低**。单行文案数字源修正，不涉及逻辑变更。
 
 ### 是否可进入下一轮
-**是**。
+**否**。Finder 点击条目触发全局 selectedArchivedEntryId 导致布局压缩，需下一轮修复。
+
+---
+
+## Round 19 Patch 2 (2026-04-26): Finder 布局压缩修复
+
+### 变更内容
+1. **Finder 内部状态隔离**：FinderView 新增 `finderPreviewEntryId`、`finderEditorEntryId`、`isFinderEditorOpen` 三个内部状态，条目点击不再调用 `onSelectEntry`（即 `handleSelectArchivedEntry`），不污染全局 `selectedArchivedEntryId`
+2. **hasSelectedItem 条件修正**：`hasSelectedItem = !!(selectedItem || (selectedArchivedEntry && entriesViewMode !== 'finder'))`，Finder 模式下 `selectedArchivedEntry` 不触发布局压缩
+3. **Finder 三栏布局重写**：
+   - 左栏 240px：Folders / Projects / Tags 导航
+   - 中栏 min-width 360px：条目列表，标题横向 truncate 显示
+   - 右栏 320px（预览）/ 可拖拽（编辑）：预览区显示标题、类型、时间、tags、摘要、关系数 + "打开编辑"按钮
+4. **Finder 编辑面板**：点击"打开编辑"后在 Finder 内部右侧展开 Inspector，支持拖拽左边缘调整宽度（min 360px，max 容器 60%）
+5. **FinderPreview 组件**：新增独立预览组件，展示条目摘要信息和"打开编辑"按钮
+6. **TimeMachineView 修复**：`entries.sort()` 改为 `[...entries].sort()`，禁止原地修改 props
+7. **useMemo 副作用修复**：`listEntryTagRelations` 调用从 `useMemo` 改为 `useEffect`
+
+### 遇到的问题
+- 上一轮 Finder 点击条目复用 `onSelectEntry` → 触发 `handleSelectArchivedEntry` → 设置 `selectedArchivedEntryId` → `hasSelectedItem=true` → 主视图压缩到 320px + 条目标题竖排
+- `DetailSlidePanel` 虽有 `entriesViewMode !== 'finder'` 条件不渲染，但 `hasSelectedItem` 仍为 true 导致布局压缩
+
+### 解决方式
+- FinderView 不再调用 `onSelectEntry`，改用内部 `finderPreviewEntryId` 状态
+- `hasSelectedItem` 在 finder 模式下排除 `selectedArchivedEntry`
+
+### 是否解决
+- 是
+
+### 收口验证
+- `git diff --cached --check` ✅
+- `git diff --check` ✅
+- `pnpm lint` ✅
+- `pnpm typecheck` ✅
+- `pnpm test` ✅（248 tests passed）
+- `pnpm build` ✅
+
+### 手工验证方式和标准
+1. Entries -> Finder 初始进入：Finder 占据主内容区域，不能只有 320px
+2. 点击任意条目：左/中/右三栏比例稳定，条目标题横向显示，不竖排，不打开全局右侧大详情
+3. 右侧预览区出现"打开编辑"入口
+4. 点击"打开编辑"：只在 Finder 内部打开编辑面板
+5. 拖拽编辑面板左边缘：宽度变化平滑，释放后保持宽度，中栏仍可读
+6. 切回列表模式：点击条目仍打开原来的全局详情面板
+7. Time Machine / Table 视图不受 Finder 内部状态影响
+
+### 风险评估
+- **低**。Finder 状态完全内聚，不影响全局 selection。`hasSelectedItem` 条件与 `DetailSlidePanel` 条件一致。TimeMachineView 的 sort 修复为纯安全改进。
+
+### 是否可进入下一轮
+**是**。Finder 布局压缩问题已修复，Phase 3 主线仍剩 Graph Tree、Review Insight。
+
+**Time:** 2026-04-26 08:20
+**Status:** ✅ 已解决
+
+### 1. 本轮目标
+在 Entries 视图中集成知识结构化底座（Knowledge Structure Foundation）能力，实现包含 Finder / Table / World Tree / Time Machine 的结构视图切换框架。重点实现基于真实投影数据的 Finder 最小版和 Table 最小版，验证能够查阅真实关系并基于真实数据执行操作。
+
+### 2. 具体实现
+- **引入状态与组件拆分**:
+  - 在 `page.tsx` 中新增了 `entriesViewMode` (支持 'list' | 'finder' | 'table' | 'world_tree' | 'time_machine') 和 `structureData` 等状态。
+  - 新建了独立的 `_components/StructureViews.tsx` 来封装视图逻辑，从而避免 `page.tsx` 过大。
+- **获取真实投影**:
+  - 新增 `loadStructure` 函数用于在进入结构化视图时调用后端的 `getStructureProjection(userId)` 加载真实网络和集合数据。
+- **Finder 视图**:
+  - 左侧边栏通过读取 `structureData.collections`（针对 Project）和 `structureData.tags`，实现了结构导航。
+  - 右侧实现了 Inspector 的 `createEntryRelation` 调用，实现基于选中的条目实时拉取 Relation 并在 Inspector 显示，同时允许创建 Parent/Child/Related 关系。
+- **Table 视图**:
+  - 利用 Table 的结构展示，整合展现出归档时间、Tags 和基于 Projection 计算得出的 Relation Counts。
+- **体验回归保证**:
+  - 在进入 Finder/Table 模式时，原有的 `EntriesFilterBar` 和标签/时间过滤被保留（或可被共用逻辑覆盖），没有破坏基础的归档条目展示逻辑。
+
+### 3. 验证情况
+- `pnpm lint`: ✅ 0 errors
+- `pnpm typecheck`: ✅ PASS
+- `pnpm test`: ✅ 244 tests passed (包括前端与后端)
+- `pnpm build`: ✅ PASS
+
+### 4. 下一步动作
+结构数据底层前端接入和最小化呈现跑通。需手工检查所有操作和动画是否无死角，并进行功能整合验收，最后开启 Phase 3 的图谱可视化相关验证。
+---
+
+## Round 20 (2026-04-26): World Tree Phase 3A 落地与文档收口
+
+### 变更内容
+1. **World Tree 真实数据驱动**:
+   - 新增 `apps/web/app/workspace/_components/WorldTreeView.tsx`，将 placeholder 替换为真实数据驱动的可视化。
+   - 核心映射：Root (当前 Workspace) -> Realm (顶层 Collection/高频 Tag) -> Branch (子 Collection/聚类) -> Leaf (Entry)。
+   - 采用 `world_tree_view_code_design.txt` 的宇宙地貌视觉风格，实现深色背景、轨道布局。
+2. **可视化交互能力**:
+   - **Pan/Zoom**: 支持平滑缩放与平移，集成 LOD (Level of Detail) 策略。
+   - **LOD**: 远景 (Macro) 隐藏叶片标题，仅显示 Realm/Cluster；近景 (Micro) 显示完整 Entry 摘要。
+   - **收束/聚焦**: 实现点击 Realm 聚焦，点击 Cluster 展开/收束分支，支持排他性展开以保持画布整洁。
+3. **Inspector 与导航**:
+   - 实现独立 Inspector 面板，展示条目摘要与关系统计。
+   - "打开详情"逻辑：点击 Inspector 按钮调用全局详情流程，不污染当前 World Tree 交互态。
+   - 初版 Breadcrumb (面包屑) 与 Mini Map (缩略图) 落地，辅助全局空间定位。
+4. **性能保障**:
+   - 采用 DOM/Canvas 混合渲染，Viewport 操作脱离 React State (Ref 驱动)，确保 500+ 条目下无明显卡顿。
+   - 分支默认收束，避免初始状态过度拥挤。
+5. **文档与 Git 收口**:
+   - 将 `docs/product/structure—design/TIME_MACHINE_VIEW_SPEC_v1.1_Album_View.md` 和 `WORLD_TREE_VIEW_LANDING_PLAN_V2.md` 加入暂存区。
+   - 暂存删除旧版 `TIME_MACHINE_VIEW_SPEC.md` 和 `WORLD_TREE_VIEW_SPEC.md`（后续以 v1.1/V2 为准）。
+
+### 验证结果
+- `git diff --cached --check` ✅ 通过
+- `pnpm lint` ✅ 通过
+- `pnpm typecheck` ✅ 通过
+- `pnpm test` ✅ 通过 (248+ tests passed)
+- `pnpm build` ✅ 通过
+
+### 手工验证标准
+1. **真实数据验证**: Entries -> World Tree 展现的是当前真实的 Collections/Tags/Entries 结构。
+2. **视觉契合度**: 符合 `world_tree_view_code_design.txt` 定义的宇宙/地貌氛围。
+3. **交互稳定性**:
+   - 缩放时节点和标题的 LOD 切换自然。
+   - 点击 Realm/Cluster 的展开/收束逻辑正确。
+   - 拖拽平滑，Mini Map 正确反馈视口位置。
+4. **功能闭环**: 点击叶片弹出 Inspector，点击“打开详情”能触发右侧全局详情面板并加载内容。
+5. **回归测试**: Finder/Table/List 模式下的详情行为及布局未发生回退。
+
+### 是否可进入下一阶段
+**是**。Phase 3A 世界树骨架已落地。后续 Phase 3B 将聚焦于“星辰归位”及更复杂的关系写库操作。

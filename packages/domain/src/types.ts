@@ -79,3 +79,7 @@ export interface ArchiveInput {
   selectedActions: string[]
   createdAt: Date
 }
+
+export type { DocumentType } from './document/types'
+export type { CaptureStatus, CaptureSource } from './capture/types'
+export type { MindNodeType, MindNodeState, MindEdgeType } from './mind/types'

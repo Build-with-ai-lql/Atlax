@@ -6,12 +6,16 @@ import { Loader2, Database, Trash2, ArrowRight } from 'lucide-react'
 
 import { getCurrentUser } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { backfillStructureData, createEntryRelation } from '@/lib/repository'
 
 interface SeedResult {
   dockItemsCreated: number
   entriesCreated: number
   tagsCreated: number
   chatSessionsCreated: number
+  collectionsCreated: number
+  tagRelationsCreated: number
+  entryRelationsCreated: number
 }
 
 interface SeedEntry {
@@ -1231,7 +1235,59 @@ export default function SeedPage() {
         chatSessionsCreated++
       }
 
-      setResult({ dockItemsCreated, entriesCreated, tagsCreated, chatSessionsCreated })
+      const backfillResult = await backfillStructureData(userId)
+
+      let entryRelationsCreated = 0
+      const allEntries = await db.table('entries').where('userId').equals(userId).toArray()
+      const projectEntries: Record<string, number[]> = {}
+      for (const e of allEntries) {
+        if (e.project) {
+          if (!projectEntries[e.project]) projectEntries[e.project] = []
+          projectEntries[e.project].push(e.id as number)
+        }
+      }
+      for (const [, ids] of Object.entries(projectEntries)) {
+        for (let i = 0; i < ids.length - 1; i++) {
+          const rel = await createEntryRelation({
+            userId,
+            sourceEntryId: ids[i],
+            targetEntryId: ids[i + 1],
+            relationType: 'same_project',
+            source: 'system',
+          })
+          if (rel) entryRelationsCreated++
+        }
+      }
+
+      const tagGroupEntries: Record<string, number[]> = {}
+      for (const e of allEntries) {
+        for (const tag of (e.tags as string[])) {
+          if (!tagGroupEntries[tag]) tagGroupEntries[tag] = []
+          tagGroupEntries[tag].push(e.id as number)
+        }
+      }
+      for (const [, ids] of Object.entries(tagGroupEntries)) {
+        if (ids.length >= 2) {
+          const rel = await createEntryRelation({
+            userId,
+            sourceEntryId: ids[0],
+            targetEntryId: ids[1],
+            relationType: 'same_topic',
+            source: 'system',
+          })
+          if (rel) entryRelationsCreated++
+        }
+      }
+
+      setResult({
+        dockItemsCreated,
+        entriesCreated,
+        tagsCreated,
+        chatSessionsCreated,
+        collectionsCreated: backfillResult.collectionsCreated,
+        tagRelationsCreated: backfillResult.tagRelationsCreated,
+        entryRelationsCreated,
+      })
     } catch (e) {
       setError(e instanceof Error ? e.message : '未知错误')
     } finally {
@@ -1272,6 +1328,36 @@ export default function SeedPage() {
         await db.table('chatSessions').bulkDelete(chatSessionIds)
       }
 
+      const collectionIds = await db.table('collections').where('userId').equals(userId).primaryKeys()
+      if (collectionIds.length > 0) {
+        await db.table('collections').bulkDelete(collectionIds)
+      }
+
+      const etrIds = await db.table('entryTagRelations').where('userId').equals(userId).primaryKeys()
+      if (etrIds.length > 0) {
+        await db.table('entryTagRelations').bulkDelete(etrIds)
+      }
+
+      const erIds = await db.table('entryRelations').where('userId').equals(userId).primaryKeys()
+      if (erIds.length > 0) {
+        await db.table('entryRelations').bulkDelete(erIds)
+      }
+
+      const keIds = await db.table('knowledgeEvents').where('userId').equals(userId).primaryKeys()
+      if (keIds.length > 0) {
+        await db.table('knowledgeEvents').bulkDelete(keIds)
+      }
+
+      const taIds = await db.table('temporalActivities').where('userId').equals(userId).primaryKeys()
+      if (taIds.length > 0) {
+        await db.table('temporalActivities').bulkDelete(taIds)
+      }
+
+      const widgetIds = await db.table('widgets').where('userId').equals(userId).primaryKeys()
+      if (widgetIds.length > 0) {
+        await db.table('widgets').bulkDelete(widgetIds)
+      }
+
       setResult(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : '未知错误')
@@ -1286,7 +1372,7 @@ export default function SeedPage() {
   const ignoredCount = SEED_ITEMS.filter((s) => s.dockStatus === 'ignored').length
   const reopenedCount = SEED_ITEMS.filter((s) => s.dockStatus === 'reopened').length
   const entryCount = SEED_ITEMS.filter((s) => s.entry).length
-  const entryTypes = Array.from(new Set(SEED_ITEMS.filter((s) => s.entry).map((s) => s.entry!.type)))
+  const entryTypes = Array.from(new Set(SEED_ITEMS.filter((s) => s.entry).map((s) => s.entry?.type ?? '')))
   const sourceTypes = Array.from(new Set(SEED_ITEMS.map((s) => s.sourceType)))
   const daySpan = Math.max(...SEED_ITEMS.map((s) => s.dayOffset)) - Math.min(...SEED_ITEMS.map((s) => s.dayOffset))
 
@@ -1346,6 +1432,10 @@ export default function SeedPage() {
               <span>Chat 会话（对应 chat 来源条目）</span>
               <span className="font-medium text-slate-800 dark:text-slate-200">{SEED_CHAT_SESSIONS.length} 条</span>
             </div>
+            <div className="flex justify-between">
+              <span>知识结构（自动 backfill）</span>
+              <span className="font-medium text-slate-800 dark:text-slate-200">集合 + 标签关系 + 条目关系</span>
+            </div>
           </div>
           <p className="text-xs text-slate-400 dark:text-slate-500 mt-3">归档条目与 Dock 一一对应，点击&ldquo;重新整理&rdquo;可回到 Dock</p>
         </div>
@@ -1373,7 +1463,7 @@ export default function SeedPage() {
           <div className="mt-4 p-4 bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/20 rounded-xl">
             <p className="text-sm text-green-700 dark:text-green-400 font-medium">数据填充成功</p>
             <p className="text-xs text-green-600 dark:text-green-400 mt-1">
-              创建了 {result.dockItemsCreated} 条 Dock 条目、{result.entriesCreated} 条归档条目、{result.tagsCreated} 个标签、{result.chatSessionsCreated} 条 Chat 会话
+              创建了 {result.dockItemsCreated} 条 Dock 条目、{result.entriesCreated} 条归档条目、{result.tagsCreated} 个标签、{result.chatSessionsCreated} 条 Chat 会话、{result.collectionsCreated} 个集合、{result.tagRelationsCreated} 条标签关系、{result.entryRelationsCreated} 条条目关系
             </p>
           </div>
         )}

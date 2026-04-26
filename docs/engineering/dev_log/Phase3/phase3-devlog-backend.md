@@ -1213,7 +1213,198 @@ await addChatMessage('user-123', session.id, {
 
 ✅ 是。Widget/Calendar 后端能力已就绪，待前端适配。Phase 3 主线仍剩 Graph Tree、Review Insight。
 
-（无）
+---
+
+## Round 13 Backend — 知识结构化底座（Knowledge Structure Foundation）
+
+**时间**: 2026-04-26 08:10
+**轮次**: Phase 3 Round 13
+**状态**: ✅ 已解决
+
+### 1. 问题
+
+| # | 问题 | 等级 | 说明 |
+|---|------|------|------|
+| 1 | 无 Collection 持久化模型 | P0 | World Tree / Time Machine 视图缺少集合/文件夹层级 |
+| 2 | 无 EntryTagRelation 显式关系 | P0 | Entry.tags 是字符串数组，无法表达 source/confidence |
+| 3 | 无 EntryRelation 关系模型 | P0 | 条目间 related/parent/child/reference 等关系无法表达 |
+| 4 | 无 KnowledgeEvent 事件流 | P1 | 无法追踪结构变更历史 |
+| 5 | 无 TemporalActivity 时间线 | P1 | Time Machine View 缺少活动时间轴数据 |
+| 6 | 无结构投影服务 | P0 | World Tree View 无法获取 root/collections/entries/tags/relations/orphans |
+
+### 2. 解决方案
+
+**Domain 类型**（`KnowledgeStructure.ts`）：
+- Collection：id, userId, name, description, icon, color, parentId, sortOrder, collectionType(folder/project/topic/archive/smart)
+- EntryTagRelation：id, userId, entryId, tagId, source(user/system/import), confidence, createdAt
+- EntryRelation：id, userId, sourceEntryId, targetEntryId, relationType(related/parent/child/reference/follow_up/same_topic/same_project/custom), direction, source, confidence, reason
+- KnowledgeEvent：id, userId, eventType(relation_created/entry_moved/tag_applied/world_tree_opened/temporal_activity_created/…), targetType, targetId, metadata
+- TemporalActivity：id, userId, type, entityType, entityId, occurredAt, dayKey/weekKey/monthKey, title, summary, tagIds, projectIds
+- StructureProjection：root + collections + entries + tags + relations + orphans
+- ViewState：userId, defaultView, lastView, sidebarCollapsed, inspectorVisible
+
+**Domain 服务**（`KnowledgeStructureService.ts`）：
+- `buildStructureProjection(input)` → 纯函数，输出完整结构视图投影
+- `validateEntryRelationInput(input)` → 异步校验：禁止自引用、跨用户、不存在节点
+- `backfillEntryTagRelations(input)` → 从 Entry.tags 生成 EntryTagRelation
+- `backfillProjectCollections(input)` → 从 Entry.project 生成 Collection(collectionType=project)
+
+**Dexie v13 migration**：
+- 新增 5 张表：collections, entryTagRelations, entryRelations, knowledgeEvents, temporalActivities
+- 所有表含 userId 索引，复合索引覆盖常用查询路径
+- 不破坏旧字段，旧 Entry.tags/project 保留
+
+**Repository API**：
+- listCollections / createCollection / updateCollection
+- listEntryTagRelations / addEntryTagRelation / removeEntryTagRelation
+- listEntryRelations / createEntryRelation / deleteEntryRelation
+- listKnowledgeEvents / recordKnowledgeEvent
+- listTemporalActivities / recordTemporalActivity
+- getStructureProjection
+- backfillStructureData
+
+**Backfill 策略**：
+- `backfillStructureData(userId)` 从现有 Entry 数据生成最小关系数据
+- Entry.tags → EntryTagRelation（source=system, confidence=1.0）
+- Entry.project → Collection（collectionType=project）
+- 幂等：重复调用不产生重复记录
+- 不修改原始 Entry 数据
+
+### 3. 变更内容
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `packages/domain/src/services/KnowledgeStructure.ts` | A | Phase 3 最小类型定义 + ID 生成函数 + computeTemporalKeys |
+| `packages/domain/src/services/KnowledgeStructureService.ts` | A | 结构投影 + 关系校验 + backfill 纯函数 |
+| `packages/domain/src/services/index.ts` | M | 导出 KnowledgeStructure + KnowledgeStructureService |
+| `packages/domain/tests/KnowledgeStructureService.test.ts` | A | 20 个 domain 测试 |
+| `apps/web/lib/db.ts` | M | 5 张新表 Record 类型 + v13 migration + 表导出 |
+| `apps/web/lib/repository.ts` | M | 15 个新 repository 函数 + getStructureProjection + backfillStructureData |
+| `apps/web/tests/knowledge-structure.test.ts` | A | 29 个 repository 集成测试 |
+| `apps/web/app/seed/page.tsx` | M | 修复预存 non-null assertion |
+| `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | Round 13 日志 |
+
+### 4. 遇到的问题
+
+| 问题 | 解决 |
+|------|------|
+| `Set<string>` 在 TS target < es2015 下不可迭代 | `Array.from(projectNames)` 转换后再遍历 |
+| build 时 non-null assertion lint 报错 | `c.id!` → `c.id as string`；测试中 `!` → `unwrap()` |
+| `createStoredTag` 返回 `null` 可能 | 测试中用 `unwrap()` 包装 |
+| backfill 测试 Entry.tags 包含 suggestion 引擎额外标签 | `toEqual` → `toContain` |
+
+### 5. 验证结果
+
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm lint` | ✅ 0 errors |
+| `pnpm typecheck` | ✅ PASS |
+| domain tests | ✅ 269 tests / 17 files |
+| web tests | ✅ 244 tests / 11 files |
+| `pnpm build` | ✅ PASS |
+
+### 6. 手工验证标准
+
+1. 旧归档 Entry 能生成真实 EntryTagRelation（backfillStructureData 后 listEntryTagRelations 可查到）
+2. 项目字段能映射到结构关系或集合归属，不丢旧数据（backfillStructureData 后 listCollections 含 project 类型集合，原 Entry.project 不变）
+3. 手动创建 EntryRelation 后，查询结构投影能看到关系（getStructureProjection 返回 relations 含对应边）
+4. 不同用户之间 Collection / TagRelation / EntryRelation / KnowledgeEvent 不串数据（所有 repository 函数 userId 隔离）
+
+### 7. 风险评估
+
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| backfill 全表扫描 | 低 | 当前数据量可接受，后续可增量 backfill |
+| 前端未适配结构视图 | 中 | 后端 API 就绪，前端需新增 World Tree / Time Machine 组件 |
+| EntryRelation 无双向自动维护 | 低 | parent/child 需手动创建反向关系，后续可加自动推导 |
+| KnowledgeEvent 无自动清理 | 低 | 事件表会持续增长，后续需加 TTL 或归档策略 |
+
+### 8. 是否可进入下一轮
+
+✅ 是。知识结构化底座已就绪，所有视图共享同一份真实数据。后续可进入 Graph Tree View / Time Machine View / Review Insight 前端适配。
+
+---
+
+## Round 14 Backend — 关系变更链路 TemporalActivity 补齐
+
+**时间**: 2026-04-26 09:15
+**轮次**: Phase 3 Round 14
+**状态**: ✅ 已解决
+
+### 1. 问题
+
+| # | 问题 | 等级 | 说明 |
+|---|------|------|------|
+| 1 | createEntryRelation 不写 TemporalActivity | P0 | Time Machine 无法拿到"关系创建"时间事件 |
+| 2 | deleteEntryRelation 不写任何事件 | P0 | 关系删除无 KnowledgeEvent 也无 TemporalActivity |
+| 3 | TemporalActivityType 缺少 relation_deleted | P1 | 类型不完整，无法表达删除关系的时间活动 |
+| 4 | 时间键生成缺少稳定性测试 | P1 | computeTemporalKeys 无幂等/格式/边界测试 |
+
+### 2. 解决方案
+
+**TemporalActivityType 补齐**：
+- 新增 `relation_deleted` 到 `TemporalActivityType` 联合类型
+
+**createEntryRelation 补齐**：
+- 在已有 `recordKnowledgeEvent(relation_created)` 之后，新增 `recordTemporalActivity(relation_created)`
+- TemporalActivity 字段：entityType='relation', entityId=relationId, title=`{relationType}: {sourceId} → {targetId}`
+- `recordTemporalActivity` 内部自动写入 `temporal_activity_created` KnowledgeEvent + dayKey/weekKey/monthKey
+
+**deleteEntryRelation 补齐**：
+- 删除前先读取 existing relation 数据
+- 写入 `recordKnowledgeEvent(relation_deleted)` + `recordTemporalActivity(relation_deleted)`
+- 删除失败（跨用户/不存在）不写入任何事件
+- 先写事件再删记录，保证事件数据完整
+
+**向后兼容**：
+- `TemporalActivityType` 新增 `relation_deleted`，不影响现有类型
+- repository API 签名不变
+- 前端无需改动
+
+### 3. 变更内容
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `packages/domain/src/services/KnowledgeStructure.ts` | M | TemporalActivityType 新增 relation_deleted |
+| `apps/web/lib/repository.ts` | M | createEntryRelation 补齐 TemporalActivity；deleteEntryRelation 补齐 KnowledgeEvent + TemporalActivity |
+| `apps/web/tests/knowledge-structure.test.ts` | M | 新增 4 个测试：TemporalActivity 创建/同步/删除/失败隔离 |
+| `packages/domain/tests/KnowledgeStructureService.test.ts` | M | 新增 6 个 computeTemporalKeys 稳定性测试 |
+| `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | Round 14 日志 |
+
+### 4. 遇到的问题
+
+| 问题 | 解决 |
+|------|------|
+| non-null assertion lint 错误 | `relationEvent!.targetId` → `unwrap(relationEvent).targetId` |
+
+### 5. 验证结果
+
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm lint` | ✅ 0 errors |
+| `pnpm typecheck` | ✅ PASS |
+| domain tests | ✅ 275 tests / 17 files |
+| web tests | ✅ 248 tests / 11 files |
+| `pnpm build` | ✅ PASS |
+
+### 6. 本轮手工验证步骤与验证标准
+
+1. 创建 EntryRelation 后，`listTemporalActivities` 返回 type='relation_created' 的记录，且 dayKey/weekKey/monthKey 格式正确
+2. 创建 EntryRelation 后，`listKnowledgeEvents` 返回 eventType='relation_created' 的记录，且 targetId 与 TemporalActivity.entityId 一致
+3. 删除 EntryRelation 后，`listKnowledgeEvents` 返回 eventType='relation_deleted'，`listTemporalActivities` 返回 type='relation_deleted'
+4. 跨用户删除不产生任何事件
+5. computeTemporalKeys 对同一日期多次调用返回相同结果
+
+### 7. 风险评估
+
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| deleteEntryRelation 先写事件再删记录 | 低 | 若删除失败事件已写入，但当前逻辑在 userId 校验后才写事件，风险可控 |
+| TemporalActivity 增长 | 低 | 每次关系变更产生 1 条 TemporalActivity + 1 条 KnowledgeEvent，后续需清理策略 |
+
+### 8. 是否可进入下一轮
+
+✅ 是。关系变更链路已完整覆盖 KnowledgeEvent + TemporalActivity 双写，Time Machine 可拿到关系变化时间事件。
 
 ---
 
