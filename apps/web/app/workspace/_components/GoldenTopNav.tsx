@@ -82,6 +82,21 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
     moved: boolean
   } | null>(null)
   const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 })
+  const justDraggedRef = useRef(false)
+
+  useEffect(() => {
+    if (isCollapsed) {
+      setNavPosition({ left: 16, top: 4, isPercentLeft: false })
+    } else {
+      setNavPosition({ left: 50, top: 24, isPercentLeft: true })
+    }
+  }, [isCollapsed])
+
+  useEffect(() => {
+    if (activeModule !== 'editor' && navPosition.isPercentLeft === false && !isCollapsed) {
+      setNavPosition({ left: 50, top: 24, isPercentLeft: true })
+    }
+  }, [activeModule, isCollapsed, navPosition.isPercentLeft])
 
   const navRef = useRef<HTMLElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
@@ -177,7 +192,10 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
   const handleLogoPointerUp = (event: PointerEvent<HTMLButtonElement>) => {
     if (!dragState || dragState.pointerId !== event.pointerId) return
     event.currentTarget.releasePointerCapture(event.pointerId)
-    if (!dragState.moved) {
+    if (dragState.moved) {
+      justDraggedRef.current = true
+      setTimeout(() => { justDraggedRef.current = false }, 100)
+    } else {
       if (isSearchMode) {
         setIsSearchMode(false)
       } else if (isCollapsedProp) {
@@ -191,6 +209,7 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
   }
 
   const handleLogoClick = () => {
+    if (justDraggedRef.current) return
     if (isCollapsed) return
     if (isSearchMode) {
       setIsSearchMode(false)

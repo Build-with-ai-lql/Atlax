@@ -25,6 +25,7 @@ import { recordEvent, type AppMode } from '@/lib/events'
 import WorkspaceTabs, { type Tab } from './features/shared/WorkspaceTabs'
 import HomeView from './features/home/HomeView'
 import EditorTabView from './features/editor/EditorTabView'
+import MindCanvasStage from './features/mind/MindCanvasStage'
 
 type ActiveModule = 'home' | 'mind' | 'dock' | 'editor'
 
@@ -70,6 +71,15 @@ export default function WorkspacePage() {
   const [mindEdges, setMindEdges] = useState<StoredMindEdge[]>([])
   const [mindInputText, setMindInputText] = useState('')
   const [mindRefreshKey, setMindRefreshKey] = useState(0)
+
+  const [toastMessage, setToastMessage] = useState('')
+  const toastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg)
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = setTimeout(() => setToastMessage(''), 2500)
+  }, [])
 
   const userId = user?.id || ''
 
@@ -453,7 +463,6 @@ export default function WorkspacePage() {
   const selectedItem = items.find(i => i.id === selectedItemId) ?? null
   const isEditorActive = activeTabId.startsWith('tab-editor-') && editingItemId != null
   const nodeCount = mindNodes.length
-  const edgeCount = mindEdges.length
 
   const activeEditorTab = tabs.find(t => t.id === activeTabId)
   const isActiveDraft = activeEditorTab?.documentId != null && activeEditorTab.documentId < 0
@@ -463,10 +472,7 @@ export default function WorkspacePage() {
       <div className="relative flex h-screen w-full flex-col overflow-hidden bg-[var(--bg-base)] font-sans text-[var(--text-main)] selection:bg-[var(--accent)] selection:text-white">
         <div className="ambient-glow" />
 
-        <div id="canvas-container" className={`canvas-container ${activeModule !== 'mind' ? 'canvas-dimmed' : ''}`}>
-          {activeModule === 'mind' && nodeCount > 0 && (
-            <MindCanvasLayer nodes={mindNodes} edges={mindEdges} onOpenEditor={openEditorTab} />
-          )}
+        <div id="canvas-container" className="canvas-container canvas-dimmed">
         </div>
 
         <GoldenTopNav
@@ -535,17 +541,36 @@ export default function WorkspacePage() {
               )}
 
               {activeModule === 'mind' && (
-                <div id="view-mind" className="view-section active w-full h-full flex-col pointer-events-auto relative">
-                  <MindInlineOverlay
+                <div id="view-mind" className="view-section active absolute inset-0 w-full h-full flex-col pointer-events-none">
+                  <MindCanvasStage
                     nodes={mindNodes}
                     edges={mindEdges}
-                    mindInputText={mindInputText}
-                    setMindInputText={setMindInputText}
-                    onMindInput={handleMindInput}
                     onOpenEditor={openEditorTab}
-                    nodeCount={nodeCount}
-                    edgeCount={edgeCount}
+                    onToast={showToast}
                   />
+                  {nodeCount === 0 && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                      <h1 className="text-5xl font-light text-white/80 tracking-tight mb-2">Nebula Tree</h1>
+                      <p className="text-sm text-[var(--text-muted)] mb-12">你的知识星空</p>
+                    </div>
+                  )}
+                  <div className="absolute bottom-8 w-full max-w-2xl px-6 z-20 pointer-events-auto">
+                    <div className="glass rounded-2xl flex items-center p-2 pl-4">
+                      <Sparkles size={16} className="text-emerald-500 flex-shrink-0" />
+                      <input
+                        type="text"
+                        value={mindInputText}
+                        onChange={(e) => setMindInputText(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleMindInput() }}
+                        placeholder="输入灵感并回车..."
+                        className="flex-1 bg-transparent outline-none px-4 py-2.5 text-[14px] font-light placeholder-slate-600 text-white"
+                      />
+                      <div className="flex items-center px-3 space-x-2 border-l border-[var(--border-line)]">
+                        <span className="text-[9px] uppercase tracking-widest text-emerald-500/80 font-mono">GROW</span>
+                        <kbd className="px-1.5 py-0.5 rounded text-[9px] bg-white/5 border border-white/10 text-slate-500">↵</kbd>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -571,6 +596,14 @@ export default function WorkspacePage() {
             </div>
           )}
         </main>
+
+        {toastMessage && (
+          <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[200] pointer-events-none">
+            <div className="glass rounded-xl px-5 py-2.5 text-sm text-white shadow-2xl dropdown-transition">
+              {toastMessage}
+            </div>
+          </div>
+        )}
 
         <FloatingRecorder
           recorderState={recorderState}
@@ -635,99 +668,6 @@ function EditorOptionsMenu({ mode, onSetMode }: { mode: 'classic' | 'block'; onS
           </div>
         </>
       )}
-    </div>
-  )
-}
-
-function MindCanvasLayer({ nodes, edges, onOpenEditor }: {
-  nodes: StoredMindNode[]
-  edges: StoredMindEdge[]
-  onOpenEditor: (id: number) => void
-}) {
-  const nodeMap = new Map(nodes.map(n => [n.id, n]))
-  return (
-    <svg className="w-full h-full touch-none">
-      {edges.map((edge: StoredMindEdge, i: number) => {
-        const s = nodeMap.get(edge.sourceNodeId)
-        const t = nodeMap.get(edge.targetNodeId)
-        if (!s || !t) return null
-        const sx = 10 + (hashStr(s.id) % 80)
-        const sy = 10 + (hashStr(s.id + 'y') % 80)
-        const tx = 10 + (hashStr(t.id) % 80)
-        const ty = 10 + (hashStr(t.id + 'y') % 80)
-        return <line key={`e-${i}`} x1={`${sx}%`} y1={`${sy}%`} x2={`${tx}%`} y2={`${ty}%`} stroke="rgba(255,255,255,0.04)" strokeWidth={0.5} />
-      })}
-      {nodes.slice(0, 50).map((node: StoredMindNode) => {
-        const x = 10 + (hashStr(node.id) % 80)
-        const y = 10 + (hashStr(node.id + 'y') % 80)
-        const colors: Record<string, string> = { source: '#10B981', document: '#6366F1', project: '#F59E0B', tag: '#8B5CF6' }
-        const r = node.nodeType === 'project' ? 8 : node.nodeType === 'document' ? 5 : 3
-        return (
-          <g key={node.id} onClick={() => { if (node.documentId) onOpenEditor(node.documentId) }} className="cursor-pointer">
-            <circle cx={`${x}%`} cy={`${y}%`} r={r} fill={colors[node.nodeType] || '#10B981'} opacity={0.6} />
-          </g>
-        )
-      })}
-    </svg>
-  )
-}
-
-function MindInlineOverlay({ nodes: _nodes, edges: _edges, mindInputText, setMindInputText, onMindInput, onOpenEditor: _onOpenEditor, nodeCount, edgeCount }: {
-  nodes: StoredMindNode[]
-  edges: StoredMindEdge[]
-  mindInputText: string
-  setMindInputText: (t: string) => void
-  onMindInput: () => void
-  onOpenEditor: (id: number) => void
-  nodeCount: number
-  edgeCount: number
-}) {
-  return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center">
-
-      {nodeCount === 0 && (
-        <div className="relative z-10 flex flex-col items-center pointer-events-none">
-          <h1 className="text-5xl font-light text-white/80 tracking-tight mb-2">Nebula Tree</h1>
-          <p className="text-sm text-[var(--text-muted)] mb-12">你的知识星空</p>
-        </div>
-      )}
-
-      {nodeCount > 0 && (
-        <div className="absolute top-4 right-4 z-20 pointer-events-auto">
-          <div className="glass rounded-2xl p-5 w-56">
-            <div className="text-[10px] uppercase tracking-widest text-[var(--text-muted)] mb-4">Atlas Status</div>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-[11px] text-[var(--text-muted)]">节点</span>
-                <span className="text-[15px] font-mono text-white">{nodeCount}</span>
-              </div>
-              <div className="h-px bg-[var(--border-line)]" />
-              <div className="flex justify-between items-center">
-                <span className="text-[11px] text-[var(--text-muted)]">连接</span>
-                <span className="text-[15px] font-mono text-white">{edgeCount}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="absolute bottom-8 w-full max-w-2xl px-6 z-20 pointer-events-auto">
-        <div className="glass rounded-2xl flex items-center p-2 pl-4">
-          <Sparkles size={16} className="text-emerald-500 flex-shrink-0" />
-          <input
-            type="text"
-            value={mindInputText}
-            onChange={(e) => setMindInputText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) onMindInput() }}
-            placeholder="输入灵感并回车..."
-            className="flex-1 bg-transparent outline-none px-4 py-2.5 text-[14px] font-light placeholder-slate-600 text-white"
-          />
-          <div className="flex items-center px-3 space-x-2 border-l border-[var(--border-line)]">
-            <span className="text-[9px] uppercase tracking-widest text-emerald-500/80 font-mono">GROW</span>
-            <kbd className="px-1.5 py-0.5 rounded text-[9px] bg-white/5 border border-white/10 text-slate-500">↵</kbd>
-          </div>
-        </div>
-      </div>
     </div>
   )
 }
@@ -1061,12 +1001,4 @@ function FloatingRecorder({ recorderState, setRecorderState, inputMode, setInput
       </div>
     </div>
   )
-}
-
-function hashStr(s: string): number {
-  let h = 0
-  for (let i = 0; i < s.length; i++) {
-    h = ((h << 5) - h + s.charCodeAt(i)) | 0
-  }
-  return Math.abs(h)
 }

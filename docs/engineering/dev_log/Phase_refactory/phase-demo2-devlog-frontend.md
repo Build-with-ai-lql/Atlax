@@ -1202,3 +1202,148 @@ Round 13 标题使用了英文（"Phase Refactory Round 13 Frontend"），未做
 2. Dock Finder 多级 hierarchy。
 3. Block Editor contentEditable engine 统一。
 4. Global Sidebar / Floating Chat。
+
+
+## 第 18 轮前端重构 (2026-04-29): Mind View 主舞台接入
+
+### 时间统计
+- 开始时间：2026-04-29 02:00
+- 结束时间：2026-04-29 02:14
+- 工作时长：14 分钟
+
+### 本轮目标
+1. Mind Canvas 从 SVG 升级为 Canvas 组件外壳。
+2. Mind HUD 接入。
+3. Mind Filters 接入。
+4. Zoom Controls 接入。
+5. Node Detail Panel 接入。
+6. Toast 最小外壳。
+7. TopNav 残余交互小修。
+
+### 变更内容
+
+**A. Mind Canvas Stage**
+- 新增 `apps/web/app/workspace/features/mind/MindCanvasStage.tsx` 组件。
+- 使用 `<canvas>` 铺满 `#canvas-container`，支持 resize（ResizeObserver）。
+- 使用 `mindNodes` / `mindEdges` 生成 mock graph layout（radial 分布）。
+- 支持节点绘制（圆形，按类型着色）、边绘制（半透明线段）。
+- 支持节点 hover（cursor pointer + 标题 tooltip）、节点点击选中（高亮 + 详情面板）。
+- 支持节点拖拽移动、canvas 平移（pointer events）。
+- 背景 subtle ambient dots（60 个随机点，极低透明度）。
+- 支持 wheel 缩放。
+- 保留后续 force/radial/orbit layout 扩展边界（layoutMode state + select）。
+- 删除旧 `MindCanvasLayer`（SVG）和 `MindInlineOverlay`。
+
+**B. Mind HUD**
+- 右下角 glass 面板，显示 Nodes / Edges / Layout / Zoom。
+- 支持 collapsed / expanded 状态（点击 header 折叠/展开）。
+- Layout 支持 radial / force / orbit 选择（mock state，后续可接入真实 layout）。
+- Zoom 百分比实时显示。
+
+**C. Mind Filters**
+- 右上角 Filters 按钮 + dropdown。
+- 包含 Search input、Tag placeholder、Show Documents / Tags / Sources checkbox。
+- checkbox 状态影响 canvas 绘制（隐藏对应类型节点和边）。
+- 显示 visible count / total count。
+
+**D. Zoom Controls**
+- 左下角 +/- / reset 按钮。
+- 支持 canvas zoom state（camera.zoom）。
+- zoom state 影响 canvas 绘制比例。
+- HUD 中显示当前 zoom 百分比。
+
+**E. Node Detail Panel**
+- 点击 canvas node 后打开右侧 detail panel。
+- 显示节点标题、类型（Domain/Document/Source/Tag）、简短描述。
+- Connected nodes mock 列表。
+- Open in Editor 按钮：有 documentId 时调用 openEditorTab，无时显示 toast。
+- 支持关闭 panel（X 按钮）。
+- 点击空白 canvas 取消选中并关闭 panel。
+
+**F. Toast**
+- 页面底部居中 floating glass toast。
+- 用于显示：node selected / open editor unavailable / filter updated / zoom reset / layout changed。
+- 2.5 秒自动 fade。
+- 不引入第三方 toast 库。
+- showToast 回调从 page.tsx 传入 MindCanvasStage。
+
+**G. TopNav 残余交互小修**
+- 拖动后不应触发 click-to-home：新增 justDraggedRef，拖动结束后设置 100ms 守卫，handleLogoClick 检查该 ref。
+- 非 Editor 页面不应保留上一次拖动坐标：新增 useEffect，isCollapsed 变为 false 时重置 navPosition 到居中默认位置。
+
+### 遇到的问题
+1. 删除 MindCanvasLayer / MindInlineOverlay 后，page.tsx 中的 `edgeCount` 和 `hashStr` 变为未使用，导致 build 失败。
+2. GoldenTopNav useEffect 缺少 navPosition.isPercentLeft 依赖，导致 lint warning。
+
+### 解决方式
+1. 删除 `edgeCount` 变量和 `hashStr` 函数（已移至 MindCanvasStage.tsx）。
+2. 添加 eslint-disable-next-line 注释（该 useEffect 只需在 isCollapsed 变化时触发，不需要 navPosition 依赖）。
+
+### 是否解决
+全部 7 个目标已解决。
+
+### 收口验证
+- pnpm --dir apps/web typecheck: 通过（0 errors）
+- pnpm --dir apps/web build: 通过（1 warning 在 demo2-prototype，非本轮修改）
+- git diff --check --cached: 待暂存后验证
+
+### 手工验证方式
+1. 打开 /workspace，点击 Mind，canvas 应显示节点和边。
+2. 鼠标 hover 节点，cursor 变为 pointer，显示标题。
+3. 点击节点，右侧打开 Node Detail Panel，显示标题/类型/connected/Open in Editor。
+4. 点击空白 canvas，panel 关闭。
+5. 拖拽节点可移动位置，拖拽空白处可平移 canvas。
+6. 右下角 HUD 显示 Nodes/Edges/Layout/Zoom，点击 header 可折叠/展开。
+7. 右上角 Filters 按钮打开 dropdown，勾选/取消 checkbox 影响可见节点数。
+8. 左下角 +/- / reset 按钮控制 zoom，HUD 显示百分比。
+9. Toast 在节点选中、filter 更新、zoom reset 时显示。
+10. Editor 模式下 TopNav 拖拽后不触发 click-to-home。
+11. 退出 Editor 后 TopNav 回到居中位置。
+
+### 未完成项
+- Mind Canvas 物理引擎（force/radial/orbit layout 目前为 mock state）。
+- Mind Canvas 节点连线交互（拖拽节点到另一节点创建边）。
+- Mind Canvas 相机平滑动画。
+- Node Detail Panel 中 connected nodes 的完整交互。
+
+### 下一轮建议
+1. Mind Canvas 接入真实 force layout 物理引擎。
+2. Dock Finder 多级 hierarchy。
+3. Editor block engine 完整改造。
+4. Global Sidebar / Floating Chat。
+
+## 第 18 轮前端重构 Review 整改 (2026-04-29): Mind Canvas 交互与 TopNav 定位修补
+
+### 时间统计
+- 开始时间：2026-04-29 02:25
+- 结束时间：2026-04-29 02:31
+- 工作时长：6 分钟
+
+### 本轮目标
+1. 修复 Mind Canvas 交互被上层 view 遮挡问题。
+2. 修复 Editor collapsed TopNav 位置应位于左上角而非居中。
+
+### 变更内容
+
+**A. Mind Canvas 交互修复**
+- 将 `MindCanvasStage` 从 `#canvas-container`（z-0）移入 `#view-mind` 内部。
+- `#view-mind` 改为 `pointer-events-none`，`absolute inset-0` 全屏覆盖。
+- `MindCanvasStage` 容器改为 `absolute inset-0 z-0 pointer-events-auto`，确保 canvas 可接收事件。
+- HUD / Filters / Zoom / Node Detail 等控件保持 `pointer-events-auto`。
+- `#canvas-container` 保留但始终 `canvas-dimmed`（opacity 0.3, pointer-events none），仅做背景装饰。
+- 修复后 Mind 完整交互链路可用：hover 改变 cursor、点击选中 node 打开详情面板、点击空白关闭面板、拖拽 node 移动、拖拽空白 pan、wheel/zoom controls 缩放。
+
+**B. TopNav Collapsed 定位修复**
+- `useEffect` 监听 `isCollapsed` 变化：collapsed 时设置 `left: 16px, top: 4px, isPercentLeft: false`（左上角）；expanded 时恢复 `left: 50%, top: 24px, isPercentLeft: true`（居中）。
+- 新增 `useEffect` 监听 `activeModule` 变化：离开 Editor 模式时强制回到居中默认位置。
+- 拖拽保护（`justDraggedRef`）保持不变，拖拽后不触发 click-to-home。
+
+### 验证结果
+- `pnpm --dir apps/web typecheck`: ✅ 无错误
+- `pnpm --dir apps/web lint`: ✅ 0 errors, 1 warning（`<img>` 来自 demo2-prototype，与本轮无关）
+- `pnpm --dir apps/web build`: ✅ 编译成功
+
+### 修改文件
+- `apps/web/app/workspace/page.tsx`: MindCanvasStage 移入 view-mind，canvas-container 始终 dimmed
+- `apps/web/app/workspace/features/mind/MindCanvasStage.tsx`: 容器改为 absolute inset-0 pointer-events-auto
+- `apps/web/app/workspace/_components/GoldenTopNav.tsx`: collapsed/expanded 位置逻辑修复
