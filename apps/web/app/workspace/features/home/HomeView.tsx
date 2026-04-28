@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useCallback } from 'react'
-import { ArrowRight, Clock, FilePlus2, FileText, Import, Network, Plus } from 'lucide-react'
+import { ArrowRight, FilePlus2, FileText, Import, Network, Plus } from 'lucide-react'
 import { listDockItems, type DockItem } from '@/lib/repository'
 
 interface HomeViewProps {
@@ -15,7 +15,7 @@ interface HomeViewProps {
   nodeCount: number
 }
 
-export default function HomeView({ userId, userName, onOpenEditor, onNewNote, onSwitchToDock, onSwitchToMind, onCapture, nodeCount }: HomeViewProps) {
+export default function HomeView({ userId, userName: _userName, onOpenEditor, onNewNote, onSwitchToDock, onSwitchToMind, onCapture, nodeCount }: HomeViewProps) {
   const [recentItems, setRecentItems] = useState<DockItem[]>([])
   const [hoveredCard, setHoveredCard] = useState<string | null>(null)
   const [captureText, setCaptureText] = useState('')
@@ -48,41 +48,49 @@ export default function HomeView({ userId, userName, onOpenEditor, onNewNote, on
   }
 
   const entryCards = [
-    { id: 'new-document', icon: <FilePlus2 size={20} />, title: 'New Document', desc: 'Structured markdown workspace', iconColor: 'text-[#a78bfa]', onClick: onNewNote },
-    { id: 'process-inbox', icon: <Import size={20} />, title: 'Process Inbox', desc: 'Organize unlinked fragments', iconColor: 'text-[#bbf7d0]', onClick: onSwitchToDock },
-    { id: 'graph-explorer', icon: <Network size={20} />, title: 'Graph Explorer', desc: 'Navigate your knowledge base', iconColor: 'text-blue-400', onClick: onSwitchToMind },
+    { id: 'new-document', icon: <FilePlus2 size={22} />, title: 'New Document', desc: 'Structured markdown workspace', iconColor: 'text-indigo-400', onClick: onNewNote },
+    { id: 'process-inbox', icon: <Import size={22} />, title: 'Process Inbox', desc: 'Organize unlinked fragments', iconColor: 'text-emerald-400', onClick: onSwitchToDock },
+    { id: 'graph-explorer', icon: <Network size={22} />, title: 'Graph Explorer', desc: 'Navigate your knowledge base', iconColor: 'text-blue-400', onClick: onSwitchToMind },
   ]
 
   return (
-    <div className="h-full overflow-y-auto px-6 pb-12 pt-20 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col items-center">
-        <section className="flex w-full flex-1 flex-col items-center justify-center py-16">
-          <div className="mb-11 text-center">
-            <h1 className="mb-4 text-4xl font-semibold tracking-normal text-white md:text-5xl">Knowledge, Structured.</h1>
-            <p className="font-mono text-sm text-[#8B8B8B]">
-              {nodeCount.toLocaleString()} Nodes active in {userName}&apos;s workspace.
-            </p>
+    <div className="h-full overflow-y-auto px-6 pb-24 pt-24 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden atlax-deep-space relative">
+      <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col items-center relative z-10">
+        <section className="flex w-full flex-col items-center py-12">
+          <div className="mb-14 text-center">
+            <h1 className="mb-6 text-5xl font-semibold tracking-tight text-white md:text-6xl bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60">
+              Knowledge, Structured.
+            </h1>
+            <div className="flex items-center justify-center gap-4 mt-8">
+              <div className="h-px w-10 bg-white/10" />
+              <p className="font-mono text-[10px] text-[#8B8B8B] tracking-[0.2em] uppercase">
+                {nodeCount} Nodes active in your workspace.
+              </p>
+              <div className="h-px w-10 bg-white/10" />
+            </div>
           </div>
 
-          <div className="mb-14 flex w-full max-w-2xl items-center rounded-2xl border border-white/[0.08] bg-[rgba(26,26,26,0.7)] p-2 pl-6 shadow-2xl backdrop-blur-2xl transition-all focus-within:border-[#a78bfa] focus-within:bg-[rgba(26,26,26,0.85)]">
+          {/* Star Input - Main Capture */}
+          <div className="mb-20 flex w-full max-w-2xl items-center rounded-2xl border border-white/[0.08] bg-white/[0.02] p-2 pl-6 shadow-[0_20px_50px_rgba(0,0,0,0.3)] backdrop-blur-2xl transition-all duration-500 focus-within:border-[#a78bfa]/30 focus-within:bg-white/[0.05] focus-within:ring-1 focus-within:ring-[#a78bfa]/10">
             <input
               type="text"
               value={captureText}
               onChange={(e) => setCaptureText(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) submitCapture() }}
               placeholder="Capture an idea... (Press Enter to Dock)"
-              className="w-full bg-transparent py-3 text-lg text-white outline-none placeholder:text-[#8B8B8B]"
+              className="w-full bg-transparent py-4 text-lg font-light text-white outline-none placeholder:text-[#444] placeholder:font-light"
             />
             <button
               onClick={submitCapture}
               disabled={!captureText.trim() || submitting}
-              className="ml-2 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#a78bfa] text-white transition-colors hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-40"
+              className="ml-2 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#a78bfa]/10 text-[#a78bfa] border border-[#a78bfa]/20 transition-all hover:bg-[#a78bfa]/20 disabled:cursor-not-allowed disabled:opacity-20"
               title="Capture"
             >
               {submitting ? <Plus size={20} className="animate-spin" /> : <ArrowRight size={20} />}
             </button>
           </div>
 
+          {/* Feature Grid */}
           <div className="grid w-full max-w-4xl grid-cols-1 gap-6 md:grid-cols-3">
             {entryCards.map((card) => (
               <button
@@ -90,53 +98,53 @@ export default function HomeView({ userId, userName, onOpenEditor, onNewNote, on
                 onClick={card.onClick}
                 onMouseEnter={() => setHoveredCard(card.id)}
                 onMouseLeave={() => setHoveredCard(null)}
-                className={`group flex flex-col items-center rounded-2xl border bg-[rgba(26,26,26,0.7)] p-6 text-center shadow-xl backdrop-blur-2xl transition-all duration-300 ${
+                className={`group flex flex-col items-center rounded-2xl border bg-white/[0.02] p-6 text-center shadow-xl backdrop-blur-2xl transition-all duration-500 ${
                   hoveredCard && hoveredCard !== card.id
-                    ? 'scale-[0.98] border-white/[0.04] opacity-45'
-                    : 'border-white/[0.08] hover:border-white/[0.15] hover:bg-white/[0.05]'
+                    ? 'scale-[0.97] border-white/[0.02] opacity-40 grayscale-[0.5]'
+                    : 'border-white/[0.08] hover:border-white/[0.15] hover:bg-white/[0.04] hover:shadow-[#a78bfa]/5'
                 }`}
               >
-                <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.05] transition-transform group-hover:scale-110">
-                  <span className={card.iconColor}>{card.icon}</span>
+                <div className={`mb-6 flex h-12 w-12 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.03] transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 ${card.iconColor}`}>
+                  {card.icon}
                 </div>
-                <p className="mb-2 text-sm font-medium text-white">{card.title}</p>
-                <p className="text-sm text-[#8B8B8B]">{card.desc}</p>
+                <p className="mb-2 text-base font-medium text-white group-hover:text-[#a78bfa] transition-colors">{card.title}</p>
+                <p className="text-sm text-[#8B8B8B] leading-relaxed font-light">{card.desc}</p>
               </button>
             ))}
           </div>
 
-          <div className="mt-14 w-full max-w-4xl">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Clock size={14} className="text-[#8B8B8B]" />
-                <span className="text-[12px] font-medium text-slate-400">Recent Documents</span>
-              </div>
-              <button onClick={onSwitchToDock} className="text-[11px] text-slate-500 hover:text-slate-300 transition-colors">
-                View all
-              </button>
+          <div className="mt-24 w-full max-w-4xl">
+            <div className="flex items-center justify-between mb-8 px-2">
+              <span className="text-[11px] font-bold tracking-[0.25em] text-[#8B8B8B] uppercase">Recent Intelligence</span>
             </div>
 
             {recentItems.length === 0 ? (
-              <div className="py-8 text-center">
-                <p className="text-[12px] text-slate-600">暂无最近文档</p>
+              <div className="py-16 text-center rounded-[32px] border border-dashed border-white/[0.08] bg-white/[0.01]">
+                <p className="text-[12px] text-slate-600 font-light tracking-wide">No recently processed fragments detected.</p>
               </div>
             ) : (
-              <div className="space-y-1 rounded-2xl border border-white/[0.08] bg-[rgba(26,26,26,0.45)] p-2 backdrop-blur-2xl">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {recentItems.map((item) => (
                   <button
                     key={item.id}
                     onClick={() => onOpenEditor(item.id)}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/[0.04] transition-colors text-left group"
+                    className="flex items-center gap-5 px-6 py-5 rounded-[24px] border border-white/[0.04] bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/[0.1] transition-all group text-left shadow-lg"
                   >
-                    <FileText size={14} className="text-slate-600 flex-shrink-0" />
+                    <div className="w-12 h-12 rounded-full bg-white/[0.03] flex items-center justify-center border border-white/[0.06] group-hover:bg-white/[0.08] transition-all">
+                      <FileText size={18} className="text-slate-500 group-hover:text-white transition-colors" />
+                    </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[13px] text-white/80 truncate group-hover:text-white/90 transition-colors">
+                      <p className="text-[14px] text-white/80 font-light truncate group-hover:text-white transition-colors mb-1">
                         {item.topic || item.rawText.slice(0, 60)}
                       </p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] text-slate-600 uppercase tracking-widest font-mono">
+                          {item.status === 'archived' ? 'Finalized' : item.status === 'suggested' ? 'Structured' : 'Raw Fragment'}
+                        </span>
+                        <div className="h-2 w-px bg-white/5" />
+                        <span className="text-[9px] text-slate-700 font-mono">ID: {item.id}</span>
+                      </div>
                     </div>
-                    <span className="text-[10px] text-slate-600 flex-shrink-0">
-                      {item.status === 'archived' ? '已归档' : item.status === 'suggested' ? '已建议' : '待处理'}
-                    </span>
                   </button>
                 ))}
               </div>

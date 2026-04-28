@@ -1,9 +1,10 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { Home, Library, Network, Plus, Search, Send, Minimize2, Sparkles, Loader2, X, ChevronRight, Dock as DockIcon } from 'lucide-react'
+import { Send, Minimize2, Sparkles, Loader2, X, Dock as DockIcon, MoreHorizontal, LayoutList, FileCode2, Pencil, FolderOutput, Download, Trash2 } from 'lucide-react'
 
-import { getCurrentUser, registerUser, type LocalUser } from '@/lib/auth'
+import { getCurrentUser, registerUser, logoutUser, type LocalUser } from '@/lib/auth'
+import GoldenTopNav from './_components/GoldenTopNav'
 import {
   archiveItem,
   createDockItem,
@@ -25,7 +26,7 @@ import WorkspaceTabs, { type Tab } from './features/shared/WorkspaceTabs'
 import HomeView from './features/home/HomeView'
 import EditorTabView from './features/editor/EditorTabView'
 
-type ActiveModule = 'home' | 'mind' | 'dock'
+type ActiveModule = 'home' | 'mind' | 'dock' | 'editor'
 
 const STATUS_LABELS: Record<EntryStatus, { label: string; color: string; bg: string }> = {
   pending: { label: '待处理', color: 'text-yellow-600 dark:text-yellow-400', bg: 'bg-yellow-50 dark:bg-yellow-500/10 border-yellow-200 dark:border-yellow-500/20' },
@@ -113,6 +114,11 @@ export default function WorkspacePage() {
     setMindRefreshKey((k) => k + 1)
   }, [loadData])
 
+  const handleLogout = useCallback(() => {
+    logoutUser()
+    setUser(null)
+  }, [])
+
   const handleCapture = useCallback(async (text: string) => {
     if (!text.trim() || !userId) return
     try {
@@ -183,7 +189,7 @@ export default function WorkspacePage() {
     setEditingItemId(itemId)
     setEditorTitle(item.topic || item.rawText.slice(0, 50))
     setEditorContent(item.rawText)
-    setActiveModule('home')
+    setActiveModule('editor')
   }, [items, tabs])
 
   const handleNewNote = useCallback(async () => {
@@ -198,11 +204,26 @@ export default function WorkspacePage() {
         state: 'active',
       })
       refreshAll()
-      setTimeout(() => openEditorTab(newId), 100)
+
+      // Directly create and activate the tab to avoid setTimeout dependency
+      const tabId = `tab-editor-${newId}`
+      const newTab: Tab = {
+        id: tabId,
+        type: 'editor',
+        title: 'New Note',
+        documentId: newId,
+        isPinned: false,
+      }
+      setTabs(prev => [...prev, newTab])
+      setActiveTabId(tabId)
+      setEditingItemId(newId)
+      setEditorTitle('New Note')
+      setEditorContent('New Note')
+      setActiveModule('editor')
     } catch (e) {
       setError(e instanceof Error ? e.message : '创建失败')
     }
-  }, [userId, refreshAll, openEditorTab])
+  }, [userId, refreshAll])
 
   const handleSaveEditor = useCallback(async () => {
     if (!editingItemId || !userId) return
@@ -222,7 +243,7 @@ export default function WorkspacePage() {
       else if (tab.type === 'mind') setActiveModule('mind')
       else if (tab.type === 'dock') setActiveModule('dock')
       else if (tab.type === 'editor' && tab.documentId) {
-        setActiveModule('home')
+        setActiveModule('editor')
         const item = items.find(i => i.id === tab.documentId)
         if (item) {
           setEditingItemId(tab.documentId)
@@ -241,15 +262,36 @@ export default function WorkspacePage() {
         const newActive = next[Math.min(idx, next.length - 1)]?.id || 'tab-home'
         setActiveTabId(newActive)
         const newTab = next.find(t => t.id === newActive)
-        if (newTab?.type === 'home') setActiveModule('home')
-        else if (newTab?.type === 'mind') setActiveModule('mind')
-        else if (newTab?.type === 'dock') setActiveModule('dock')
-        else setActiveModule('home')
+        if (newTab?.type === 'home') {
+          setActiveModule('home')
+          setEditingItemId(null)
+        } else if (newTab?.type === 'mind') {
+          setActiveModule('mind')
+          setEditingItemId(null)
+        } else if (newTab?.type === 'dock') {
+          setActiveModule('dock')
+          setEditingItemId(null)
+        } else if (newTab?.type === 'editor') {
+          setActiveModule('editor')
+          const docId = newTab.documentId ?? null
+          setEditingItemId(docId)
+          if (docId) {
+            const item = items.find(i => i.id === docId)
+            if (item) {
+              setEditorTitle(item.topic || item.rawText.slice(0, 50))
+              setEditorContent(item.rawText)
+            }
+          }
+        } else {
+          setActiveModule('home')
+          setEditingItemId(null)
+        }
+      } else {
+        // 关闭非 active tab，editingItemId 保持不变
       }
       return next
     })
-    setEditingItemId(null)
-  }, [activeTabId])
+  }, [activeTabId, items])
 
   const handleNewTab = useCallback(() => {
     handleNewNote()
@@ -257,6 +299,23 @@ export default function WorkspacePage() {
 
   const handleModuleChange = useCallback((mod: ActiveModule) => {
     setActiveModule(mod)
+    if (mod === 'editor') {
+      const editorTabs = tabs.filter(t => t.type === 'editor')
+      if (editorTabs.length > 0) {
+        const currentActive = tabs.find(t => t.id === activeTabId)
+        let targetId = editorTabs[0].id
+        if (currentActive && currentActive.type === 'editor') {
+          targetId = currentActive.id
+        } else {
+          targetId = editorTabs[editorTabs.length - 1].id
+        }
+        handleActivateTab(targetId)
+      } else {
+        handleNewNote()
+      }
+      return
+    }
+
     const tabId = `tab-${mod}`
     const existing = tabs.find(t => t.id === tabId)
     if (existing) {
@@ -266,10 +325,8 @@ export default function WorkspacePage() {
       setTabs(prev => [...prev, newTab])
       setActiveTabId(tabId)
     }
-    if (mod !== 'home') {
-      setEditingItemId(null)
-    }
-  }, [tabs])
+    setEditingItemId(null)
+  }, [tabs, activeTabId, handleActivateTab, handleNewNote])
 
   const handleMindInput = useCallback(async () => {
     if (!mindInputText.trim()) return
@@ -346,119 +403,84 @@ export default function WorkspacePage() {
       <div className="relative flex h-screen w-full flex-col overflow-hidden bg-[#111111] font-sans text-slate-200 selection:bg-[#a78bfa] selection:text-white">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.025)_0%,rgba(17,17,17,0)_60%)]" />
 
-        <nav className="fixed left-1/2 top-6 z-50 flex h-12 -translate-x-1/2 items-center overflow-hidden rounded-full border border-white/[0.08] bg-[rgba(26,26,26,0.7)] px-1 shadow-xl backdrop-blur-2xl">
-          <button
-            onClick={() => handleModuleChange('home')}
-            className="relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/[0.08] bg-slate-800 text-slate-200 transition-colors hover:bg-slate-700"
-            title="Home"
-          >
-            <Network size={19} />
-          </button>
+        <GoldenTopNav
+          activeModule={activeModule}
+          onModuleChange={handleModuleChange}
+          onOpenRecorder={() => setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')}
+          user={user}
+          onLogout={handleLogout}
+        />
 
-          <div className="ml-2 flex h-full flex-1 items-center pr-1">
-            <div className="flex shrink-0 items-center gap-1">
-              {(['home', 'mind', 'dock'] as ActiveModule[]).map((mod) => {
-                const Icon = mod === 'home' ? Home : mod === 'mind' ? Network : Library
-                return (
-              <button
-                key={mod}
-                onClick={() => handleModuleChange(mod)}
-                    className={`relative rounded-full px-4 py-2 text-sm font-medium transition-all ${
-                  activeModule === mod && !isEditorActive
-                        ? 'bg-white/10 text-white'
-                        : 'text-[#8B8B8B] hover:text-white'
-                }`}
-              >
-                    <span className="relative z-10 flex items-center gap-2">
-                      <Icon size={16} />
-                      {mod.charAt(0).toUpperCase() + mod.slice(1)}
-                    </span>
-              </button>
-                )
-              })}
-              <div className="mx-2 h-5 w-px shrink-0 bg-white/[0.08]" />
-            </div>
-
-            <button className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#8B8B8B] transition-colors hover:bg-white/10 hover:text-white" title="Search">
-              <Search size={16} />
-            </button>
-            <button
-              onClick={() => setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#8B8B8B] transition-colors hover:bg-white/10 hover:text-white"
-              title="记录"
-            >
-              <Plus size={16} />
-            </button>
-            <div className="ml-1 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-white/[0.08] bg-slate-800">
-              <span className="text-[10px] font-bold text-slate-400">{user.name.charAt(0).toUpperCase()}</span>
+        {isEditorActive && activeModule === 'editor' && (
+          <div className="relative z-10 flex-1 flex flex-col p-4 pt-0 overflow-hidden mt-[72px]">
+            <div className="flex-1 flex flex-col rounded-2xl overflow-hidden border border-white/[0.06] shadow-2xl">
+              <div className="h-14 bg-[#161616] border-b border-white/[0.06] flex items-end pl-20 pr-3 pb-0 shrink-0 relative">
+                <WorkspaceTabs
+                  tabs={tabs.filter(t => t.type === 'editor')}
+                  activeTabId={activeTabId}
+                  onActivateTab={handleActivateTab}
+                  onCloseTab={handleCloseTab}
+                  onNewTab={handleNewTab}
+                />
+                <EditorOptionsMenu />
+              </div>
+              <EditorTabView
+                editingItemId={editingItemId}
+                editorTitle={editorTitle}
+                editorContent={editorContent}
+                onTitleChange={setEditorTitle}
+                onContentChange={setEditorContent}
+                onSave={handleSaveEditor}
+              />
             </div>
           </div>
-        </nav>
+        )}
 
-        <div className="relative z-30 mt-[88px] border-y border-white/[0.06] bg-[#111111]/60 backdrop-blur-md">
-          <WorkspaceTabs
-            tabs={tabs}
-            activeTabId={activeTabId}
-            onActivateTab={handleActivateTab}
-            onCloseTab={handleCloseTab}
-            onNewTab={handleNewTab}
-          />
-        </div>
+        {!isEditorActive && (
+          <div className="relative z-10 flex-1 overflow-hidden">
+            {activeModule === 'home' && (
+              <HomeView
+                userId={userId}
+                userName={user.name}
+                onOpenEditor={openEditorTab}
+                onNewNote={handleNewNote}
+                onSwitchToDock={() => handleModuleChange('dock')}
+                onSwitchToMind={() => handleModuleChange('mind')}
+                onCapture={handleCapture}
+                nodeCount={nodeCount}
+              />
+            )}
 
-        <div className="relative z-10 flex-1 overflow-hidden">
-          {activeModule === 'home' && !isEditorActive && (
-            <HomeView
-              userId={userId}
-              userName={user.name}
-              onOpenEditor={openEditorTab}
-              onNewNote={handleNewNote}
-              onSwitchToDock={() => handleModuleChange('dock')}
-              onSwitchToMind={() => handleModuleChange('mind')}
-              onCapture={handleCapture}
-              nodeCount={nodeCount}
-            />
-          )}
+            {activeModule === 'mind' && (
+              <MindInlineView
+                nodes={mindNodes}
+                edges={mindEdges}
+                mindInputText={mindInputText}
+                setMindInputText={setMindInputText}
+                onMindInput={handleMindInput}
+                onOpenEditor={openEditorTab}
+                nodeCount={nodeCount}
+                edgeCount={edgeCount}
+              />
+            )}
 
-          {isEditorActive && (
-            <EditorTabView
-              editingItemId={editingItemId}
-              editorTitle={editorTitle}
-              editorContent={editorContent}
-              onTitleChange={setEditorTitle}
-              onContentChange={setEditorContent}
-              onSave={handleSaveEditor}
-            />
-          )}
-
-          {activeModule === 'mind' && (
-            <MindInlineView
-              nodes={mindNodes}
-              edges={mindEdges}
-              mindInputText={mindInputText}
-              setMindInputText={setMindInputText}
-              onMindInput={handleMindInput}
-              onOpenEditor={openEditorTab}
-              nodeCount={nodeCount}
-              edgeCount={edgeCount}
-            />
-          )}
-
-          {activeModule === 'dock' && (
-            <DockInlineView
-              items={items}
-              selectedItemId={selectedItemId}
-              loading={loading}
-              error={error}
-              onSelectItem={setSelectedItemId}
-              onArchive={handleArchive}
-              onSuggest={handleSuggest}
-              onOpenEditor={openEditorTab}
-              onReopen={handleReopen}
-              onOpenRecorder={() => setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')}
-              selectedItem={selectedItem}
-            />
-          )}
-        </div>
+            {activeModule === 'dock' && (
+              <DockInlineView
+                items={items}
+                selectedItemId={selectedItemId}
+                loading={loading}
+                error={error}
+                onSelectItem={setSelectedItemId}
+                onArchive={handleArchive}
+                onSuggest={handleSuggest}
+                onOpenEditor={openEditorTab}
+                onReopen={handleReopen}
+                onOpenRecorder={() => setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')}
+                selectedItem={selectedItem}
+              />
+            )}
+          </div>
+        )}
 
         <FloatingRecorder
           recorderState={recorderState}
@@ -470,6 +492,51 @@ export default function WorkspacePage() {
           onCapture={handleCapture}
         />
       </div>
+    </div>
+  )
+}
+
+function EditorOptionsMenu() {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div className="relative flex items-end pb-2 ml-auto">
+      <button
+        onClick={() => setOpen(!open)}
+        className="p-1.5 text-slate-500 hover:text-white transition-colors rounded-md hover:bg-white/10"
+        title="More Options"
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-[110]" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-1 w-56 bg-[#161616]/95 backdrop-blur-xl border border-white/[0.06] rounded-xl p-1 z-[120] shadow-2xl">
+            <div className="px-2 py-1 text-[9px] font-bold text-slate-500 tracking-wider">VIEW OPTIONS</div>
+            <button className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center justify-between transition-colors">
+              <span className="flex items-center gap-2"><LayoutList size={14} /> Block Edit</span>
+            </button>
+            <button className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center justify-between transition-colors">
+              <span className="flex items-center gap-2"><FileCode2 size={14} /> Classic Edit</span>
+            </button>
+            <div className="my-1 border-t border-white/[0.06]" />
+            <div className="px-2 py-1 text-[9px] font-bold text-slate-500 tracking-wider">ACTIONS</div>
+            <button className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors">
+              <Pencil size={14} /> Rename
+            </button>
+            <button className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors">
+              <FolderOutput size={14} /> Move to...
+            </button>
+            <button className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors">
+              <Download size={14} /> Export as PDF
+            </button>
+            <div className="my-1 border-t border-white/[0.06]" />
+            <button className="w-full text-left px-2 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors">
+              <Trash2 size={14} /> Delete
+            </button>
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -486,12 +553,7 @@ function MindInlineView({ nodes, edges, mindInputText, setMindInputText, onMindI
 }) {
   const nodeMap = new Map(nodes.map(n => [n.id, n]))
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center">
-      <div className="absolute inset-0 bg-[#030508]">
-        <div className="absolute top-[20%] left-[15%] w-[300px] h-[300px] bg-indigo-500/[0.04] rounded-full blur-[100px]" />
-        <div className="absolute bottom-[20%] right-[20%] w-[400px] h-[400px] bg-cyan-500/[0.03] rounded-full blur-[120px]" />
-        <div className="absolute top-[50%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-[200px] h-[200px] bg-emerald-500/[0.05] rounded-full blur-[80px]" />
-      </div>
+    <div className="absolute inset-0 flex flex-col items-center justify-center atlax-deep-space">
 
       {nodeCount > 0 && (
         <svg className="absolute inset-0 z-10 w-full h-full">
@@ -581,81 +643,68 @@ function DockInlineView({ items, selectedItemId, loading, error, onSelectItem, o
 }) {
   return (
     <div className="h-full flex">
-      <div className="flex-1 overflow-y-auto px-6 py-6 pb-40">
-        <div className="max-w-4xl mx-auto space-y-4">
+      <div className="flex-1 overflow-y-auto px-4 py-4 pb-40">
+        <div className="max-w-3xl mx-auto space-y-1">
           {loading ? (
-            <div className="flex items-center justify-center h-32 opacity-50">
-              <Loader2 className="animate-spin text-slate-400" size={24} />
+            <div className="flex items-center justify-center h-32">
+              <Loader2 className="animate-spin text-slate-500" size={20} />
             </div>
           ) : error ? (
             <div className="flex items-center justify-center h-32">
-              <p className="text-red-500 text-sm">{error}</p>
+              <p className="text-red-400 text-sm">{error}</p>
             </div>
           ) : items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-slate-500">
-              <div className="w-16 h-16 bg-white/5 rounded-3xl flex items-center justify-center mb-6 border border-white/[0.06]">
-                <DockIcon size={32} className="opacity-20" />
-              </div>
-              <p className="text-base font-medium text-slate-400">Dock 虚位以待</p>
-              <p className="text-sm mt-1.5 opacity-50 max-w-[200px] text-center leading-relaxed">每一个伟大的想法，都值得被认真记录</p>
-              <button onClick={onOpenRecorder} className="mt-6 px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs font-medium transition-colors">即刻开始记录</button>
+            <div className="flex flex-col items-center justify-center py-16 text-slate-500">
+              <DockIcon size={18} className="opacity-30 mb-3" />
+              <p className="text-sm">暂无条目</p>
+              <button onClick={onOpenRecorder} className="mt-4 text-xs text-emerald-400 hover:underline">录入</button>
             </div>
           ) : (
-            <>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-slate-500">{items.length} 条待整理</span>
-              </div>
+            <div className="space-y-1">
               {items.map((item) => {
                 const statusInfo = STATUS_LABELS[item.status] || STATUS_LABELS.pending
                 return (
                   <div
                     key={item.id}
                     onClick={() => onSelectItem(selectedItemId === item.id ? null : item.id)}
-                    className={`p-4 rounded-2xl border cursor-pointer transition-all duration-300 ${
+                    className={`px-3 py-2 rounded border cursor-pointer ${
                       selectedItemId === item.id
-                        ? 'bg-white/[0.06] border-emerald-500/20'
-                        : 'bg-white/[0.02] border-white/[0.04] hover:bg-white/[0.04] hover:border-white/[0.08]'
+                        ? 'bg-white/5 border-white/10'
+                        : 'border-transparent hover:bg-white/[0.02]'
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-white/90 leading-relaxed line-clamp-2">{item.rawText}</p>
-                        <div className="flex items-center gap-2 mt-2">
-                          <span className={`text-[10px] px-2 py-0.5 rounded-md border ${statusInfo.bg} ${statusInfo.color}`}>{statusInfo.label}</span>
-                        </div>
-                      </div>
-                      <ChevronRight size={14} className={`flex-shrink-0 mt-1 ${selectedItemId === item.id ? 'text-emerald-500' : 'text-slate-600'}`} />
-                    </div>
+                    <p className="text-sm text-slate-300">{item.rawText}</p>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${statusInfo.bg} ${statusInfo.color}`}>{statusInfo.label}</span>
                   </div>
                 )
               })}
-            </>
+            </div>
           )}
         </div>
       </div>
 
       {selectedItem && (
-        <div className="w-[420px] border-l border-white/[0.06] bg-[#0A0D14] overflow-y-auto flex-shrink-0 p-6">
-          <div className="flex items-center justify-between mb-6">
-            <span className={`text-[10px] px-2.5 py-1 rounded-md border ${STATUS_LABELS[selectedItem.status]?.bg} ${STATUS_LABELS[selectedItem.status]?.color} font-medium`}>
+        <div className="w-80 border-l border-white/[0.06] bg-[#0A0D14] overflow-y-auto flex-shrink-0 p-4">
+          <div className="flex items-center justify-between mb-4">
+            <span className={`text-[10px] px-2 py-0.5 rounded border ${STATUS_LABELS[selectedItem.status]?.bg} ${STATUS_LABELS[selectedItem.status]?.color}`}>
               {STATUS_LABELS[selectedItem.status]?.label}
             </span>
-            <button onClick={() => onSelectItem(null)} className="p-1.5 text-slate-500 hover:text-white rounded-lg hover:bg-white/5 transition-colors">
-              <X size={16} />
+            <button onClick={() => onSelectItem(null)} className="text-slate-500 hover:text-white">
+              <X size={14} />
             </button>
           </div>
-          <p className="text-sm text-white/80 leading-relaxed whitespace-pre-wrap mb-6">{selectedItem.rawText}</p>
-          <div className="pt-4 border-t border-white/[0.06] space-y-2">
+          <p className="text-sm text-slate-300 whitespace-pre-wrap mb-4">{selectedItem.rawText}</p>
+          <div className="space-y-1.5">
             {selectedItem.status === 'pending' && (
-              <button onClick={() => onSuggest(selectedItem.id)} className="w-full py-2.5 bg-blue-500/10 text-blue-400 rounded-xl text-xs font-medium hover:bg-blue-500/20 transition-colors">生成建议</button>
+              <button onClick={() => onSuggest(selectedItem.id)} className="text-xs text-indigo-400 hover:underline">建议</button>
             )}
             {(selectedItem.status === 'suggested' || selectedItem.status === 'reopened') && (
-              <button onClick={() => onArchive(selectedItem.id)} className="w-full py-2.5 bg-emerald-500/10 text-emerald-400 rounded-xl text-xs font-medium hover:bg-emerald-500/20 transition-colors">确认归档</button>
+              <button onClick={() => onArchive(selectedItem.id)} className="text-xs text-emerald-400 hover:underline">归档</button>
             )}
             {selectedItem.status === 'archived' && (
-              <button onClick={() => onReopen(selectedItem.id)} className="w-full py-2.5 bg-orange-500/10 text-orange-400 rounded-xl text-xs font-medium hover:bg-orange-500/20 transition-colors">重新整理</button>
+              <button onClick={() => onReopen(selectedItem.id)} className="text-xs text-orange-400 hover:underline">重新打开</button>
             )}
-            <button onClick={() => onOpenEditor(selectedItem.id)} className="w-full py-2.5 bg-white/5 text-slate-300 rounded-xl text-xs font-medium hover:bg-white/10 transition-colors">在 Editor 中编辑</button>
+            <button onClick={() => onOpenEditor(selectedItem.id)} className="text-xs text-slate-400 hover:underline">在编辑器中打开</button>
           </div>
         </div>
       )}
