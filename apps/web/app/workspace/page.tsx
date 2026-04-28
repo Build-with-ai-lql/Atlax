@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { Plus, Send, Minimize2, Sparkles, Loader2, X, ChevronRight, Dock as DockIcon } from 'lucide-react'
+import { Home, Library, Network, Plus, Search, Send, Minimize2, Sparkles, Loader2, X, ChevronRight, Dock as DockIcon } from 'lucide-react'
 
 import { getCurrentUser, registerUser, type LocalUser } from '@/lib/auth'
 import {
@@ -293,7 +293,7 @@ export default function WorkspacePage() {
     }
     return (
       <div className="dark">
-        <div className="flex h-screen w-full bg-[#030508] text-slate-200 font-sans items-center justify-center">
+      <div className="flex h-screen w-full bg-[#111111] text-slate-200 font-sans items-center justify-center">
           <div className="absolute inset-0">
             <div className="absolute top-[20%] left-[15%] w-[300px] h-[300px] bg-indigo-500/[0.04] rounded-full blur-[100px]" />
             <div className="absolute bottom-[20%] right-[20%] w-[400px] h-[400px] bg-cyan-500/[0.03] rounded-full blur-[120px]" />
@@ -343,64 +343,69 @@ export default function WorkspacePage() {
 
   return (
     <div className="dark">
-      <div className="flex flex-col h-screen w-full bg-[#030508] text-slate-200 font-sans overflow-hidden selection:bg-emerald-500/20">
+      <div className="relative flex h-screen w-full flex-col overflow-hidden bg-[#111111] font-sans text-slate-200 selection:bg-[#a78bfa] selection:text-white">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.025)_0%,rgba(17,17,17,0)_60%)]" />
 
-        <nav className="h-14 flex items-center justify-between px-6 border-b border-white/[0.06] bg-[#030508]/90 backdrop-blur-md z-50 flex-shrink-0">
-          <div className="flex items-center space-x-3.5">
-            <div className="relative w-8 h-8 flex items-center justify-center cursor-pointer group">
-              <div className="absolute inset-0 bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-400 rounded-[10px] opacity-90 group-hover:opacity-100 transition-opacity" />
-              <div className="absolute inset-0 rounded-[10px] bg-gradient-to-b from-white/30 via-transparent to-transparent" />
-              <div className="w-2 h-2 bg-white rounded-full shadow-[0_2px_5px_rgba(0,0,0,0.3)] z-10" />
-            </div>
-            <div className="flex items-center space-x-2">
-              <span className="text-[11px] font-bold tracking-[0.3em] text-slate-400 uppercase">ATLAX</span>
-              <div className="h-3 w-px bg-white/10" />
-              <span className="text-[11px] tracking-wide text-slate-500 font-mono">MindDock</span>
-            </div>
-          </div>
+        <nav className="fixed left-1/2 top-6 z-50 flex h-12 -translate-x-1/2 items-center overflow-hidden rounded-full border border-white/[0.08] bg-[rgba(26,26,26,0.7)] px-1 shadow-xl backdrop-blur-2xl">
+          <button
+            onClick={() => handleModuleChange('home')}
+            className="relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/[0.08] bg-slate-800 text-slate-200 transition-colors hover:bg-slate-700"
+            title="Home"
+          >
+            <Network size={19} />
+          </button>
 
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center space-x-8">
-            {(['home', 'mind', 'dock'] as ActiveModule[]).map((mod) => (
+          <div className="ml-2 flex h-full flex-1 items-center pr-1">
+            <div className="flex shrink-0 items-center gap-1">
+              {(['home', 'mind', 'dock'] as ActiveModule[]).map((mod) => {
+                const Icon = mod === 'home' ? Home : mod === 'mind' ? Network : Library
+                return (
               <button
                 key={mod}
                 onClick={() => handleModuleChange(mod)}
-                className={`text-[13px] tracking-wide transition-all duration-300 relative py-1 ${
+                    className={`relative rounded-full px-4 py-2 text-sm font-medium transition-all ${
                   activeModule === mod && !isEditorActive
-                    ? 'text-white font-medium'
-                    : 'text-slate-500 hover:text-slate-300'
+                        ? 'bg-white/10 text-white'
+                        : 'text-[#8B8B8B] hover:text-white'
                 }`}
               >
-                {mod.charAt(0).toUpperCase() + mod.slice(1)}
-                {activeModule === mod && !isEditorActive && (
-                  <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
-                )}
+                    <span className="relative z-10 flex items-center gap-2">
+                      <Icon size={16} />
+                      {mod.charAt(0).toUpperCase() + mod.slice(1)}
+                    </span>
               </button>
-            ))}
-          </div>
+                )
+              })}
+              <div className="mx-2 h-5 w-px shrink-0 bg-white/[0.08]" />
+            </div>
 
-          <div className="flex items-center space-x-3">
+            <button className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#8B8B8B] transition-colors hover:bg-white/10 hover:text-white" title="Search">
+              <Search size={16} />
+            </button>
             <button
               onClick={() => setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')}
-              className="p-2 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-white/5 transition-colors"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#8B8B8B] transition-colors hover:bg-white/10 hover:text-white"
               title="记录"
             >
-              <Plus size={18} />
+              <Plus size={16} />
             </button>
-            <div className="w-6 h-6 rounded-full overflow-hidden border border-white/10 bg-slate-800 cursor-pointer flex items-center justify-center">
+            <div className="ml-1 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-white/[0.08] bg-slate-800">
               <span className="text-[10px] font-bold text-slate-400">{user.name.charAt(0).toUpperCase()}</span>
             </div>
           </div>
         </nav>
 
-        <WorkspaceTabs
-          tabs={tabs}
-          activeTabId={activeTabId}
-          onActivateTab={handleActivateTab}
-          onCloseTab={handleCloseTab}
-          onNewTab={handleNewTab}
-        />
+        <div className="relative z-30 mt-[88px] border-y border-white/[0.06] bg-[#111111]/60 backdrop-blur-md">
+          <WorkspaceTabs
+            tabs={tabs}
+            activeTabId={activeTabId}
+            onActivateTab={handleActivateTab}
+            onCloseTab={handleCloseTab}
+            onNewTab={handleNewTab}
+          />
+        </div>
 
-        <div className="flex-1 relative overflow-hidden">
+        <div className="relative z-10 flex-1 overflow-hidden">
           {activeModule === 'home' && !isEditorActive && (
             <HomeView
               userId={userId}
@@ -408,6 +413,9 @@ export default function WorkspacePage() {
               onOpenEditor={openEditorTab}
               onNewNote={handleNewNote}
               onSwitchToDock={() => handleModuleChange('dock')}
+              onSwitchToMind={() => handleModuleChange('mind')}
+              onCapture={handleCapture}
+              nodeCount={nodeCount}
             />
           )}
 
