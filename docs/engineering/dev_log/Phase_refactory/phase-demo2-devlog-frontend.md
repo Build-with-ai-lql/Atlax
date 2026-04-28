@@ -114,3 +114,74 @@ Yes. Frontend baseline converged to 3-module structure, minimum data loop preser
 
 ### Ready for Next Round
 Yes. All review fixes applied, all verification commands pass, all changes staged (not committed).
+
+---
+
+## Phase Refactory Round 2 Frontend (2026-04-27): Home + WorkspaceTabs + Editor Tab
+
+### Timestamp & Round
+- Time: 2026-04-27
+- Round: Phase Refactory Round 2 Frontend
+- Goal: TopNav Home/Mind/Dock, Home entry page, WorkspaceTabs, Editor tab-based opening
+
+### Changes
+1. **AppShell restructured**:
+   - TopNav: Home / Mind / Dock (Editor removed from primary nav)
+   - Default activeModule = 'home' (not 'mind')
+   - Added WorkspaceTabs row below TopNav with "+" button for new notes
+   - Tab state: tabs array + activeTabId, tabs can be activated/closed/created
+2. **HomeView component** (features/home/HomeView.tsx):
+   - Greeting with user name + time-of-day
+   - 3 entry cards: Latest Documents / Upload / Notebook (with hover focus effect)
+   - Recent Documents list from listDockItems
+   - Left sidebar: Projects / Archive / New Folder (weak entries)
+3. **EditorTabView component** (features/editor/EditorTabView.tsx):
+   - Tab-based editor: opens as a new tab, not inline
+   - Dirty tracking with save button
+   - Empty state when no document selected
+4. **WorkspaceTabs component** (features/shared/WorkspaceTabs.tsx):
+   - Tab bar with icons per type (Home/Brain/Database/FileText)
+   - Close button on editor tabs (hover-reveal)
+   - "+" button always visible at end
+5. **page.tsx refactored** (~730 lines):
+   - Tab management: openEditorTab creates/activates editor tab
+   - handleNewNote creates Dock item + Mind node + opens editor tab
+   - handleActivateTab switches module based on tab type
+   - handleCloseTab falls back to adjacent tab or Home
+   - Mind uses listMindNodes/listMindEdges (not getMindGraphSnapshot which doesn't exist)
+   - Capture uses upsertMindNode to create Mind node alongside Dock item
+
+### Issues & Resolutions
+| Issue | Resolution | Resolved |
+|-------|-----------|----------|
+| getMindGraphSnapshot/ensureCaptureNode don't exist in repository.ts | Used listMindNodes/listMindEdges + upsertMindNode instead | Yes |
+| MindGraphSnapshot type not exported | Used StoredMindNode[] + StoredMindEdge[] directly | Yes |
+| HomeView unused onSwitchToMind prop | Removed from interface and call site | Yes |
+| TabType unused import | Removed from page.tsx import | Yes |
+| handleUpdateText unused after Dock detail panel simplification | Removed function | Yes |
+
+### Verification Results
+- lint: 0 errors
+- typecheck: 0 errors
+- test: 13 files, 286 tests passed
+- build: successful (next build, all routes generated)
+- git diff --cached --check: exit code 0
+
+### Manual Verification Criteria
+1. /workspace defaults to Home (not Mind)
+2. Top nav only Home / Mind / Dock
+3. Second row shows WorkspaceTabs with "+" button
+4. Editor not in top nav
+5. Dock/Home click document -> opens/activates Editor tab
+6. Recent Documents shows and updates
+7. Mind and Dock still switchable, no white screen or console errors
+
+### Ready for Next Round
+Yes. Home entry page, WorkspaceTabs, and Editor tab system all working.
+
+### Next Round Risks
+1. Mind SVG layout uses hash-based positioning: needs Canvas/force-directed engine
+2. Editor is still textarea: needs Block Editor
+3. Tab state is client-only (no persistence): needs workspace session API integration
+4. Home Recent Documents reads from Dock items: should use listRecentDocuments API
+5. No document upload functionality yet: Upload card is a placeholder

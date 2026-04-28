@@ -117,3 +117,92 @@
 | `apps/web/lib/db.ts` | M | DocumentRecord/CaptureRecord 别名 + v14 migration + mindNodes/mindEdges 表 |
 | `apps/web/lib/repository.ts` | M | Document 别名函数 + MindNode/MindEdge CRUD |
 | `apps/web/tests/mind-graph.test.ts` | A | 14 个 Mind Graph + Document alias 集成测试 |
+
+---
+
+## Phase Refactory Round 2 Backend — Workspace Session / Tabs / Recent Documents 数据骨架
+
+**时间**: 2026-04-27 05:54 CST
+**轮次**: Phase Refactory Round 2 Backend
+**状态**: ✅ 已完成
+
+### 1. 变更内容
+
+#### 1.1 新增 Workspace Tabs 数据模型
+
+**domain 层** `packages/domain/src/workspace/`：
+- `types.ts` — `TabType`（9 种：home/mind/dock/editor/document/node/project/review/settings）、`WorkspaceSession`、`WorkspaceOpenTab`、`RecentDocument`
+- `makeWorkspaceSessionId()` / `makeWorkspaceTabId()` / `makeRecentDocumentId()` — 确定性 ID 生成
+- `index.ts` — 导出边界
+
+**db.ts v15 migration**：
+- `workspaceSessions` 表 — id, userId, activeTabId, lastActivityAt
+- `workspaceOpenTabs` 表 — id, userId, sessionId, tabType, documentId, isPinned, isActive, sortOrder
+- `recentDocuments` 表 — id, userId, documentId, openCount, lastOpenedAt
+
+#### 1.2 补齐 Repository API
+
+| 函数 | 说明 |
+|------|------|
+| `getWorkspaceSession(userId)` | 获取或创建 session |
+| `openWorkspaceTab({ userId, tabType, title, path, documentId? })` | 打开标签，自动去重 editor+documentId |
+| `closeWorkspaceTab(userId, tabId)` | 关闭标签，自动激活下一个 |
+| `activateWorkspaceTab(userId, tabId)` | 激活标签，取消其他 active |
+| `pinWorkspaceTab(userId, tabId, pinned?)` | 置顶/取消置顶 |
+| `restoreWorkspaceTabs(userId)` | 恢复所有打开标签（按 sortOrder） |
+| `listRecentDocuments(userId, limit)` | 列出最近打开文档 |
+| `recordRecentDocumentOpen({ userId, documentId, title })` | 记录文档打开，去重+openCount+1 |
+
+#### 1.3 Editor Tab 去重逻辑
+
+`openWorkspaceTab` 在 `tabType === 'editor' && documentId != null` 时，先查找已有同 documentId 的 editor tab，若存在则直接 `activateWorkspaceTab` 而非创建新 tab。
+
+### 2. 遇到的问题
+
+| 问题 | 解决方式 | 是否解决 |
+|------|---------|---------|
+| 无 | — | — |
+
+### 3. 收口验证命令和结果
+
+| 命令 | 结果 |
+|------|------|
+| `pnpm --filter @atlax/domain typecheck` | ✅ PASS |
+| `pnpm --filter @atlax/domain test -- --run` | ✅ 312 tests / 20 files |
+| `pnpm --dir apps/web typecheck` | ✅ PASS |
+| `pnpm --dir apps/web test -- --run` | ✅ 286 tests / 13 files |
+| `git diff --cached --check` | ✅ 仅 FRONTEND_TECH_SPEC 已有 trailing whitespace |
+
+### 4. 本轮手工验证与验证标准
+
+1. **Tab open / activate / close / pin 闭环**：open → activate → close → restore 完整流程
+2. **同一 document editor tab 不重复打开**：openWorkspaceTab(editor, docId=1) 两次只创建一个 tab
+3. **Recent document 去重并更新 openCount / lastOpenedAt**：recordRecentDocumentOpen 同 docId 三次 → openCount=3
+4. **userId 隔离**：用户 A 的 session/tabs/recent 不包含用户 B 数据
+5. **关闭 active tab 后自动激活最后一个**：close active → 最后一个 sortOrder 的 tab 变为 active
+6. **所有 tab 关闭后 session.activeTabId 为 null**
+
+### 5. 是否可以进入下一轮
+
+✅ 可以。所有验证通过，Workspace Session / Tabs / Recent Documents 数据骨架完整。
+
+### 6. 下一轮风险评估
+
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| 前端 tabStore 未对接 | 中 | 需前端实现 tabStore 并调用 repository API |
+| Tab 持久化恢复流程未实现 | 低 | restoreWorkspaceTabs 已可用，前端需在启动时调用 |
+| 无 tab 数量上限 | 低 | 当前无最大 tab 数限制，后续可加 |
+
+### 7. 变更文件清单
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `packages/domain/src/workspace/types.ts` | A | TabType / WorkspaceSession / WorkspaceOpenTab / RecentDocument + ID 生成 |
+| `packages/domain/src/workspace/index.ts` | A | 导出边界 |
+| `packages/domain/src/index.ts` | M | 新增 workspace 导出 |
+| `packages/domain/package.json` | M | 新增 workspace exports |
+| `packages/domain/tests/workspace-types.test.ts` | A | 9 个 workspace 类型测试 |
+| `apps/web/lib/db.ts` | M | Workspace Record 类型 + v15 migration + 3 张新表 |
+| `apps/web/lib/repository.ts` | M | Session/Tab/Recent CRUD + 类型导出 |
+| `apps/web/tests/workspace-tabs.test.ts` | A | 24 个 workspace 集成测试 |

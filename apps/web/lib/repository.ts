@@ -17,8 +17,11 @@ import {
   makeKnowledgeEventId,
   makeMindEdgeId,
   makeMindNodeId,
+  makeRecentDocumentId,
   makeTemporalActivityId,
   makeTagId,
+  makeWorkspaceSessionId,
+  makeWorkspaceTabId,
   normalizeTagName,
   queryEntriesByDate,
   queryMonthOverview,
@@ -41,6 +44,7 @@ import {
   type RelationSource,
   type SourceType,
   type StructureProjection,
+  type TabType,
   type TagRelationSource,
   type TemporalActivityType,
   type TemporalActivityEntityType,
@@ -65,9 +69,12 @@ import {
   knowledgeEventsTable,
   mindNodesTable,
   mindEdgesTable,
+  recentDocumentsTable,
   tagsTable,
   temporalActivitiesTable,
   widgetsTable,
+  workspaceOpenTabsTable,
+  workspaceSessionsTable,
   type ChatSessionRecord,
   type CollectionRecord,
   type EntryRecord,
@@ -77,7 +84,10 @@ import {
   type KnowledgeEventRecord,
   type MindNodeRecord,
   type MindEdgeRecord,
+  type RecentDocumentRecord,
   type TemporalActivityRecord,
+  type WorkspaceOpenTabRecord,
+  type WorkspaceSessionRecord,
   type PersistedDockItem,
   type PersistedEntry,
   type PersistedDocument,
@@ -88,9 +98,12 @@ import {
   type PersistedKnowledgeEvent,
   type PersistedMindNode,
   type PersistedMindEdge,
+  type PersistedRecentDocument,
   type PersistedTag,
   type PersistedTemporalActivity,
   type PersistedWidget,
+  type PersistedWorkspaceOpenTab,
+  type PersistedWorkspaceSession,
   type TagRecord,
   type WidgetRecord,
 } from './db'
@@ -107,6 +120,9 @@ export type { PersistedKnowledgeEvent as StoredKnowledgeEvent }
 export type { PersistedTemporalActivity as StoredTemporalActivity }
 export type { PersistedMindNode as StoredMindNode }
 export type { PersistedMindEdge as StoredMindEdge }
+export type { PersistedWorkspaceSession as StoredWorkspaceSession }
+export type { PersistedWorkspaceOpenTab as StoredWorkspaceOpenTab }
+export type { PersistedRecentDocument as StoredRecentDocument }
 export type { ChainProvenance }
 export type { CalendarDayResult }
 export type { CalendarMonthOverview }
@@ -1449,4 +1465,198 @@ export async function deleteMindEdge(userId: string, id: string): Promise<boolea
   if (!existing || existing.userId !== userId) return false
   await mindEdgesTable.delete(id)
   return true
+}
+
+function toPersistedWorkspaceSession(record: WorkspaceSessionRecord | undefined): PersistedWorkspaceSession | null {
+  if (!record || !record.id) return null
+  return { ...record, id: record.id }
+}
+
+function toPersistedWorkspaceOpenTab(record: WorkspaceOpenTabRecord | undefined): PersistedWorkspaceOpenTab | null {
+  if (!record || !record.id) return null
+  return { ...record, id: record.id }
+}
+
+function toPersistedRecentDocument(record: RecentDocumentRecord | undefined): PersistedRecentDocument | null {
+  if (!record || !record.id) return null
+  return { ...record, id: record.id }
+}
+
+export async function getWorkspaceSession(userId: string): Promise<PersistedWorkspaceSession> {
+  const id = makeWorkspaceSessionId(userId)
+  let session = await workspaceSessionsTable.get(id)
+  if (!session || session.userId !== userId) {
+    const now = new Date()
+    const record: WorkspaceSessionRecord = {
+      id,
+      userId,
+      activeTabId: null,
+      lastActivityAt: now,
+      createdAt: now,
+      updatedAt: now,
+    }
+    await workspaceSessionsTable.put(record)
+    session = record
+  }
+  return toPersistedWorkspaceSession(session) as PersistedWorkspaceSession
+}
+
+export async function openWorkspaceTab(input: {
+  userId: string
+  tabType: TabType
+  title: string
+  path: string
+  documentId?: number | null
+}): Promise<PersistedWorkspaceOpenTab> {
+  const session = await getWorkspaceSession(input.userId)
+  const now = new Date()
+
+  if (input.tabType === 'editor' && input.documentId != null) {
+    const existing = await workspaceOpenTabsTable
+      .where('userId')
+      .equals(input.userId)
+      .and((t) => t.tabType === 'editor' && t.documentId === input.documentId)
+      .first()
+    if (existing) {
+      return activateWorkspaceTab(input.userId, existing.id)
+    }
+  }
+
+  const userTabs = await workspaceOpenTabsTable
+    .where('userId')
+    .equals(input.userId)
+    .toArray()
+  const maxSort = userTabs.reduce((max, t) => Math.max(max, t.sortOrder ?? 0), 0)
+
+  await workspaceOpenTabsTable
+    .where('userId')
+    .equals(input.userId)
+    .and((t) => t.isActive)
+    .modify({ isActive: false, updatedAt: now })
+
+  const tabId = makeWorkspaceTabId(input.userId, input.tabType, input.documentId)
+  const record: WorkspaceOpenTabRecord = {
+    id: tabId,
+    userId: input.userId,
+    sessionId: session.id,
+    tabType: input.tabType,
+    title: input.title,
+    path: input.path,
+    documentId: input.documentId ?? null,
+    isPinned: false,
+    isActive: true,
+    sortOrder: maxSort + 1,
+    openedAt: now,
+    updatedAt: now,
+  }
+  await workspaceOpenTabsTable.put(record)
+
+  await workspaceSessionsTable.update(session.id, {
+    activeTabId: tabId,
+    lastActivityAt: now,
+    updatedAt: now,
+  })
+
+  return toPersistedWorkspaceOpenTab(await workspaceOpenTabsTable.get(tabId)) as PersistedWorkspaceOpenTab
+}
+
+export async function closeWorkspaceTab(userId: string, tabId: string): Promise<boolean> {
+  const tab = await workspaceOpenTabsTable.get(tabId)
+  if (!tab || tab.userId !== userId) return false
+
+  await workspaceOpenTabsTable.delete(tabId)
+
+  if (tab.isActive) {
+    const remaining = await workspaceOpenTabsTable
+      .where('userId')
+      .equals(userId)
+      .sortBy('sortOrder')
+    const newActive = remaining[remaining.length - 1]
+    if (newActive) {
+      await workspaceOpenTabsTable.update(newActive.id, { isActive: true, updatedAt: new Date() })
+      await workspaceSessionsTable.update(makeWorkspaceSessionId(userId), {
+        activeTabId: newActive.id,
+        lastActivityAt: new Date(),
+        updatedAt: new Date(),
+      })
+    } else {
+      await workspaceSessionsTable.update(makeWorkspaceSessionId(userId), {
+        activeTabId: null,
+        lastActivityAt: new Date(),
+        updatedAt: new Date(),
+      })
+    }
+  }
+
+  return true
+}
+
+export async function activateWorkspaceTab(userId: string, tabId: string): Promise<PersistedWorkspaceOpenTab> {
+  const now = new Date()
+  await workspaceOpenTabsTable
+    .where('userId')
+    .equals(userId)
+    .and((t) => t.isActive)
+    .modify({ isActive: false, updatedAt: now })
+
+  await workspaceOpenTabsTable.update(tabId, { isActive: true, updatedAt: now })
+
+  await workspaceSessionsTable.update(makeWorkspaceSessionId(userId), {
+    activeTabId: tabId,
+    lastActivityAt: now,
+    updatedAt: now,
+  })
+
+  const tab = await workspaceOpenTabsTable.get(tabId)
+  return toPersistedWorkspaceOpenTab(tab) as PersistedWorkspaceOpenTab
+}
+
+export async function pinWorkspaceTab(userId: string, tabId: string, pinned?: boolean): Promise<PersistedWorkspaceOpenTab | null> {
+  const tab = await workspaceOpenTabsTable.get(tabId)
+  if (!tab || tab.userId !== userId) return null
+
+  const newPinned = pinned ?? !tab.isPinned
+  await workspaceOpenTabsTable.update(tabId, { isPinned: newPinned, updatedAt: new Date() })
+
+  return toPersistedWorkspaceOpenTab(await workspaceOpenTabsTable.get(tabId))
+}
+
+export async function restoreWorkspaceTabs(userId: string): Promise<PersistedWorkspaceOpenTab[]> {
+  const tabs = await workspaceOpenTabsTable
+    .where('userId')
+    .equals(userId)
+    .sortBy('sortOrder')
+  return tabs.flatMap((t) => { const p = toPersistedWorkspaceOpenTab(t); return p ? [p] : [] })
+}
+
+export async function listRecentDocuments(userId: string, limit: number = 20): Promise<PersistedRecentDocument[]> {
+  const docs = await recentDocumentsTable
+    .where('userId')
+    .equals(userId)
+    .reverse()
+    .sortBy('lastOpenedAt')
+  return docs.slice(0, limit).flatMap((d) => { const p = toPersistedRecentDocument(d); return p ? [p] : [] })
+}
+
+export async function recordRecentDocumentOpen(input: {
+  userId: string
+  documentId: number
+  title: string
+}): Promise<PersistedRecentDocument> {
+  const now = new Date()
+  const id = makeRecentDocumentId(input.userId, input.documentId)
+  const existing = await recentDocumentsTable.get(id)
+
+  const record: RecentDocumentRecord = {
+    id,
+    userId: input.userId,
+    documentId: input.documentId,
+    title: input.title,
+    openCount: (existing?.openCount ?? 0) + 1,
+    lastOpenedAt: now,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  }
+  await recentDocumentsTable.put(record)
+  return toPersistedRecentDocument(await recentDocumentsTable.get(id)) as PersistedRecentDocument
 }
