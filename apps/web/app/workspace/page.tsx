@@ -59,7 +59,7 @@ export default function WorkspacePage() {
   const [editorTitle, setEditorTitle] = useState('')
   const [editingItemId, setEditingItemId] = useState<number | null>(null)
 
-  const [editorMode, setEditorMode] = useState<'classic' | 'block'>('classic')
+  const [editorMode, setEditorMode] = useState<'classic' | 'block'>('block')
 
   const draftCounterRef = React.useRef(0)
   const [drafts, setDrafts] = useState<Record<number, { title: string; content: string }>>({})
@@ -460,8 +460,14 @@ export default function WorkspacePage() {
 
   return (
     <div className="dark">
-      <div className="relative flex h-screen w-full flex-col overflow-hidden bg-[#111111] font-sans text-slate-200 selection:bg-[#a78bfa] selection:text-white">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.025)_0%,rgba(17,17,17,0)_60%)]" />
+      <div className="relative flex h-screen w-full flex-col overflow-hidden bg-[var(--bg-base)] font-sans text-[var(--text-main)] selection:bg-[var(--accent)] selection:text-white">
+        <div className="ambient-glow" />
+
+        <div id="canvas-container" className={`canvas-container ${activeModule !== 'mind' ? 'canvas-dimmed' : ''}`}>
+          {activeModule === 'mind' && nodeCount > 0 && (
+            <MindCanvasLayer nodes={mindNodes} edges={mindEdges} onOpenEditor={openEditorTab} />
+          )}
+        </div>
 
         <GoldenTopNav
           activeModule={activeModule}
@@ -469,93 +475,102 @@ export default function WorkspacePage() {
           onOpenRecorder={() => setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')}
           user={user}
           onLogout={handleLogout}
+          isCollapsed={isEditorActive && activeModule === 'editor'}
         />
 
-        {isEditorActive && activeModule === 'editor' && (
-          <div className="relative z-10 flex-1 flex flex-col p-4 pt-0 overflow-hidden mt-[72px]">
-            <div className="flex-1 flex flex-col rounded-2xl overflow-hidden border border-white/[0.06] shadow-2xl">
-              <div className="h-14 bg-[#161616] border-b border-white/[0.06] flex items-end pl-20 pr-3 pb-0 shrink-0 relative">
-                <WorkspaceTabs
-                  tabs={tabs.filter(t => t.type === 'editor')}
-                  activeTabId={activeTabId}
-                  onActivateTab={handleActivateTab}
-                  onCloseTab={handleCloseTab}
-                  onNewTab={handleNewTab}
-                />
-                <EditorOptionsMenu
+        <main id="main-container" className="relative z-10 flex-1 overflow-hidden main-transition">
+          {isEditorActive && activeModule === 'editor' ? (
+            <div id="view-editor" className="view-section active w-full h-full flex-col pointer-events-auto">
+              <div className="w-full h-full flex flex-col overflow-hidden">
+                <div className="h-14 bg-[var(--bg-sidebar)] border-b border-[var(--border-line)] flex items-end pl-16 pr-3 pb-0 shrink-0 relative">
+                  <WorkspaceTabs
+                    tabs={tabs.filter(t => t.type === 'editor')}
+                    activeTabId={activeTabId}
+                    onActivateTab={handleActivateTab}
+                    onCloseTab={handleCloseTab}
+                    onNewTab={handleNewTab}
+                  />
+                  <EditorOptionsMenu
+                    mode={editorMode}
+                    onSetMode={handleSetEditorMode}
+                  />
+                </div>
+                <EditorTabView
+                  editingItemId={editingItemId}
+                  editorTitle={editorTitle}
+                  editorContent={editorContent}
+                  onTitleChange={(title) => {
+                    setEditorTitle(title)
+                    if (editingItemId != null && editingItemId < 0) {
+                      setDrafts(prev => ({ ...prev, [editingItemId]: { ...prev[editingItemId], title } }))
+                    }
+                  }}
+                  onContentChange={(content) => {
+                    setEditorContent(content)
+                    if (editingItemId != null && editingItemId < 0) {
+                      setDrafts(prev => ({ ...prev, [editingItemId]: { ...prev[editingItemId], content } }))
+                    }
+                  }}
+                  onSave={handleSaveEditor}
                   mode={editorMode}
-                  onSetMode={handleSetEditorMode}
+                  isDraft={isActiveDraft}
                 />
               </div>
-              <EditorTabView
-                editingItemId={editingItemId}
-                editorTitle={editorTitle}
-                editorContent={editorContent}
-                onTitleChange={(title) => {
-                  setEditorTitle(title)
-                  if (editingItemId != null && editingItemId < 0) {
-                    setDrafts(prev => ({ ...prev, [editingItemId]: { ...prev[editingItemId], title } }))
-                  }
-                }}
-                onContentChange={(content) => {
-                  setEditorContent(content)
-                  if (editingItemId != null && editingItemId < 0) {
-                    setDrafts(prev => ({ ...prev, [editingItemId]: { ...prev[editingItemId], content } }))
-                  }
-                }}
-                onSave={handleSaveEditor}
-                mode={editorMode}
-                isDraft={isActiveDraft}
-              />
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="w-full h-full pt-20 pb-4 px-6 flex justify-center overflow-hidden">
+              {activeModule === 'home' && (
+                <div id="view-home" className="view-section active w-full max-w-5xl h-full flex-col pointer-events-auto overflow-y-auto no-scrollbar">
+                  <HomeView
+                    userId={userId}
+                    userName={user.name}
+                    onOpenEditor={openEditorTab}
+                    onNewNote={handleNewNote}
+                    onSwitchToDock={() => handleModuleChange('dock')}
+                    onSwitchToMind={() => handleModuleChange('mind')}
+                    onCapture={handleCapture}
+                    nodeCount={nodeCount}
+                  />
+                </div>
+              )}
 
-        {!isEditorActive && (
-          <div className="relative z-10 flex-1 overflow-hidden">
-            {activeModule === 'home' && (
-              <HomeView
-                userId={userId}
-                userName={user.name}
-                onOpenEditor={openEditorTab}
-                onNewNote={handleNewNote}
-                onSwitchToDock={() => handleModuleChange('dock')}
-                onSwitchToMind={() => handleModuleChange('mind')}
-                onCapture={handleCapture}
-                nodeCount={nodeCount}
-              />
-            )}
+              {activeModule === 'mind' && (
+                <div id="view-mind" className="view-section active w-full h-full flex-col pointer-events-auto relative">
+                  <MindInlineOverlay
+                    nodes={mindNodes}
+                    edges={mindEdges}
+                    mindInputText={mindInputText}
+                    setMindInputText={setMindInputText}
+                    onMindInput={handleMindInput}
+                    onOpenEditor={openEditorTab}
+                    nodeCount={nodeCount}
+                    edgeCount={edgeCount}
+                  />
+                </div>
+              )}
 
-            {activeModule === 'mind' && (
-              <MindInlineView
-                nodes={mindNodes}
-                edges={mindEdges}
-                mindInputText={mindInputText}
-                setMindInputText={setMindInputText}
-                onMindInput={handleMindInput}
-                onOpenEditor={openEditorTab}
-                nodeCount={nodeCount}
-                edgeCount={edgeCount}
-              />
-            )}
-
-            {activeModule === 'dock' && (
-              <DockFinderView
-                items={items}
-                selectedItemId={selectedItemId}
-                loading={loading}
-                error={error}
-                onSelectItem={setSelectedItemId}
-                onArchive={handleArchive}
-                onSuggest={handleSuggest}
-                onOpenEditor={openEditorTab}
-                onReopen={handleReopen}
-                onOpenRecorder={() => setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')}
-                selectedItem={selectedItem}
-              />
-            )}
-          </div>
-        )}
+              {activeModule === 'dock' && (
+                <div id="view-dock" className="view-section active w-full h-full flex-col pointer-events-auto">
+                  <div className="glass w-full h-full rounded-2xl flex flex-col overflow-hidden shadow-2xl border border-[var(--border-line)]">
+                    <DockFinderView
+                      items={items}
+                      selectedItemId={selectedItemId}
+                      loading={loading}
+                      error={error}
+                      onSelectItem={setSelectedItemId}
+                      onArchive={handleArchive}
+                      onSuggest={handleSuggest}
+                      onOpenEditor={openEditorTab}
+                      onReopen={handleReopen}
+                      onOpenRecorder={() => setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')}
+                      selectedItem={selectedItem}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </main>
 
         <FloatingRecorder
           recorderState={recorderState}
@@ -624,7 +639,40 @@ function EditorOptionsMenu({ mode, onSetMode }: { mode: 'classic' | 'block'; onS
   )
 }
 
-function MindInlineView({ nodes, edges, mindInputText, setMindInputText, onMindInput, onOpenEditor, nodeCount, edgeCount }: {
+function MindCanvasLayer({ nodes, edges, onOpenEditor }: {
+  nodes: StoredMindNode[]
+  edges: StoredMindEdge[]
+  onOpenEditor: (id: number) => void
+}) {
+  const nodeMap = new Map(nodes.map(n => [n.id, n]))
+  return (
+    <svg className="w-full h-full touch-none">
+      {edges.map((edge: StoredMindEdge, i: number) => {
+        const s = nodeMap.get(edge.sourceNodeId)
+        const t = nodeMap.get(edge.targetNodeId)
+        if (!s || !t) return null
+        const sx = 10 + (hashStr(s.id) % 80)
+        const sy = 10 + (hashStr(s.id + 'y') % 80)
+        const tx = 10 + (hashStr(t.id) % 80)
+        const ty = 10 + (hashStr(t.id + 'y') % 80)
+        return <line key={`e-${i}`} x1={`${sx}%`} y1={`${sy}%`} x2={`${tx}%`} y2={`${ty}%`} stroke="rgba(255,255,255,0.04)" strokeWidth={0.5} />
+      })}
+      {nodes.slice(0, 50).map((node: StoredMindNode) => {
+        const x = 10 + (hashStr(node.id) % 80)
+        const y = 10 + (hashStr(node.id + 'y') % 80)
+        const colors: Record<string, string> = { source: '#10B981', document: '#6366F1', project: '#F59E0B', tag: '#8B5CF6' }
+        const r = node.nodeType === 'project' ? 8 : node.nodeType === 'document' ? 5 : 3
+        return (
+          <g key={node.id} onClick={() => { if (node.documentId) onOpenEditor(node.documentId) }} className="cursor-pointer">
+            <circle cx={`${x}%`} cy={`${y}%`} r={r} fill={colors[node.nodeType] || '#10B981'} opacity={0.6} />
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
+function MindInlineOverlay({ nodes: _nodes, edges: _edges, mindInputText, setMindInputText, onMindInput, onOpenEditor: _onOpenEditor, nodeCount, edgeCount }: {
   nodes: StoredMindNode[]
   edges: StoredMindEdge[]
   mindInputText: string
@@ -634,55 +682,28 @@ function MindInlineView({ nodes, edges, mindInputText, setMindInputText, onMindI
   nodeCount: number
   edgeCount: number
 }) {
-  const nodeMap = new Map(nodes.map(n => [n.id, n]))
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center atlax-deep-space">
-
-      {nodeCount > 0 && (
-        <svg className="absolute inset-0 z-10 w-full h-full">
-          {edges.map((edge: StoredMindEdge, i: number) => {
-            const s = nodeMap.get(edge.sourceNodeId)
-            const t = nodeMap.get(edge.targetNodeId)
-            if (!s || !t) return null
-            const sx = 10 + (hashStr(s.id) % 80)
-            const sy = 10 + (hashStr(s.id + 'y') % 80)
-            const tx = 10 + (hashStr(t.id) % 80)
-            const ty = 10 + (hashStr(t.id + 'y') % 80)
-            return <line key={`e-${i}`} x1={`${sx}%`} y1={`${sy}%`} x2={`${tx}%`} y2={`${ty}%`} stroke="rgba(255,255,255,0.04)" strokeWidth={0.5} />
-          })}
-          {nodes.slice(0, 50).map((node: StoredMindNode) => {
-            const x = 10 + (hashStr(node.id) % 80)
-            const y = 10 + (hashStr(node.id + 'y') % 80)
-            const colors: Record<string, string> = { source: '#10B981', document: '#6366F1', project: '#F59E0B', tag: '#8B5CF6' }
-            const r = node.nodeType === 'project' ? 8 : node.nodeType === 'document' ? 5 : 3
-            return (
-              <g key={node.id} onClick={() => { if (node.documentId) onOpenEditor(node.documentId) }} className="cursor-pointer">
-                <circle cx={`${x}%`} cy={`${y}%`} r={r} fill={colors[node.nodeType] || '#10B981'} opacity={0.6} />
-              </g>
-            )
-          })}
-        </svg>
-      )}
+    <div className="absolute inset-0 flex flex-col items-center justify-center">
 
       {nodeCount === 0 && (
         <div className="relative z-10 flex flex-col items-center pointer-events-none">
           <h1 className="text-5xl font-light text-white/80 tracking-tight mb-2">Nebula Tree</h1>
-          <p className="text-sm text-slate-500 mb-12">你的知识星空</p>
+          <p className="text-sm text-[var(--text-muted)] mb-12">你的知识星空</p>
         </div>
       )}
 
       {nodeCount > 0 && (
-        <div className="absolute top-20 right-8 z-20 pointer-events-auto">
-          <div className="bg-[#0A0D14]/80 backdrop-blur-xl border border-white/[0.06] rounded-2xl p-5 w-56">
-            <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-4">Atlas Status</div>
+        <div className="absolute top-4 right-4 z-20 pointer-events-auto">
+          <div className="glass rounded-2xl p-5 w-56">
+            <div className="text-[10px] uppercase tracking-widest text-[var(--text-muted)] mb-4">Atlas Status</div>
             <div className="space-y-3">
               <div className="flex justify-between items-center">
-                <span className="text-[11px] text-slate-500">节点</span>
+                <span className="text-[11px] text-[var(--text-muted)]">节点</span>
                 <span className="text-[15px] font-mono text-white">{nodeCount}</span>
               </div>
-              <div className="h-px bg-white/[0.06]" />
+              <div className="h-px bg-[var(--border-line)]" />
               <div className="flex justify-between items-center">
-                <span className="text-[11px] text-slate-500">连接</span>
+                <span className="text-[11px] text-[var(--text-muted)]">连接</span>
                 <span className="text-[15px] font-mono text-white">{edgeCount}</span>
               </div>
             </div>
@@ -690,8 +711,8 @@ function MindInlineView({ nodes, edges, mindInputText, setMindInputText, onMindI
         </div>
       )}
 
-      <div className="absolute bottom-12 w-full max-w-2xl px-6 z-20 pointer-events-auto">
-        <div className="bg-[#0A0D14]/80 backdrop-blur-xl border border-white/[0.06] rounded-2xl flex items-center p-2 pl-4">
+      <div className="absolute bottom-8 w-full max-w-2xl px-6 z-20 pointer-events-auto">
+        <div className="glass rounded-2xl flex items-center p-2 pl-4">
           <Sparkles size={16} className="text-emerald-500 flex-shrink-0" />
           <input
             type="text"
@@ -701,7 +722,7 @@ function MindInlineView({ nodes, edges, mindInputText, setMindInputText, onMindI
             placeholder="输入灵感并回车..."
             className="flex-1 bg-transparent outline-none px-4 py-2.5 text-[14px] font-light placeholder-slate-600 text-white"
           />
-          <div className="flex items-center px-3 space-x-2 border-l border-white/[0.06]">
+          <div className="flex items-center px-3 space-x-2 border-l border-[var(--border-line)]">
             <span className="text-[9px] uppercase tracking-widest text-emerald-500/80 font-mono">GROW</span>
             <kbd className="px-1.5 py-0.5 rounded text-[9px] bg-white/5 border border-white/10 text-slate-500">↵</kbd>
           </div>
@@ -759,8 +780,15 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
   const sidebarActiveClass = 'bg-emerald-500/90 text-[#111] font-medium'
   const sidebarInactiveClass = 'text-slate-300 hover:bg-white/[0.06]'
 
+  const formatDate = (d: Date | string | null) => {
+    if (!d) return '-'
+    const date = typeof d === 'string' ? new Date(d) : d
+    return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
+  }
+
   return (
     <div className="h-full flex overflow-hidden bg-[#111]">
+      {/* Left sidebar */}
       <div className="w-48 bg-[#161616] border-r border-white/[0.06] flex flex-col py-3 overflow-y-auto shrink-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="px-4 text-[10px] font-bold text-slate-500 tracking-wider mb-2">SHORTCUTS</div>
         <div className="space-y-0.5 px-2">
@@ -804,60 +832,119 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-        <div className="h-9 flex items-center px-4 border-b border-white/[0.06] bg-[#111] shrink-0">
-          <span className="text-[10px] text-slate-500 font-medium tracking-wide">
-            {filterStatus ? STATUS_LABELS[filterStatus].label : '所有条目'}
-          </span>
-          <span className="mx-2 text-slate-600">/</span>
-          <span className="text-[10px] text-slate-500">{filteredItems.length} 项</span>
-        </div>
-        <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden py-2">
-          {loading ? (
-            <div className="flex items-center justify-center h-32">
-              <Loader2 className="animate-spin text-slate-500" size={20} />
-            </div>
-          ) : error ? (
-            <div className="flex items-center justify-center h-32">
-              <p className="text-red-400 text-sm">{error}</p>
-            </div>
-          ) : filteredItems.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-slate-500">
-              <Inbox size={24} className="opacity-30 mb-3" />
-              <p className="text-sm">{filterStatus ? `暂无${STATUS_LABELS[filterStatus].label}条目` : '暂无条目'}</p>
-              <button onClick={onOpenRecorder} className="mt-4 text-xs text-emerald-400 hover:underline">录入</button>
-            </div>
-          ) : (
-            <div>
-              {filteredItems.map((item) => {
-                const isActive = selectedItemId === item.id
-                return (
-                  <div
-                    key={item.id}
-                    onClick={() => onSelectItem(isActive ? null : item.id)}
-                    className={`flex items-center justify-between px-3 py-1.5 mx-2 rounded-md cursor-pointer transition-colors text-sm ${
-                      isActive
-                        ? 'bg-emerald-500/90 text-[#111] font-medium'
-                        : 'text-slate-300 hover:bg-white/[0.06]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 truncate min-w-0">
-                      <FileText size={14} className={`shrink-0 ${isActive ? 'text-[#111]/60' : 'text-slate-500'}`} />
-                      <span className="truncate">{item.topic || item.rawText.slice(0, 50)}</span>
-                    </div>
-                    {item.status !== 'pending' && (
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded shrink-0 ml-2 ${isActive ? 'bg-[#111]/10 text-[#111]/70' : 'bg-white/5 text-slate-500'}`}>
-                        {STATUS_LABELS[item.status]?.label}
-                      </span>
-                    )}
+      {/* Miller Columns: Group column + Item column */}
+      <div className="flex-1 flex overflow-hidden min-w-0">
+        {/* Group/Status column */}
+        <div className="w-52 border-r border-white/[0.06] flex flex-col overflow-hidden shrink-0 bg-[#111]">
+          <div className="h-9 flex items-center px-4 border-b border-white/[0.06] bg-[#111] shrink-0">
+            <span className="text-[10px] text-slate-500 font-medium tracking-wide">集合</span>
+          </div>
+          <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden py-2">
+            {loading ? (
+              <div className="flex items-center justify-center h-32">
+                <Loader2 className="animate-spin text-slate-500" size={20} />
+              </div>
+            ) : error ? (
+              <div className="flex items-center justify-center h-32">
+                <p className="text-red-400 text-sm">{error}</p>
+              </div>
+            ) : (
+              <div>
+                <div
+                  onClick={() => handleSelectFilter(null)}
+                  className={`flex items-center justify-between px-3 py-1.5 mx-2 rounded-md cursor-pointer transition-colors text-sm ${
+                    filterStatus === null
+                      ? 'bg-emerald-500/90 text-[#111] font-medium'
+                      : 'text-slate-300 hover:bg-white/[0.06]'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 truncate min-w-0">
+                    <Inbox size={14} className={`shrink-0 ${filterStatus === null ? 'text-[#111]/60' : 'text-slate-500'}`} />
+                    <span className="truncate">所有条目</span>
                   </div>
-                )
-              })}
-            </div>
-          )}
+                  <span className="ml-2 text-[10px] opacity-60 shrink-0">{items.length}</span>
+                </div>
+                {(['pending', 'suggested', 'archived', 'reopened'] as EntryStatus[]).map(st => (
+                  counts[st] > 0 && (
+                    <div
+                      key={st}
+                      onClick={() => handleSelectFilter(st)}
+                      className={`flex items-center justify-between px-3 py-1.5 mx-2 rounded-md cursor-pointer transition-colors text-sm ${
+                        filterStatus === st
+                          ? 'bg-emerald-500/90 text-[#111] font-medium'
+                          : 'text-slate-300 hover:bg-white/[0.06]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate min-w-0">
+                        {statusIcon(st)}
+                        <span className="truncate">{STATUS_LABELS[st].label}</span>
+                      </div>
+                      <span className="ml-2 text-[10px] opacity-60 shrink-0">{counts[st]}</span>
+                    </div>
+                  )
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Item column */}
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0 bg-[#111]">
+          <div className="h-9 flex items-center px-4 border-b border-white/[0.06] bg-[#111] shrink-0">
+            <span className="text-[10px] text-slate-500 font-medium tracking-wide">
+              {filterStatus ? STATUS_LABELS[filterStatus].label : '所有条目'}
+            </span>
+            <span className="mx-2 text-slate-600">/</span>
+            <span className="text-[10px] text-slate-500">{filteredItems.length} 项</span>
+          </div>
+          <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden py-2">
+            {loading ? (
+              <div className="flex items-center justify-center h-32">
+                <Loader2 className="animate-spin text-slate-500" size={20} />
+              </div>
+            ) : error ? (
+              <div className="flex items-center justify-center h-32">
+                <p className="text-red-400 text-sm">{error}</p>
+              </div>
+            ) : filteredItems.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-slate-500">
+                <Inbox size={24} className="opacity-30 mb-3" />
+                <p className="text-sm">{filterStatus ? `暂无${STATUS_LABELS[filterStatus].label}条目` : '暂无条目'}</p>
+                <button onClick={onOpenRecorder} className="mt-4 text-xs text-emerald-400 hover:underline">录入</button>
+              </div>
+            ) : (
+              <div>
+                {filteredItems.map((item) => {
+                  const isActive = selectedItemId === item.id
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => onSelectItem(isActive ? null : item.id)}
+                      className={`flex items-center justify-between px-3 py-1.5 mx-2 rounded-md cursor-pointer transition-colors text-sm ${
+                        isActive
+                          ? 'bg-emerald-500/90 text-[#111] font-medium'
+                          : 'text-slate-300 hover:bg-white/[0.06]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate min-w-0">
+                        <FileText size={14} className={`shrink-0 ${isActive ? 'text-[#111]/60' : 'text-slate-500'}`} />
+                        <span className="truncate">{item.topic || item.rawText.slice(0, 50)}</span>
+                      </div>
+                      {item.status !== 'pending' && (
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded shrink-0 ml-2 ${isActive ? 'bg-[#111]/10 text-[#111]/70' : 'bg-white/5 text-slate-500'}`}>
+                          {STATUS_LABELS[item.status]?.label}
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
+      {/* Right preview panel */}
       {effectiveSelectedItem && (
         <div className="w-80 bg-[#161616] border-l border-white/[0.06] flex flex-col shrink-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden shadow-xl">
           <div className="flex items-center justify-between p-4 border-b border-white/[0.06]">
@@ -878,8 +965,18 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
             <p className="text-xs text-slate-500 mb-8">Document · Markdown</p>
             <div className="w-full space-y-4 text-xs">
               <div className="flex flex-col gap-1 border-b border-white/[0.06] pb-4">
-                <span className="text-slate-500 font-semibold tracking-wider text-[10px]">内容预览</span>
+                <span className="text-slate-500 font-semibold tracking-wider text-[10px]">内容摘要</span>
                 <p className="text-slate-400 leading-relaxed line-clamp-4 whitespace-pre-wrap">{effectiveSelectedItem.rawText}</p>
+              </div>
+              <div className="flex flex-col gap-2 border-b border-white/[0.06] pb-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-semibold tracking-wider text-[10px]">创建时间</span>
+                  <span className="text-slate-400">{formatDate(effectiveSelectedItem.createdAt)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-semibold tracking-wider text-[10px]">处理时间</span>
+                  <span className="text-slate-400">{formatDate(effectiveSelectedItem.processedAt)}</span>
+                </div>
               </div>
               <div className="flex flex-col gap-1 border-b border-white/[0.06] pb-4">
                 <span className="text-slate-500 font-semibold tracking-wider text-[10px]">操作</span>

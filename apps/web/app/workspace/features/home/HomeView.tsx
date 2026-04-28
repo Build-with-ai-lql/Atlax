@@ -54,7 +54,7 @@ export default function HomeView({ userId, userName: _userName, onOpenEditor, on
   ]
 
   return (
-    <div className="h-full overflow-y-auto px-6 pb-24 pt-24 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden atlax-deep-space relative">
+    <div className="h-full overflow-y-auto pb-24 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden relative">
       <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col items-center relative z-10">
         <section className="flex w-full flex-col items-center py-12">
           <div className="mb-14 text-center">
@@ -63,7 +63,7 @@ export default function HomeView({ userId, userName: _userName, onOpenEditor, on
             </h1>
             <div className="flex items-center justify-center gap-4 mt-8">
               <div className="h-px w-10 bg-white/10" />
-              <p className="font-mono text-[10px] text-[#8B8B8B] tracking-[0.2em] uppercase">
+              <p className="font-mono text-[10px] text-[var(--text-muted)] tracking-[0.2em] uppercase">
                 {nodeCount} Nodes active in your workspace.
               </p>
               <div className="h-px w-10 bg-white/10" />
@@ -71,7 +71,7 @@ export default function HomeView({ userId, userName: _userName, onOpenEditor, on
           </div>
 
           {/* Star Input - Main Capture */}
-          <div className="mb-20 flex w-full max-w-2xl items-center rounded-2xl border border-white/[0.08] bg-white/[0.02] p-2 pl-6 shadow-[0_20px_50px_rgba(0,0,0,0.3)] backdrop-blur-2xl transition-all duration-500 focus-within:border-[#a78bfa]/30 focus-within:bg-white/[0.05] focus-within:ring-1 focus-within:ring-[#a78bfa]/10">
+          <div className="mb-20 flex w-full max-w-2xl items-center glass rounded-2xl p-2 pl-6 shadow-[0_20px_50px_rgba(0,0,0,0.3)] transition-all duration-500 focus-within:border-[var(--accent)]/30 focus-within:bg-white/[0.05] focus-within:ring-1 focus-within:ring-[var(--accent)]/10">
             <input
               type="text"
               value={captureText}
@@ -83,7 +83,7 @@ export default function HomeView({ userId, userName: _userName, onOpenEditor, on
             <button
               onClick={submitCapture}
               disabled={!captureText.trim() || submitting}
-              className="ml-2 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#a78bfa]/10 text-[#a78bfa] border border-[#a78bfa]/20 transition-all hover:bg-[#a78bfa]/20 disabled:cursor-not-allowed disabled:opacity-20"
+              className="ml-2 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/20 transition-all hover:bg-[var(--accent)]/20 disabled:cursor-not-allowed disabled:opacity-20"
               title="Capture"
             >
               {submitting ? <Plus size={20} className="animate-spin" /> : <ArrowRight size={20} />}
@@ -107,15 +107,15 @@ export default function HomeView({ userId, userName: _userName, onOpenEditor, on
                 <div className={`mb-6 flex h-12 w-12 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.03] transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 ${card.iconColor}`}>
                   {card.icon}
                 </div>
-                <p className="mb-2 text-base font-medium text-white group-hover:text-[#a78bfa] transition-colors">{card.title}</p>
-                <p className="text-sm text-[#8B8B8B] leading-relaxed font-light">{card.desc}</p>
+                <p className="mb-2 text-base font-medium text-white group-hover:text-[var(--accent)] transition-colors">{card.title}</p>
+                <p className="text-sm text-[var(--text-muted)] leading-relaxed font-light">{card.desc}</p>
               </button>
             ))}
           </div>
 
           <div className="mt-24 w-full max-w-4xl">
             <div className="flex items-center justify-between mb-8 px-2">
-              <span className="text-[11px] font-bold tracking-[0.25em] text-[#8B8B8B] uppercase">Recent Intelligence</span>
+              <span className="text-[11px] font-bold tracking-[0.25em] text-[var(--text-muted)] uppercase">Recent Intelligence</span>
             </div>
 
             {recentItems.length === 0 ? (

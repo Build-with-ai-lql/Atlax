@@ -624,7 +624,6 @@ No, pending review/manual validation.
 3. Preview 目前仅为简单文本预览，未实现完整 Markdown 渲染。
 
 ---
-
 ## Phase Refactory Round 12 Frontend (2026-04-28): 修复新建文档生命周期 + Block/Classic 模式切换
 
 ### 时间统计
@@ -838,6 +837,80 @@ Round 13 标题使用了英文（"Phase Refactory Round 13 Frontend"），未做
 
 ---
 
+## Golden Prototype 全量迁移 Round 1（2026-04-29）：全量审计与迁移计划
+
+### 时间统计
+- 开始时间：2026-04-29 00:54
+- 结束时间：2026-04-29 00:58
+- 工作时长：4 分钟
+
+### 本轮目标
+1. 以 `Atlax_MindDock_Landing_Page.txt` 为视觉与交互真源，完成全量 UI / 状态 / 交互盘点。
+2. 对比当前 `/workspace` 前端实现，明确可复用、需替换、缺失、新增与后端边界。
+3. 形成 10 轮迁移计划，避免后续继续按“已有功能最小替换”推进。
+
+### 原型功能覆盖率表
+
+| 原型模块 | 当前覆盖 | 状态 |
+|---|---:|---|
+| 全局 Shell / 暗色背景 / ambient glow | 50% | 已有基础背景，缺统一 shell 与全局 token 收口 |
+| TopNav / Search / Account Dropdown / Drag-Collapse | 65% | TopNav 已接入，仍需补齐原型级搜索建议、账号菜单、editor 折叠行为细节 |
+| Home View | 60% | 已有 HomeView 和 capture，但视觉与 Golden card/input 仍需对齐 |
+| Mind Canvas / HUD / Filters / Zoom / Node Panel / Toast | 20% | 当前是 SVG inline graph，缺真实 canvas engine、HUD、filters、zoom、node detail、toast |
+| Dock Finder Column / Preview Panel | 45% | 已有 Finder 雏形和 preview，缺多级 Miller columns、项目/标签 mock 层级、原型动作外壳完整度 |
+| Editor Tabs / New Tab / Options | 55% | 已有 tabs/options，缺 new-tab dropdown 的项目入口、pin/close 细节和 fullscreen nav 联动 |
+| Block Editor / Block Menus / Drag | 25% | 只有最小 block UI，缺 contenteditable block engine、slash menu、block options、drag/drop |
+| Classic Markdown / Split Preview / Resizer | 45% | toolbar 已有最小插入，preview 有开关，缺原型 markdown preview 样式与 resizer |
+| Global Sidebar / Sidebar Chat / Widgets | 0% | 当前 workspace 未接入 |
+| Floating Chat / Chat Mode Switch | 20% | 有 FloatingRecorder，不等于原型 AI Chat；需新增外壳 |
+| Dropdown / Hover / Active / Focus / Collapsed / Drag 状态 | 35% | 局部存在，需 Round 7 系统补齐 |
+
+### 变更内容
+1. 完成原型审计：确认原型包含全局 Shell、Canvas、TopNav、Home、Mind、Dock、Editor、Global Sidebar、Floating Chat、Sidebar Chat、Search Suggestions、Account Dropdown、Node Detail Panel、Mind HUD、Mind Filters、Zoom Controls、Toast、Dock Finder Column、Dock Preview Panel、Editor Tabs、New Tab Dropdown、Options Dropdown、Block Editor、Classic Markdown、Split Preview、Block Type Menu、Block Options Menu、Widget 入口及 hover/active/collapsed/drag/focus/open-close 状态。
+2. 完成当前代码差距分析：当前主入口为 `apps/web/app/workspace/page.tsx`，已存在 `GoldenTopNav`、`HomeView`、`WorkspaceTabs`、`EditorTabView`、Dock Finder 雏形、Mind SVG 雏形和 repository/Dexie 数据接口。
+3. 明确替换方向：MindInlineView 需升级为 Canvas graph；FloatingRecorder 不能替代原型 AI Chat；DockFinderView 需推进为多级 Finder hierarchy；Editor block 模式需推进为 contenteditable block engine。
+4. 明确缺失模块：GlobalSidebar、SidebarChat、FloatingChat、Chat mode dropdown、Widget section、Mind HUD、Mind Filters、ZoomControls、NodeDetailPanel、Toast、Dock mock hierarchy、BlockTypeMenu、BlockOptionsMenu、SplitPreviewResizer。
+5. 明确后端边界：Round 2-7 默认后端冻结；缺接口时以前端 mock data、占位 service 和 TODO boundary 处理，不以“当前无后端”为理由跳过前端 UI / 交互外壳。
+6. 形成 10 轮迁移计划：Round 1 审计，Round 2 Shell/Token/TopNav，Round 3 Mind，Round 4 Dock，Round 5 Editor，Round 6 Sidebar/Chat/Widgets，Round 7 交互动效，Round 8 Mock/接口占位收口，Round 9 质量回归，Round 10 最终收口。
+
+### 遇到的问题
+1. 当前仓库已有 staged 代码变更：`page.tsx`、`EditorTabView.tsx` 和本日志文件已有暂存内容，属于前序轮次遗留，未收到人工 Review 通过指令前不能提交。
+2. 原型功能面远大于当前产品页面，后续若不持续输出覆盖率表，容易退回到“只补已有功能”的工程实现方式。
+
+### 解决方式
+1. 本轮只追加审计日志，不修改业务代码，不提交。
+2. 将覆盖率表作为后续每轮回复与日志的固定入口。
+3. 将当前无后端能力的模块标记为前端 mock / 占位 / service boundary，而不是排除出迁移范围。
+
+### 是否解决
+- 已解决：原型全量盘点、当前差距矩阵、迁移轮次、前后端责任边界已明确。
+- 未解决：Round 2 之后的实际 UI 迁移尚未开始，需要人工 Review 本轮计划后继续。
+
+### 收口验证
+- 已执行仓库读取、原型读取、当前 workspace 代码读取、git 状态检查。
+- 本轮未改业务代码，未运行 typecheck/build；后续 Round 2 若改布局和 CSS，至少运行 `pnpm --dir apps/web typecheck`，必要时补跑 lint/build。
+
+### 手工验证方式
+1. 人工打开 `Atlax_MindDock_Landing_Page.txt` 对照本轮覆盖率表。
+2. 人工确认所有原型模块均进入后续迁移计划，没有被标记为可选或删除。
+3. 人工确认 Round 2 只做 Shell/Token/TopNav/Layout 基座，不提前吞并 Mind/Dock/Editor 业务细节。
+
+### 手工验证标准
+1. 覆盖率表包含 Canvas、Chat、Sidebar、Widget、Block Editor、Dock Finder、Node Detail 等关键原型模块。
+2. 差距分析明确区分可复用、需替换、缺失、mock、接口占位和后端冻结。
+3. 迁移计划控制在 5-10 轮内，且每轮有明确目标和责任边界。
+
+### 未完成项
+1. 未执行 Round 2 代码迁移。
+2. 未新增 mock service 或组件。
+3. 未提交；需要人工 Review 通过后，下一轮开始才允许提交上一轮确认内容。
+
+### 下一轮建议
+1. 若人工 Review 通过：下一轮先确认 working tree 只有已确认内容，再提交上一轮代码到远端仓库，然后开始 Round 2。
+2. Round 2 目标：建立 Golden Prototype 全局 Shell、design tokens、ambient glow、glass panel、view-section/main-container 基座；补齐 TopNav search/account/drag/editor collapse；为 Round 3 Canvas 保留稳定背景层。
+
+---
+
 ## 日志更正说明 (2026-04-28)
 
 1. 第 14 轮日志位置异常：实际追加在 Round 12/13 之前（文件第 766 行），系追加时未注意到文件末尾已有 Round 13 内容。后续以文件末尾追加记录为准。
@@ -910,3 +983,222 @@ Round 13 标题使用了英文（"Phase Refactory Round 13 Frontend"），未做
 3. Block Edit 目前只有最小可见 UI，未实现真实 block engine。
 
 ---
+
+## 第 16 轮前端重构 (2026-04-29): Dock Finder Miller Columns 推进 + Editor Toolbar 最小闭环
+
+### 时间统计
+- 开始时间：2026-04-29 00:03
+- 结束时间：2026-04-29 00:12
+- 工作时长：9 分钟
+
+### 本轮目标
+1. Dock Finder 继续贴近原型：将中间区域推进为 Miller Columns（集合列 + 条目列），preview panel 增加 metadata 区。
+2. Editor Classic toolbar 实现最小文本插入功能：Bold/Italic/Code/List 按钮不再只是静态 UI。
+
+### 变更内容
+
+**目标 A：Dock Finder Miller Columns 推进**
+1. **中间区域拆分**：原单列表区域拆分为两列：
+   - **集合列**（`w-52`）：显示「所有条目」+ 各 STATUS 分组（pending/suggested/archived/reopened），带计数和选中态。
+   - **条目列**（`flex-1`）：显示当前筛选下的具体条目列表，保留 path bar（位置 + 数量）。
+2. **左侧 sidebar 保留**：SHORTCUTS、STATUS、ACTIONS 区域保持可用，与集合列形成「导航 sidebar + Miller Columns + preview」四层结构。
+3. **Preview panel metadata 区**：
+   - 内容摘要（原「内容预览」改为「内容摘要」）。
+   - 创建时间（`createdAt`）。
+   - 处理时间（`processedAt`，DockItem 无 `updatedAt` 字段）。
+   - 操作区保持 suggest/archive/reopen/open-in-editor。
+4. **功能保持**：STATUS 筛选、所有条目、自动清空被隐藏选中项、suggest/archive/reopen/open-in-editor 链路完整。
+
+**目标 B：Editor Classic Toolbar 最小闭环**
+1. **新增 `insertMarkdown` 函数**：通过 `textareaRef` 获取选区，在光标位置插入 Markdown 标记：
+   - Bold：`insertMarkdown('**', '**')` → 有选中文本则包裹，无选中则插入 `****`。
+   - Italic：`insertMarkdown('*', '*')` → 同上。
+   - Strikethrough：`insertMarkdown('~~', '~~')`。
+   - Link：`insertMarkdown('[', '](url)')`。
+   - Code（inline）：`insertMarkdown('\`', '\`')`。
+   - Bullet List：`insertMarkdown('- ')`。
+   - Numbered List：`insertMarkdown('1. ')`。
+2. **光标定位**：插入后通过 `requestAnimationFrame` 恢复 focus 并将光标置于插入内容末尾。
+3. **dirty 状态同步**：toolbar 点击后调用 `setDirty(true)`，确保已有文档的保存按钮正确出现。
+4. **draft 状态同步**：toolbar 点击后调用 `onContentChange`，draft 的 `drafts map` 通过 page.tsx 的回调同步更新。
+5. **Block 模式**：toolbar 仅在 Classic 模式显示，Block 模式不受影响。
+
+### 遇到的问题与解决方式
+1. **DockItem 无 `updatedAt` 字段**：`typecheck` 报错 `updatedAt` 不存在。查看 `packages/domain/src/ports/repository.ts` 确认 DockItem 接口只有 `createdAt` 和 `processedAt`。将 preview panel 的「更新时间」改为「处理时间」，绑定 `processedAt`。
+
+### 自动验证结果
+- `git diff --check --cached`: 通过（exit code 0）
+- `pnpm --dir apps/web typecheck`: 通过（0 errors）
+- `pnpm --dir apps/web test`: 通过（13 files, 286 tests passed）
+- `pnpm --dir apps/web lint`: 通过（0 errors，1 warning 在 demo prototype）
+- `pnpm --dir apps/web build`: 通过（所有路由正常生成）
+
+### 手工验证标准
+1. 打开 `/workspace`。
+2. 进入 Dock，验证左侧 sidebar、中间集合列 + 条目列、右侧 preview panel 布局。
+3. 点击集合列中的分组/状态筛选，条目列正确变化。
+4. 点击条目，preview panel 正常显示 metadata（状态、创建时间、处理时间、内容摘要）和操作按钮。
+5. suggest / archive / reopen / 在编辑器中打开 点击后不报错。
+6. 新建 draft，在 Classic 模式点击 Bold / Italic / Code / List 按钮，正文正确插入 Markdown 标记。
+7. draft toolbar 修改后切换 draft，内容不串、不丢。
+8. 关闭未保存 draft，Dock 不新增文档。
+9. 保存 draft 后 Dock 才新增文档。
+10. 已有文档 toolbar 修改后保存按钮正确出现，保存走更新逻辑。
+11. Block、Preview、Context Panel 仍可用。
+
+### 是否可进入下一轮
+- 等待 review。
+
+### 下一轮风险
+1. Dock Finder 目前为单层 column（flat items），未实现多层级文件夹导航。
+2. Block Edit 目前只有最小可见 UI，未实现真实 block engine。
+3. Preview 目前仅为简单文本预览，未实现完整 Markdown 渲染。
+
+---
+
+## 第 17 轮前端重构 (2026-04-29): 全局 Shell / Design Token / TopNav / Layout 基座
+
+### 时间统计
+- 开始时间：2026-04-29 01:10
+- 结束时间：2026-04-29 01:34
+- 工作时长：24 分钟
+
+### 本轮目标
+1. 建立接近 Golden Prototype 的全局 Shell 结构：暗色根容器、ambient glow、canvas-container、main-container。
+2. 收口 Design Token / Golden CSS 基座：在 globals.css 中补齐所有 Golden Prototype 所需 CSS 变量和工具类。
+3. TopNav 对齐 Golden Prototype 基础行为：search suggestions、account dropdown、click-outside-to-close、editor 模式折叠。
+4. 主视图切换基座：Home / Mind / Dock / Editor 统一挂载布局，Editor 近 fullscreen。
+
+### 变更内容
+
+**目标 A：建立 Golden 全局 Shell**
+1. ambient-glow 层：替换原 inline radial-gradient 为 .ambient-glow CSS 类，居中全屏、pointer-events-none、z-0。
+2. canvas-container 层：新增 #canvas-container 绝对定位铺满全屏，z-0，默认 opacity-1 pointer-events-auto。非 Mind 模式时添加 .canvas-dimmed 类。
+3. MindCanvasLayer 组件：将原 MindInlineView 中的 SVG 节点/边渲染抽取为独立组件，渲染在 canvas-container 中，为后续真实 canvas graph 接入预留位置。
+4. MindInlineOverlay 组件：保留 Mind 模式的 overlay UI，使用 .glass 类替代硬编码样式。
+5. main-container：使用 main#main-container 包裹所有视图内容，relative z-10，flex-1 overflow-hidden。
+6. 根容器：bg-[var(--bg-base)] 替代硬编码 bg-[#111111]，text-[var(--text-main)] 替代 text-slate-200。
+
+**目标 B：收口 Design Token / Golden CSS 基座**
+1. CSS 变量：在 .dark 选择器中补齐 Golden Prototype 全部 token：--bg-base / --bg-panel / --bg-sidebar / --text-main / --text-muted / --border-line / --border-hover / --accent / --node-root / --node-domain / --node-doc。
+2. 工具类：在 @layer components 中补齐：.glass / .glass-hover / .no-scrollbar / .main-transition / .view-transition / .dropdown-transition / .nav-transition / .ambient-glow / .canvas-container / .canvas-dimmed / .view-section / .view-btn-active / .finder-column / .finder-item。
+3. 不破坏现有 Tailwind 使用，不引入新 UI 库。
+
+**目标 C：TopNav 对齐 Golden Prototype 基础行为**
+1. isCollapsed prop：新增 isCollapsed?: boolean prop，由父组件根据 editor 模式传入。Editor 激活时 TopNav 折叠为圆形 logo。
+2. 点击外部关闭：为 search suggestions 和 account dropdown 添加 useEffect + mousedown 事件监听。
+3. Account dropdown 更新：顶部显示用户名 + Pro Plan；菜单项：Account Mgmt / Subscription / Settings / Feedback / Log Out。
+4. Search suggestions 更新：分区标题对齐原型 SUGGESTED FROM GRAPH / RECENT ACTIONS；图标颜色使用 CSS 变量。
+5. CSS 变量替换：TopNav 中硬编码颜色替换为 CSS 变量。
+
+**目标 D：主视图切换基座**
+1. Home / Mind / Dock 统一 main container：三个视图共享 pt-20 pb-4 px-6 flex justify-center 容器。
+2. Editor 近 fullscreen：Editor 使用独立 .view-section.active 容器，内含 .glass-panel.glass 面板。
+3. Dock 外层 glass 面板：Dock Finder 外层包裹 .glass 面板。
+4. HomeView 调整：移除内部 pt-24 px-6 和 atlax-deep-space，颜色引用替换为 CSS 变量。
+
+### 遇到的问题与解决方式
+1. MindInlineOverlay 未使用参数 lint 报错：将参数名改为 _nodes / _edges / _onOpenEditor。
+2. isCollapsed prop 类型不匹配：新增 isCollapsed?: boolean 可选 prop。
+3. 开发日志位置错误：Round 17 日志误插入到文件中间，已修正为追加到文件末尾。
+
+### 自动验证结果
+- pnpm --dir apps/web typecheck: 通过（0 errors）
+- pnpm --dir apps/web build: 通过（1 warning 在 demo2-prototype，非本轮修改）
+- git diff --check --cached: 通过（无 whitespace 错误）
+
+### 手工验证标准
+1. 打开 /workspace，默认进入 Home，背景暗色 #111111，ambient glow 可见。
+2. TopNav 居中悬浮，Home / Mind / Dock / Editor 四个入口可见，Home 有 active 圆角背景。
+3. 点击 Search icon，nav 展开搜索框，显示 search suggestions dropdown。
+4. 点击 nav 外部区域，search suggestions 自动关闭。
+5. 点击 Account 头像，显示 dropdown。
+6. 点击 nav 外部区域，account dropdown 自动关闭。
+7. 点击 Mind，canvas-container 层可见，overlay UI 正常显示。
+8. 切换到 Dock，canvas-container 变为 dimmed。
+9. 切换到 Editor，TopNav 折叠为圆形 logo。
+10. 点击折叠的 logo，回到 Home，TopNav 展开。
+11. Home / Mind / Dock / Editor 切换不出现 layout jump。
+12. 现有 Home capture、Dock list/preview、Editor tabs/editor 功能不丢。
+
+### 是否可进入下一轮
+- 等待 review。
+
+### 下一轮建议
+1. Mind Canvas 接入真实 canvas graph（物理模拟 + 交互）。
+2. Mind HUD / Filters / Zoom Controls 实现。
+3. Dock Finder 多级 Finder hierarchy。
+4. Global Sidebar / Floating Chat 实现。
+5. Editor fullscreen 模式进一步优化。
+
+## 第 17 轮前端重构 Review 整改 (2026-04-29): TopNav / Editor Layout / Block 默认模式修补
+
+### 时间统计
+- 开始时间：2026-04-29 01:40
+- 结束时间：2026-04-29 01:58
+- 工作时长：18 分钟
+
+### 本轮目标
+修复第 17 轮人工 Review 发现的 6 个必修问题。
+
+### 修复内容
+
+**修复 1：Account dropdown 错位**
+- 问题：dropdown 使用百分比定位，导致错位。
+- 修复：新增 accountBtnRef + dropdownPos state。点击 account button 时读取 getBoundingClientRect()，dropdown top = rect.bottom + 8，left = rect.right - 224（clamp 到 viewport 内）。
+
+**修复 2：非 Editor 页面 TopNav 禁止拖拽**
+- 问题：Home / Mind / Dock 非 Editor 页面 TopNav 仍可自由拖动。
+- 修复：handleLogoPointerDown 开头加入 isCollapsed 守卫，只有 collapsed 时才启动 pointer drag。非 collapsed 状态下 logo 只作为 click-to-home。logo cursor 根据 isCollapsed 切换。
+
+**修复 3：Editor 非全屏布局**
+- 问题：Editor 仍有外边距、圆角、maxHeight 限制。
+- 修复：移除 glass-panel / glass / rounded-2xl / shadow-2xl / border / 外边距 / maxHeight。Editor 面板改为 w-full h-full flex flex-col overflow-hidden。
+
+**修复 4：Editor 默认改为 Block 模式**
+- 问题：editorMode 默认是 classic。
+- 修复：useState 初始值从 classic 改为 block。
+
+**修复 5：Block 模式不支持 Preview**
+- 问题：showPreview 按钮在 Classic / Block 都可用。
+- 修复：Preview toggle 只在 mode === classic 时显示。新增 useEffect：切 Block 时自动关闭 showPreview。
+
+**修复 6：Context Links 改为原型式 inline 触发**
+- 问题：Context Links 主要通过 toolbar button 打开。
+- 修复：Block 模式第一个 block-row 中加入 contentEditable div，内含 inline context link span（accent 色、底部边线、hover 背景、cursor pointer）。点击 inline link 触发 setShowContext。
+
+### 遇到的问题
+1. Account dropdown 定位需要 viewport 边界 clamp。
+2. Block 模式 inline context link 使用 contentEditable div，与 textarea 内容不同步。
+
+### 解决方式
+1. Account dropdown left 使用 Math.max/Math.min clamp。
+2. Block 模式 inline context link 暂时使用独立 contentEditable div，后续需统一为 block engine。
+
+### 是否解决
+全部 6 个必修问题已解决。
+
+### 收口验证
+- pnpm --dir apps/web typecheck: 通过（0 errors）
+- pnpm --dir apps/web lint: 通过（0 errors，1 warning 在 demo2-prototype）
+- pnpm --dir apps/web build: 通过
+
+### 手工验证方式
+1. 打开 /workspace，点击 Account 头像，dropdown 应贴近头像下方右侧。
+2. Home / Mind / Dock 页面，logo 只能点击回 Home，不能拖拽。
+3. 进入 Editor（collapsed 状态），logo 可拖拽，点击回 Home。
+4. Editor 区域应充满主内容区，无外边距、无圆角。
+5. 新建 draft 默认显示 Block 编辑模式。
+6. Block 模式下 toolbar 无 Preview 按钮。
+7. 从 Classic 切到 Block 时 Preview 自动关闭。
+8. Block 模式正文中 inline context link 可触发 Context Panel。
+
+### 未完成项
+- Block 模式 contentEditable 与 editorContent 未统一。
+- Editor tab bar pl-16 可能需微调。
+
+### 下一轮建议
+1. Mind Canvas 接入真实 canvas graph。
+2. Dock Finder 多级 hierarchy。
+3. Block Editor contentEditable engine 统一。
+4. Global Sidebar / Floating Chat。

@@ -1,7 +1,7 @@
 'use client'
 
 import type { FC, PointerEvent } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Brain,
   CornerDownLeft,
@@ -17,6 +17,7 @@ import {
   MessageSquare,
   LogOut,
   PenTool,
+  CreditCard,
 } from 'lucide-react'
 
 import { type LocalUser } from '@/lib/auth'
@@ -45,9 +46,9 @@ interface SearchSuggestion {
 }
 
 const SEARCH_SUGGESTIONS: SearchSuggestion[] = [
-  { id: 'recent-1', label: 'Recently edited document', icon: FileText, tone: 'document', section: 'SUGGESTED' },
-  { id: 'mind-1', label: 'Mind map nodes', icon: Network, tone: 'accent' },
-  { id: 'search-history', label: 'Search "MindDock"', icon: History, tone: 'muted', section: 'RECENT' },
+  { id: 'suggested-1', label: 'Graph Engine Physics', icon: FileText, tone: 'document', section: 'SUGGESTED FROM GRAPH' },
+  { id: 'suggested-2', label: 'World Tree Architecture', icon: Network, tone: 'accent' },
+  { id: 'recent-1', label: '搜索 "Context Nudge"', icon: History, tone: 'muted', section: 'RECENT ACTIONS' },
 ]
 
 interface GoldenTopNavProps {
@@ -56,6 +57,7 @@ interface GoldenTopNavProps {
   onOpenRecorder: () => void
   user: LocalUser
   onLogout?: () => void
+  isCollapsed?: boolean
 }
 
 const GoldenTopNav: FC<GoldenTopNavProps> = ({
@@ -64,8 +66,10 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
   onOpenRecorder,
   user,
   onLogout,
+  isCollapsed: isCollapsedProp,
 }) => {
-  const [isCollapsed, setIsCollapsed] = useState(false)
+  const [internalCollapsed, setInternalCollapsed] = useState(false)
+  const isCollapsed = isCollapsedProp ?? internalCollapsed
   const [isSearchMode, setIsSearchMode] = useState(false)
   const [isAccountOpen, setIsAccountOpen] = useState(false)
   const [navPosition, setNavPosition] = useState({ left: 50, top: 24, isPercentLeft: true })
@@ -77,15 +81,57 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
     initialTop: number
     moved: boolean
   } | null>(null)
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 })
 
   const navRef = useRef<HTMLElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const searchSuggestionsRef = useRef<HTMLDivElement | null>(null)
+  const accountDropdownRef = useRef<HTMLDivElement | null>(null)
+  const accountBtnRef = useRef<HTMLButtonElement | null>(null)
 
   useEffect(() => {
     if (isSearchMode) {
       searchInputRef.current?.focus()
     }
   }, [isSearchMode])
+
+  useEffect(() => {
+    if (isAccountOpen && accountBtnRef.current) {
+      const rect = accountBtnRef.current.getBoundingClientRect()
+      const dropdownWidth = 224
+      const top = rect.bottom + 8
+      const left = Math.max(8, Math.min(rect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8))
+      setDropdownPos({ top, left })
+    }
+  }, [isAccountOpen])
+
+  const closeFloatingMenus = useCallback(() => {
+    setIsSearchMode(false)
+    setIsAccountOpen(false)
+  }, [])
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (isSearchMode) {
+        const navEl = navRef.current
+        const suggestionsEl = searchSuggestionsRef.current
+        if (navEl && !navEl.contains(target) && (!suggestionsEl || !suggestionsEl.contains(target))) {
+          setIsSearchMode(false)
+        }
+      }
+      if (isAccountOpen) {
+        const navEl = navRef.current
+        const dropdownEl = accountDropdownRef.current
+        const btnEl = accountBtnRef.current
+        if (navEl && !navEl.contains(target) && (!dropdownEl || !dropdownEl.contains(target)) && btnEl && !btnEl.contains(target)) {
+          setIsAccountOpen(false)
+        }
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [isSearchMode, isAccountOpen])
 
   const navStyle = useMemo(() => {
     const left = navPosition.isPercentLeft ? `${navPosition.left}%` : `${navPosition.left}px`
@@ -100,6 +146,7 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
   }, [navPosition])
 
   const handleLogoPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!isCollapsed) return
     const rect = navRef.current?.getBoundingClientRect()
     if (!rect) return
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -133,17 +180,23 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
     if (!dragState.moved) {
       if (isSearchMode) {
         setIsSearchMode(false)
+      } else if (isCollapsedProp) {
+        onModuleChange('home')
       } else {
-        setIsCollapsed(false)
+        setInternalCollapsed(false)
         onModuleChange('home')
       }
     }
     setDragState(null)
   }
 
-  const closeFloatingMenus = () => {
-    setIsSearchMode(false)
-    setIsAccountOpen(false)
+  const handleLogoClick = () => {
+    if (isCollapsed) return
+    if (isSearchMode) {
+      setIsSearchMode(false)
+    } else {
+      onModuleChange('home')
+    }
   }
 
   return (
@@ -151,7 +204,7 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
       <header
         ref={navRef}
         id="top-nav"
-        className={`fixed z-50 flex items-center overflow-hidden rounded-full border border-[rgba(255,255,255,0.08)] bg-[rgba(26,26,26,0.7)] px-1 shadow-xl backdrop-blur-2xl transition-[width,left,top,transform,border-radius,background-color] duration-[600ms] ease-[cubic-bezier(0.34,1.25,0.4,1)] ${
+        className={`fixed z-50 glass rounded-full flex items-center overflow-hidden shadow-xl px-1 nav-transition ${
           dragState?.moved ? '!transition-none' : ''
         } ${isSearchMode ? 'w-[min(760px,calc(100vw-48px))]' : isCollapsed ? 'w-12' : 'w-[max-content]'}`}
         style={navStyle}
@@ -162,9 +215,12 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
           onPointerDown={handleLogoPointerDown}
           onPointerMove={handleLogoPointerMove}
           onPointerUp={handleLogoPointerUp}
-          className="pointer-events-auto relative z-10 flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full border border-[rgba(255,255,255,0.08)] bg-slate-800 text-slate-200 transition-transform hover:bg-slate-700"
-          style={{ touchAction: 'none' }}
-          title="Drag to move / Click to return Home"
+          onClick={handleLogoClick}
+          className={`pointer-events-auto relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--border-line)] bg-slate-800 text-slate-200 transition-transform hover:bg-slate-700 ${
+            isCollapsed ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+          }`}
+          style={{ touchAction: isCollapsed ? 'none' : 'auto' }}
+          title={isCollapsed ? 'Drag to move / Click to return Home' : 'Return Home'}
         >
           <Brain className="h-5 w-5 pointer-events-none text-emerald-400" />
         </button>
@@ -193,7 +249,7 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
                     onModuleChange(item.id)
                   }}
                   className={`group relative rounded-full px-4 py-2 text-sm font-medium transition-all ${
-                    isActive ? 'text-white' : 'text-[#8B8B8B] hover:text-white'
+                    isActive ? 'text-white' : 'text-[var(--text-muted)] hover:text-white'
                   }`}
                 >
                   <span className="pointer-events-none relative z-10 flex items-center gap-2">
@@ -208,7 +264,7 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
                 </button>
               )
             })}
-            <div className="mx-2 h-5 w-px shrink-0 bg-[rgba(255,255,255,0.08)]" />
+            <div className="mx-2 h-5 w-px shrink-0 bg-[var(--border-line)]" />
           </div>
 
           <div
@@ -230,7 +286,7 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
                   setIsSearchMode(true)
                   setIsAccountOpen(false)
                 }}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#8B8B8B] transition-colors hover:bg-white/10 hover:text-white"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-white/10 hover:text-white"
               >
                 <Search className="h-4 w-4 pointer-events-none" />
               </button>
@@ -241,7 +297,7 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
                 className={`w-full border-none bg-transparent px-2 text-sm text-white outline-none transition-opacity duration-300 ${
                   isSearchMode ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
                 }`}
-                placeholder="Search everything..."
+                placeholder="Search everything... (Mac Spotlight Style)"
                 onKeyDown={(event) => {
                   if (event.key === 'Escape') setIsSearchMode(false)
                 }}
@@ -250,7 +306,7 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
                 id="nav-search-send"
                 type="button"
                 onClick={() => setIsSearchMode(false)}
-                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded bg-emerald-500 text-[#111] transition-opacity duration-300 hover:bg-emerald-400 ${
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded bg-[var(--accent)] text-[#111] transition-opacity duration-300 hover:bg-purple-400 ${
                   isSearchMode ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
                 }`}
               >
@@ -261,7 +317,7 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
             {!isSearchMode && (
               <button
                 onClick={onOpenRecorder}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#8B8B8B] transition-colors hover:bg-white/10 hover:text-white"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-white/10 hover:text-white"
                 title="Capture"
               >
                 <Plus className="h-4 w-4 pointer-events-none" />
@@ -275,13 +331,14 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
               }`}
             >
               <button
+                ref={accountBtnRef}
                 id="nav-account-btn"
                 type="button"
                 onClick={() => {
                   setIsAccountOpen((value) => !value)
                   setIsSearchMode(false)
                 }}
-                className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-[rgba(255,255,255,0.08)] bg-slate-800 transition-colors hover:border-[#8B8B8B]"
+                className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-[var(--border-line)] bg-slate-800 transition-colors hover:border-[var(--text-muted)]"
               >
                 <span className="text-[10px] font-bold text-emerald-400">{user.name.charAt(0).toUpperCase()}</span>
               </button>
@@ -292,8 +349,9 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
 
       {/* Search Suggestions */}
       <div
+        ref={searchSuggestionsRef}
         id="search-suggestions"
-        className={`fixed z-40 w-[min(600px,calc(100vw-48px))] rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(26,26,26,0.8)] p-2 shadow-2xl backdrop-blur-2xl transition-all duration-300 ${
+        className={`fixed z-40 w-[min(600px,calc(100vw-48px))] glass rounded-2xl p-2 shadow-2xl dropdown-transition ${
           isSearchMode ? 'pointer-events-auto translate-y-0 opacity-100' : 'pointer-events-none -translate-y-2 opacity-0'
         }`}
         style={{
@@ -302,18 +360,22 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
           transform: navPosition.isPercentLeft ? 'translateX(-50%)' : undefined
         }}
       >
-        {SEARCH_SUGGESTIONS.map((suggestion) => {
+        {SEARCH_SUGGESTIONS.map((suggestion, idx) => {
           const Icon = suggestion.icon
           const toneClasses = {
-            document: 'text-emerald-200',
-            accent: 'text-indigo-300',
-            muted: 'text-[#8B8B8B]',
+            document: 'text-[var(--node-doc)]',
+            accent: 'text-[var(--accent)]',
+            muted: 'text-[var(--text-muted)]',
           }
+          const showSectionDivider = idx > 0 && suggestion.section && SEARCH_SUGGESTIONS[idx - 1].section !== suggestion.section
           return (
             <div key={suggestion.id}>
-              {suggestion.section ? (
-                <div className="px-3 py-2 text-[10px] font-bold tracking-wider text-[#8B8B8B] uppercase">{suggestion.section}</div>
-              ) : null}
+              {showSectionDivider && (
+                <div className="my-1 border-t border-[var(--border-line)]" />
+              )}
+              {suggestion.section && (!SEARCH_SUGGESTIONS[idx - 1]?.section || SEARCH_SUGGESTIONS[idx - 1].section !== suggestion.section) && (
+                <div className="px-3 py-2 text-[10px] font-bold tracking-wider text-[var(--text-muted)] uppercase">{suggestion.section}</div>
+              )}
               <button className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-white transition-colors hover:bg-white/10">
                 <Icon className={`h-4 w-4 pointer-events-none ${toneClasses[suggestion.tone]}`} />
                 {suggestion.label}
@@ -325,33 +387,37 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
 
       {/* Account Dropdown */}
       <div
+        ref={accountDropdownRef}
         id="account-dropdown"
-        className={`fixed z-[100] flex w-56 flex-col rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(26,26,26,0.8)] p-2 shadow-2xl backdrop-blur-2xl transition-all duration-300 ${
+        className={`fixed z-[100] flex w-56 flex-col glass rounded-2xl p-2 shadow-2xl dropdown-transition ${
           isAccountOpen ? 'pointer-events-auto translate-y-0 opacity-100' : 'pointer-events-none -translate-y-2 opacity-0'
         }`}
         style={{
-          top: `${navPosition.top + 60}px`,
-          left: navPosition.isPercentLeft ? '50%' : `${navPosition.left}px`,
-          transform: navPosition.isPercentLeft ? 'translateX(calc(-50% + 140px))' : 'none', // Offset relative to nav
+          top: `${dropdownPos.top}px`,
+          left: `${dropdownPos.left}px`,
         }}
       >
-        <div className="mb-1 border-b border-[rgba(255,255,255,0.08)] px-3 py-3">
+        <div className="mb-1 border-b border-[var(--border-line)] px-3 py-3">
           <p className="text-sm font-medium text-white">{user.name}</p>
-          <p className="text-[10px] text-[#8B8B8B] tracking-wide uppercase mt-0.5">MindDock Explorer</p>
+          <p className="text-xs text-[var(--text-muted)] mt-0.5">Pro Plan</p>
         </div>
         <button className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-white transition-colors hover:bg-white/10">
           <User className="h-4 w-4 text-slate-400" />
-          Profile
+          Account Mgmt
+        </button>
+        <button className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-white transition-colors hover:bg-white/10">
+          <CreditCard className="h-4 w-4 text-slate-400" />
+          Subscription
         </button>
         <button className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-white transition-colors hover:bg-white/10">
           <Settings className="h-4 w-4 text-slate-400" />
           Settings
         </button>
-        <button className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-white transition-colors hover:bg-white/10">
-          <MessageSquare className="h-4 w-4 text-slate-400" />
+        <button className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-[var(--text-muted)] transition-colors hover:text-white hover:bg-white/10">
+          <MessageSquare className="h-4 w-4" />
           Feedback
         </button>
-        <div className="h-px bg-white/[0.08] my-1" />
+        <div className="h-px bg-[var(--border-line)] my-1" />
         <button
           onClick={onLogout}
           className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-rose-400 transition-colors hover:bg-rose-500/10"

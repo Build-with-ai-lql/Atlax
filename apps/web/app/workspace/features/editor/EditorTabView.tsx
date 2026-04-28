@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { PenTool, Bold, Italic, Strikethrough, Link, Code, Image as ImageIcon, List, ListOrdered, BookOpen, PanelRight, X, Link2, Plus, GripVertical } from 'lucide-react'
 
 interface EditorTabViewProps {
@@ -27,10 +27,17 @@ export default function EditorTabView({
   const [dirty, setDirty] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
   const [showContext, setShowContext] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     setDirty(false)
   }, [editingItemId])
+
+  useEffect(() => {
+    if (mode === 'block' && showPreview) {
+      setShowPreview(false)
+    }
+  }, [mode, showPreview])
 
   const handleTitleChange = (v: string) => {
     onTitleChange(v)
@@ -46,6 +53,26 @@ export default function EditorTabView({
     onSave()
     setDirty(false)
   }
+
+  const insertMarkdown = useCallback((prefix: string, suffix: string = '') => {
+    const el = textareaRef.current
+    if (!el) return
+    const start = el.selectionStart
+    const end = el.selectionEnd
+    const value = el.value
+    const before = value.slice(0, start)
+    const selected = value.slice(start, end)
+    const after = value.slice(end)
+    const replacement = selected ? prefix + selected + suffix : prefix + suffix
+    const newValue = before + replacement + after
+    onContentChange(newValue)
+    setDirty(true)
+    requestAnimationFrame(() => {
+      el.focus()
+      const cursorPos = start + replacement.length
+      el.setSelectionRange(cursorPos, cursorPos)
+    })
+  }, [onContentChange])
 
   if (!editingItemId) {
     return (
@@ -67,42 +94,44 @@ export default function EditorTabView({
       <div className="h-10 bg-[#161616] border-b border-white/[0.06] flex items-center px-4 gap-1 shrink-0">
         {mode === 'classic' && (
           <>
-            <button className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-white/10 transition-colors" title="Bold">
+            <button onClick={() => insertMarkdown('**', '**')} className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-white/10 transition-colors" title="Bold">
               <Bold size={14} />
             </button>
-            <button className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-white/10 transition-colors" title="Italic">
+            <button onClick={() => insertMarkdown('*', '*')} className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-white/10 transition-colors" title="Italic">
               <Italic size={14} />
             </button>
-            <button className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-white/10 transition-colors" title="Strikethrough">
+            <button onClick={() => insertMarkdown('~~', '~~')} className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-white/10 transition-colors" title="Strikethrough">
               <Strikethrough size={14} />
             </button>
             <div className="w-px h-4 bg-white/[0.06] mx-2" />
-            <button className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-white/10 transition-colors" title="Link">
+            <button onClick={() => insertMarkdown('[', '](url)')} className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-white/10 transition-colors" title="Link">
               <Link size={14} />
             </button>
-            <button className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-white/10 transition-colors" title="Code Block">
+            <button onClick={() => insertMarkdown('`', '`')} className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-white/10 transition-colors" title="Code">
               <Code size={14} />
             </button>
             <button className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-white/10 transition-colors" title="Image">
               <ImageIcon size={14} />
             </button>
             <div className="w-px h-4 bg-white/[0.06] mx-2" />
-            <button className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-white/10 transition-colors" title="Bullet List">
+            <button onClick={() => insertMarkdown('- ')} className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-white/10 transition-colors" title="Bullet List">
               <List size={14} />
             </button>
-            <button className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-white/10 transition-colors" title="Numbered List">
+            <button onClick={() => insertMarkdown('1. ')} className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-white/10 transition-colors" title="Numbered List">
               <ListOrdered size={14} />
             </button>
           </>
         )}
         <div className="flex-1" />
-        <button
-          onClick={() => setShowPreview(v => !v)}
-          className={`p-1.5 rounded hover:bg-white/10 transition-colors ${showPreview ? 'text-white' : 'text-slate-500 hover:text-white'}`}
-          title="Toggle Preview"
-        >
-          <BookOpen size={14} />
-        </button>
+        {mode === 'classic' && (
+          <button
+            onClick={() => setShowPreview(v => !v)}
+            className={`p-1.5 rounded hover:bg-white/10 transition-colors ${showPreview ? 'text-white' : 'text-slate-500 hover:text-white'}`}
+            title="Toggle Preview"
+          >
+            <BookOpen size={14} />
+          </button>
+        )}
         <button
           onClick={() => setShowContext(v => !v)}
           className={`p-1.5 rounded hover:bg-white/10 transition-colors ${showContext ? 'text-white' : 'text-slate-500 hover:text-white'}`}
@@ -112,7 +141,7 @@ export default function EditorTabView({
         </button>
       </div>
       <div className="flex-1 flex flex-row overflow-hidden relative">
-        <div className={`flex-1 flex flex-col overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${showPreview ? 'max-w-[50%]' : ''}`}>
+        <div className={`flex-1 flex flex-col overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${showPreview && mode === 'classic' ? 'max-w-[50%]' : ''}`}>
           {mode === 'classic' ? (
             <div className="w-full max-w-3xl mx-auto py-16 px-10">
               <input
@@ -124,6 +153,7 @@ export default function EditorTabView({
               />
               <div className="h-px bg-white/[0.06] mb-8" />
               <textarea
+                ref={textareaRef}
                 value={editorContent}
                 onChange={(e) => handleContentChange(e.target.value)}
                 className="w-full min-h-[60vh] bg-transparent resize-none outline-none text-base font-light leading-relaxed text-slate-300 placeholder-slate-600"
@@ -174,6 +204,28 @@ export default function EditorTabView({
                       <GripVertical size={14} />
                     </button>
                   </div>
+                  <div className="w-full min-h-[1.5rem] text-base font-light leading-relaxed text-slate-300 px-2 -mx-2 outline-none" contentEditable suppressContentEditableWarning>
+                    The engine requires a robust local physics simulation to maintain spatial{' '}
+                    <span
+                      onClick={() => setShowContext(v => !v)}
+                      className="text-[var(--accent)] border-b border-[var(--accent)]/30 pb-0.5 cursor-pointer hover:bg-[var(--accent)]/15 transition-colors rounded-sm px-1 -ml-1"
+                    >
+                      order and structure
+                    </span>
+                    .
+                  </div>
+                </div>
+              </div>
+              <div className="mt-2 space-y-1">
+                <div className="group relative flex items-start gap-2 py-1 rounded-lg border border-transparent hover:border-white/[0.06] hover:bg-white/[0.02] transition-colors">
+                  <div className="absolute -left-10 top-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button className="p-1 text-slate-600 hover:text-white hover:bg-white/10 rounded transition-colors" title="Add block">
+                      <Plus size={14} />
+                    </button>
+                    <button className="p-1 text-slate-600 hover:text-white hover:bg-white/10 rounded transition-colors cursor-grab active:cursor-grabbing" title="Drag">
+                      <GripVertical size={14} />
+                    </button>
+                  </div>
                   <textarea
                     value={editorContent}
                     onChange={(e) => handleContentChange(e.target.value)}
@@ -196,7 +248,7 @@ export default function EditorTabView({
             </div>
           )}
         </div>
-        {showPreview && (
+        {showPreview && mode === 'classic' && (
           <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden bg-[#111] border-l border-white/[0.06] p-10">
             <div className="max-w-2xl mx-auto">
               <h1 className="text-2xl font-semibold text-white mb-6">{editorTitle || 'Untitled'}</h1>
