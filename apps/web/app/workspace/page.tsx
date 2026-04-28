@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { Send, Minimize2, Sparkles, Loader2, X, Dock as DockIcon, MoreHorizontal, LayoutList, FileCode2, Pencil, FolderOutput, Download, Trash2 } from 'lucide-react'
+import { Send, Minimize2, Sparkles, Loader2, X, MoreHorizontal, LayoutList, FileCode2, Pencil, FolderOutput, Download, Trash2, Check, Inbox, Archive, FileText, Circle, RotateCcw, Lightbulb, CircleSlash, ChevronRight } from 'lucide-react'
 
 import { getCurrentUser, registerUser, logoutUser, type LocalUser } from '@/lib/auth'
 import GoldenTopNav from './_components/GoldenTopNav'
@@ -58,6 +58,11 @@ export default function WorkspacePage() {
   const [editorContent, setEditorContent] = useState('')
   const [editorTitle, setEditorTitle] = useState('')
   const [editingItemId, setEditingItemId] = useState<number | null>(null)
+
+  const [editorMode, setEditorMode] = useState<'classic' | 'block'>('classic')
+
+  const draftCounterRef = React.useRef(0)
+  const [drafts, setDrafts] = useState<Record<number, { title: string; content: string }>>({})
 
   const [registerName, setRegisterName] = useState('')
 
@@ -192,48 +197,75 @@ export default function WorkspacePage() {
     setActiveModule('editor')
   }, [items, tabs])
 
-  const handleNewNote = useCallback(async () => {
-    if (!userId) return
-    try {
-      const newId = await createDockItem(userId, 'New Note')
-      await upsertMindNode({
-        userId,
-        nodeType: 'source',
-        label: 'New Note',
-        documentId: newId,
-        state: 'active',
-      })
-      refreshAll()
-
-      // Directly create and activate the tab to avoid setTimeout dependency
-      const tabId = `tab-editor-${newId}`
-      const newTab: Tab = {
-        id: tabId,
-        type: 'editor',
-        title: 'New Note',
-        documentId: newId,
-        isPinned: false,
-      }
-      setTabs(prev => [...prev, newTab])
-      setActiveTabId(tabId)
-      setEditingItemId(newId)
-      setEditorTitle('New Note')
-      setEditorContent('New Note')
-      setActiveModule('editor')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '创建失败')
+  const createDraftTab = useCallback(() => {
+    draftCounterRef.current -= 1
+    const draftId = draftCounterRef.current
+    const tabId = `tab-editor-draft-${draftId}`
+    const newTab: Tab = {
+      id: tabId,
+      type: 'editor',
+      title: 'Untitled',
+      documentId: draftId,
+      isPinned: false,
     }
-  }, [userId, refreshAll])
+    setDrafts(prev => ({ ...prev, [draftId]: { title: '', content: '' } }))
+    setTabs(prev => [...prev, newTab])
+    setActiveTabId(tabId)
+    setEditingItemId(draftId)
+    setEditorTitle('')
+    setEditorContent('')
+    setActiveModule('editor')
+  }, [])
+
+  const handleNewNote = useCallback(() => {
+    createDraftTab()
+  }, [createDraftTab])
 
   const handleSaveEditor = useCallback(async () => {
-    if (!editingItemId || !userId) return
-    try {
-      await updateDockItemText(userId, editingItemId, editorContent)
-      refreshAll()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '保存失败')
+    if (!userId) return
+    const isDraft = editingItemId !== null && editingItemId < 0
+    if (isDraft) {
+      const draft = drafts[editingItemId]
+      const title = (draft?.title ?? '').trim() || (draft?.content ?? '').trim().slice(0, 50) || 'Untitled'
+      const content = (draft?.content ?? '').trim()
+      if (!title && !content) {
+        setError('标题和正文都为空，无法保存')
+        return
+      }
+      try {
+        const newId = await createDockItem(userId, content || title)
+        await upsertMindNode({
+          userId,
+          nodeType: 'source',
+          label: title.slice(0, 80),
+          documentId: newId,
+          state: 'active',
+        })
+        refreshAll()
+        const oldTabId = `tab-editor-draft-${editingItemId}`
+        const newTabId = `tab-editor-${newId}`
+        setTabs(prev => prev.map(t => t.id === oldTabId ? { ...t, id: newTabId, documentId: newId, title: title.slice(0, 30) } : t))
+        setActiveTabId(newTabId)
+        setEditingItemId(newId)
+        setEditorTitle(title)
+        setEditorContent(content)
+        setDrafts(prev => {
+          const next = { ...prev }
+          delete next[editingItemId]
+          return next
+        })
+      } catch (e) {
+        setError(e instanceof Error ? e.message : '保存失败')
+      }
+    } else if (editingItemId && editingItemId > 0) {
+      try {
+        await updateDockItemText(userId, editingItemId, editorContent)
+        refreshAll()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : '保存失败')
+      }
     }
-  }, [editingItemId, userId, editorContent, refreshAll])
+  }, [editingItemId, userId, drafts, editorContent, refreshAll])
 
   const handleActivateTab = useCallback((tabId: string) => {
     setActiveTabId(tabId)
@@ -244,20 +276,37 @@ export default function WorkspacePage() {
       else if (tab.type === 'dock') setActiveModule('dock')
       else if (tab.type === 'editor' && tab.documentId) {
         setActiveModule('editor')
-        const item = items.find(i => i.id === tab.documentId)
-        if (item) {
+        const isDraft = tab.documentId < 0
+        if (isDraft) {
           setEditingItemId(tab.documentId)
-          setEditorTitle(item.topic || item.rawText.slice(0, 50))
-          setEditorContent(item.rawText)
+          const draft = drafts[tab.documentId]
+          setEditorTitle(draft?.title ?? '')
+          setEditorContent(draft?.content ?? '')
+        } else {
+          const item = items.find(i => i.id === tab.documentId)
+          if (item) {
+            setEditingItemId(tab.documentId)
+            setEditorTitle(item.topic || item.rawText.slice(0, 50))
+            setEditorContent(item.rawText)
+          }
         }
       }
     }
-  }, [tabs, items])
+  }, [tabs, items, drafts])
 
   const handleCloseTab = useCallback((tabId: string) => {
     setTabs(prev => {
       const idx = prev.findIndex(t => t.id === tabId)
+      const closingTab = prev.find(t => t.id === tabId)
       const next = prev.filter(t => t.id !== tabId)
+      const closingDocId = closingTab?.documentId
+      if (closingDocId && closingDocId < 0) {
+        setDrafts(draftsPrev => {
+          const d = { ...draftsPrev }
+          delete d[closingDocId]
+          return d
+        })
+      }
       if (activeTabId === tabId) {
         const newActive = next[Math.min(idx, next.length - 1)]?.id || 'tab-home'
         setActiveTabId(newActive)
@@ -275,12 +324,16 @@ export default function WorkspacePage() {
           setActiveModule('editor')
           const docId = newTab.documentId ?? null
           setEditingItemId(docId)
-          if (docId) {
+          if (docId && docId > 0) {
             const item = items.find(i => i.id === docId)
             if (item) {
               setEditorTitle(item.topic || item.rawText.slice(0, 50))
               setEditorContent(item.rawText)
             }
+          } else if (docId && docId < 0) {
+            const draft = drafts[docId]
+            setEditorTitle(draft?.title ?? '')
+            setEditorContent(draft?.content ?? '')
           }
         } else {
           setActiveModule('home')
@@ -291,7 +344,7 @@ export default function WorkspacePage() {
       }
       return next
     })
-  }, [activeTabId, items])
+  }, [activeTabId, items, drafts])
 
   const handleNewTab = useCallback(() => {
     handleNewNote()
@@ -327,6 +380,10 @@ export default function WorkspacePage() {
     }
     setEditingItemId(null)
   }, [tabs, activeTabId, handleActivateTab, handleNewNote])
+
+  const handleSetEditorMode = useCallback((mode: 'classic' | 'block') => {
+    setEditorMode(mode)
+  }, [])
 
   const handleMindInput = useCallback(async () => {
     if (!mindInputText.trim()) return
@@ -398,6 +455,9 @@ export default function WorkspacePage() {
   const nodeCount = mindNodes.length
   const edgeCount = mindEdges.length
 
+  const activeEditorTab = tabs.find(t => t.id === activeTabId)
+  const isActiveDraft = activeEditorTab?.documentId != null && activeEditorTab.documentId < 0
+
   return (
     <div className="dark">
       <div className="relative flex h-screen w-full flex-col overflow-hidden bg-[#111111] font-sans text-slate-200 selection:bg-[#a78bfa] selection:text-white">
@@ -422,15 +482,30 @@ export default function WorkspacePage() {
                   onCloseTab={handleCloseTab}
                   onNewTab={handleNewTab}
                 />
-                <EditorOptionsMenu />
+                <EditorOptionsMenu
+                  mode={editorMode}
+                  onSetMode={handleSetEditorMode}
+                />
               </div>
               <EditorTabView
                 editingItemId={editingItemId}
                 editorTitle={editorTitle}
                 editorContent={editorContent}
-                onTitleChange={setEditorTitle}
-                onContentChange={setEditorContent}
+                onTitleChange={(title) => {
+                  setEditorTitle(title)
+                  if (editingItemId != null && editingItemId < 0) {
+                    setDrafts(prev => ({ ...prev, [editingItemId]: { ...prev[editingItemId], title } }))
+                  }
+                }}
+                onContentChange={(content) => {
+                  setEditorContent(content)
+                  if (editingItemId != null && editingItemId < 0) {
+                    setDrafts(prev => ({ ...prev, [editingItemId]: { ...prev[editingItemId], content } }))
+                  }
+                }}
                 onSave={handleSaveEditor}
+                mode={editorMode}
+                isDraft={isActiveDraft}
               />
             </div>
           </div>
@@ -465,7 +540,7 @@ export default function WorkspacePage() {
             )}
 
             {activeModule === 'dock' && (
-              <DockInlineView
+              <DockFinderView
                 items={items}
                 selectedItemId={selectedItemId}
                 loading={loading}
@@ -496,7 +571,7 @@ export default function WorkspacePage() {
   )
 }
 
-function EditorOptionsMenu() {
+function EditorOptionsMenu({ mode, onSetMode }: { mode: 'classic' | 'block'; onSetMode: (mode: 'classic' | 'block') => void }) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -513,11 +588,19 @@ function EditorOptionsMenu() {
           <div className="fixed inset-0 z-[110]" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-full mt-1 w-56 bg-[#161616]/95 backdrop-blur-xl border border-white/[0.06] rounded-xl p-1 z-[120] shadow-2xl">
             <div className="px-2 py-1 text-[9px] font-bold text-slate-500 tracking-wider">VIEW OPTIONS</div>
-            <button className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center justify-between transition-colors">
+            <button
+              onClick={() => { onSetMode('block'); setOpen(false) }}
+              className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center justify-between transition-colors"
+            >
               <span className="flex items-center gap-2"><LayoutList size={14} /> Block Edit</span>
+              {mode === 'block' && <Check size={14} className="text-white" />}
             </button>
-            <button className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center justify-between transition-colors">
+            <button
+              onClick={() => { onSetMode('classic'); setOpen(false) }}
+              className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center justify-between transition-colors"
+            >
               <span className="flex items-center gap-2"><FileCode2 size={14} /> Classic Edit</span>
+              {mode === 'classic' && <Check size={14} className="text-white" />}
             </button>
             <div className="my-1 border-t border-white/[0.06]" />
             <div className="px-2 py-1 text-[9px] font-bold text-slate-500 tracking-wider">ACTIONS</div>
@@ -628,7 +711,7 @@ function MindInlineView({ nodes, edges, mindInputText, setMindInputText, onMindI
   )
 }
 
-function DockInlineView({ items, selectedItemId, loading, error, onSelectItem, onArchive, onSuggest, onOpenEditor, onReopen, onOpenRecorder, selectedItem }: {
+function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, onArchive, onSuggest, onOpenEditor, onReopen, onOpenRecorder, selectedItem }: {
   items: DockItem[]
   selectedItemId: number | null
   loading: boolean
@@ -641,10 +724,95 @@ function DockInlineView({ items, selectedItemId, loading, error, onSelectItem, o
   onOpenRecorder: () => void
   selectedItem: DockItem | null
 }) {
+  const [filterStatus, setFilterStatus] = useState<EntryStatus | null>(null)
+
+  const statusIcon = (status: EntryStatus) => {
+    switch (status) {
+      case 'pending': return <Circle size={14} className="text-yellow-500/70" />
+      case 'suggested': return <Lightbulb size={14} className="text-blue-400/70" />
+      case 'archived': return <Archive size={14} className="text-emerald-400/70" />
+      case 'reopened': return <RotateCcw size={14} className="text-orange-400/70" />
+      case 'ignored': return <CircleSlash size={14} className="text-slate-500/70" />
+      default: return <Circle size={14} className="text-slate-500/70" />
+    }
+  }
+
+  const counts: Record<EntryStatus, number> = { pending: 0, suggested: 0, archived: 0, ignored: 0, reopened: 0 }
+  items.forEach(i => { counts[i.status] = (counts[i.status] || 0) + 1 })
+
+  const filteredItems = filterStatus ? items.filter(i => i.status === filterStatus) : items
+
+  // 如果当前选中项被筛选隐藏，自动清空选中
+  const visibleSelected = selectedItemId != null && filteredItems.some(i => i.id === selectedItemId)
+  const effectiveSelectedItem = visibleSelected ? selectedItem : null
+
+  const handleSelectFilter = (st: EntryStatus | null) => {
+    setFilterStatus(st)
+    if (st != null && selectedItemId != null) {
+      const item = items.find(i => i.id === selectedItemId)
+      if (item && item.status !== st) {
+        onSelectItem(null)
+      }
+    }
+  }
+
+  const sidebarActiveClass = 'bg-emerald-500/90 text-[#111] font-medium'
+  const sidebarInactiveClass = 'text-slate-300 hover:bg-white/[0.06]'
+
   return (
-    <div className="h-full flex">
-      <div className="flex-1 overflow-y-auto px-4 py-4 pb-40">
-        <div className="max-w-3xl mx-auto space-y-1">
+    <div className="h-full flex overflow-hidden bg-[#111]">
+      <div className="w-48 bg-[#161616] border-r border-white/[0.06] flex flex-col py-3 overflow-y-auto shrink-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="px-4 text-[10px] font-bold text-slate-500 tracking-wider mb-2">SHORTCUTS</div>
+        <div className="space-y-0.5 px-2">
+          <div
+            onClick={() => handleSelectFilter(null)}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-md cursor-pointer transition-colors text-sm ${
+              filterStatus === null ? sidebarActiveClass : sidebarInactiveClass
+            }`}
+          >
+            <Inbox size={14} />
+            <span className="truncate">所有条目</span>
+            <span className="ml-auto text-[10px] opacity-60">{items.length}</span>
+          </div>
+        </div>
+
+        <div className="px-4 text-[10px] font-bold text-slate-500 tracking-wider mt-6 mb-2">STATUS</div>
+        <div className="space-y-0.5 px-2">
+          {(['pending', 'suggested', 'archived', 'reopened'] as EntryStatus[]).map(st => (
+            counts[st] > 0 && (
+              <div
+                key={st}
+                onClick={() => handleSelectFilter(st)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-md cursor-pointer transition-colors text-sm ${
+                  filterStatus === st ? sidebarActiveClass : 'text-slate-400 hover:bg-white/[0.06]'
+                }`}
+              >
+                {statusIcon(st)}
+                <span>{STATUS_LABELS[st].label}</span>
+                <span className="ml-auto text-[10px] opacity-60">{counts[st]}</span>
+              </div>
+            )
+          ))}
+        </div>
+
+        <div className="px-4 text-[10px] font-bold text-slate-500 tracking-wider mt-6 mb-2">ACTIONS</div>
+        <div className="space-y-0.5 px-2">
+          <button onClick={onOpenRecorder} className="w-full text-left flex items-center gap-2 px-3 py-1.5 rounded-md cursor-pointer text-slate-400 hover:bg-white/[0.06] hover:text-white transition-colors text-sm">
+            <Sparkles size={14} className="text-emerald-400" />
+            <span>录入</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+        <div className="h-9 flex items-center px-4 border-b border-white/[0.06] bg-[#111] shrink-0">
+          <span className="text-[10px] text-slate-500 font-medium tracking-wide">
+            {filterStatus ? STATUS_LABELS[filterStatus].label : '所有条目'}
+          </span>
+          <span className="mx-2 text-slate-600">/</span>
+          <span className="text-[10px] text-slate-500">{filteredItems.length} 项</span>
+        </div>
+        <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden py-2">
           {loading ? (
             <div className="flex items-center justify-center h-32">
               <Loader2 className="animate-spin text-slate-500" size={20} />
@@ -653,28 +821,35 @@ function DockInlineView({ items, selectedItemId, loading, error, onSelectItem, o
             <div className="flex items-center justify-center h-32">
               <p className="text-red-400 text-sm">{error}</p>
             </div>
-          ) : items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-slate-500">
-              <DockIcon size={18} className="opacity-30 mb-3" />
-              <p className="text-sm">暂无条目</p>
+          ) : filteredItems.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-slate-500">
+              <Inbox size={24} className="opacity-30 mb-3" />
+              <p className="text-sm">{filterStatus ? `暂无${STATUS_LABELS[filterStatus].label}条目` : '暂无条目'}</p>
               <button onClick={onOpenRecorder} className="mt-4 text-xs text-emerald-400 hover:underline">录入</button>
             </div>
           ) : (
-            <div className="space-y-1">
-              {items.map((item) => {
-                const statusInfo = STATUS_LABELS[item.status] || STATUS_LABELS.pending
+            <div>
+              {filteredItems.map((item) => {
+                const isActive = selectedItemId === item.id
                 return (
                   <div
                     key={item.id}
-                    onClick={() => onSelectItem(selectedItemId === item.id ? null : item.id)}
-                    className={`px-3 py-2 rounded border cursor-pointer ${
-                      selectedItemId === item.id
-                        ? 'bg-white/5 border-white/10'
-                        : 'border-transparent hover:bg-white/[0.02]'
+                    onClick={() => onSelectItem(isActive ? null : item.id)}
+                    className={`flex items-center justify-between px-3 py-1.5 mx-2 rounded-md cursor-pointer transition-colors text-sm ${
+                      isActive
+                        ? 'bg-emerald-500/90 text-[#111] font-medium'
+                        : 'text-slate-300 hover:bg-white/[0.06]'
                     }`}
                   >
-                    <p className="text-sm text-slate-300">{item.rawText}</p>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${statusInfo.bg} ${statusInfo.color}`}>{statusInfo.label}</span>
+                    <div className="flex items-center gap-2 truncate min-w-0">
+                      <FileText size={14} className={`shrink-0 ${isActive ? 'text-[#111]/60' : 'text-slate-500'}`} />
+                      <span className="truncate">{item.topic || item.rawText.slice(0, 50)}</span>
+                    </div>
+                    {item.status !== 'pending' && (
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded shrink-0 ml-2 ${isActive ? 'bg-[#111]/10 text-[#111]/70' : 'bg-white/5 text-slate-500'}`}>
+                        {STATUS_LABELS[item.status]?.label}
+                      </span>
+                    )}
                   </div>
                 )
               })}
@@ -683,28 +858,53 @@ function DockInlineView({ items, selectedItemId, loading, error, onSelectItem, o
         </div>
       </div>
 
-      {selectedItem && (
-        <div className="w-80 border-l border-white/[0.06] bg-[#0A0D14] overflow-y-auto flex-shrink-0 p-4">
-          <div className="flex items-center justify-between mb-4">
-            <span className={`text-[10px] px-2 py-0.5 rounded border ${STATUS_LABELS[selectedItem.status]?.bg} ${STATUS_LABELS[selectedItem.status]?.color}`}>
-              {STATUS_LABELS[selectedItem.status]?.label}
+      {effectiveSelectedItem && (
+        <div className="w-80 bg-[#161616] border-l border-white/[0.06] flex flex-col shrink-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden shadow-xl">
+          <div className="flex items-center justify-between p-4 border-b border-white/[0.06]">
+            <span className={`text-[10px] px-2 py-0.5 rounded border ${STATUS_LABELS[effectiveSelectedItem.status]?.bg} ${STATUS_LABELS[effectiveSelectedItem.status]?.color}`}>
+              {STATUS_LABELS[effectiveSelectedItem.status]?.label}
             </span>
-            <button onClick={() => onSelectItem(null)} className="text-slate-500 hover:text-white">
+            <button onClick={() => onSelectItem(null)} className="p-1.5 text-slate-500 hover:text-white rounded-md hover:bg-white/10 transition-colors">
               <X size={14} />
             </button>
           </div>
-          <p className="text-sm text-slate-300 whitespace-pre-wrap mb-4">{selectedItem.rawText}</p>
-          <div className="space-y-1.5">
-            {selectedItem.status === 'pending' && (
-              <button onClick={() => onSuggest(selectedItem.id)} className="text-xs text-indigo-400 hover:underline">建议</button>
-            )}
-            {(selectedItem.status === 'suggested' || selectedItem.status === 'reopened') && (
-              <button onClick={() => onArchive(selectedItem.id)} className="text-xs text-emerald-400 hover:underline">归档</button>
-            )}
-            {selectedItem.status === 'archived' && (
-              <button onClick={() => onReopen(selectedItem.id)} className="text-xs text-orange-400 hover:underline">重新打开</button>
-            )}
-            <button onClick={() => onOpenEditor(selectedItem.id)} className="text-xs text-slate-400 hover:underline">在编辑器中打开</button>
+          <div className="flex-1 p-6 flex flex-col items-center">
+            <div className="w-24 h-24 rounded-2xl bg-white/5 border border-white/[0.06] flex items-center justify-center mb-6 mt-4 shadow-inner">
+              <FileText size={40} className="text-indigo-400/60" />
+            </div>
+            <h3 className="text-lg font-bold text-white text-center w-full break-words mb-1">
+              {effectiveSelectedItem.topic || effectiveSelectedItem.rawText.slice(0, 40)}
+            </h3>
+            <p className="text-xs text-slate-500 mb-8">Document · Markdown</p>
+            <div className="w-full space-y-4 text-xs">
+              <div className="flex flex-col gap-1 border-b border-white/[0.06] pb-4">
+                <span className="text-slate-500 font-semibold tracking-wider text-[10px]">内容预览</span>
+                <p className="text-slate-400 leading-relaxed line-clamp-4 whitespace-pre-wrap">{effectiveSelectedItem.rawText}</p>
+              </div>
+              <div className="flex flex-col gap-1 border-b border-white/[0.06] pb-4">
+                <span className="text-slate-500 font-semibold tracking-wider text-[10px]">操作</span>
+                <div className="flex flex-col gap-2 mt-1">
+                  {effectiveSelectedItem.status === 'pending' && (
+                    <button onClick={() => onSuggest(effectiveSelectedItem.id)} className="text-left text-slate-400 hover:text-white transition-colors flex items-center gap-2 text-[11px]">
+                      <ChevronRight size={12} /> 建议
+                    </button>
+                  )}
+                  {(effectiveSelectedItem.status === 'suggested' || effectiveSelectedItem.status === 'reopened') && (
+                    <button onClick={() => onArchive(effectiveSelectedItem.id)} className="text-left text-slate-400 hover:text-white transition-colors flex items-center gap-2 text-[11px]">
+                      <ChevronRight size={12} /> 归档
+                    </button>
+                  )}
+                  {effectiveSelectedItem.status === 'archived' && (
+                    <button onClick={() => onReopen(effectiveSelectedItem.id)} className="text-left text-slate-400 hover:text-white transition-colors flex items-center gap-2 text-[11px]">
+                      <ChevronRight size={12} /> 重新打开
+                    </button>
+                  )}
+                  <button onClick={() => onOpenEditor(effectiveSelectedItem.id)} className="text-left bg-emerald-500/90 hover:bg-emerald-500 text-[#111] transition-colors flex items-center gap-2 text-[11px] font-medium px-3 py-1.5 rounded-md mt-1">
+                    <ChevronRight size={12} /> 在编辑器中打开
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

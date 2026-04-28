@@ -559,3 +559,354 @@ No, pending review/manual validation.
 2. Preview 切换按钮（`btn-toggle-preview`）尚未实现。
 3. Context Panel（右侧抽屉）未实现。
 4. Block Edit 模式尚未实现。
+
+---
+
+## Phase Refactory Round 11 Frontend (2026-04-28): Editor Preview / Context Panel 最小 UI 对齐
+
+### 时间统计
+- 开始时间：2026-04-28 22:15
+- 结束时间：2026-04-28 22:30
+- 工作时长：15 分钟
+
+### 本轮目标
+继续缩小真实 Editor 与原型 Editor 的差距，实现 Preview 与 Context Panel 的最小 UI，不做真实编辑器引擎。
+
+### 变更内容
+1. **Preview 最小 UI**
+   - 在 Editor toolbar 右侧加入 Preview toggle（`BookOpen` 图标）。
+   - 打开 preview 后，Editor 内容区呈左右 split：
+     - 左侧编辑区保留，宽度自适应（`max-w-[50%]`）。
+     - 右侧 preview pane：`bg-[#111]`、`border-l border-white/[0.06]`、`p-10`。
+   - Preview 内容为简单文本预览（标题 + 正文 `whitespace-pre-wrap`），不要求完整 Markdown parser。
+   - 关闭 preview 后恢复单栏编辑。
+
+2. **Context Panel 最小 UI**
+   - 在 Editor toolbar 右侧加入 Context Panel toggle（`PanelRight` 图标）。
+   - 打开后右侧出现绝对定位抽屉：
+     - `bg-[#161616]`、`border-l border-white/[0.06]`、`w-72`。
+     - 标题 "Context Links"（`text-xs font-semibold uppercase tracking-wider text-slate-500`）。
+     - 关闭按钮（`X` 图标）。
+   - 内容为 3 张静态占位卡片（UX Guidelines / Engine Spec / API Reference），不接后端。
+   - 抽屉可关闭。
+
+3. **Toolbar 扩展**
+   - toolbar 右侧增加 `flex-1` 占位，将 toggle 按钮推到最右。
+   - Preview / Context Panel toggle 按钮带 active 状态样式（`text-white` vs `text-slate-500`）。
+
+### 遇到的问题与解决方式
+- 无重大问题。Preview 与 Context Panel 均为纯 UI 状态，不改动保存链路。
+
+### 自动验证结果
+- `git diff --check --cached`: 通过（exit code 0）
+- `pnpm --dir apps/web typecheck`: 通过（0 errors）
+- `pnpm --dir apps/web test`: 通过（13 files, 286 tests passed）
+- `pnpm --dir apps/web lint`: 通过（0 errors，1 warning 在 demo prototype）
+- `pnpm --dir apps/web build`: 通过（所有路由正常生成）
+
+### 手工验证标准
+1. 打开 `/workspace`。
+2. 进入 Editor（新建或打开文档）。
+3. 点击 Preview toggle（BookOpen 图标），确认右侧预览区出现，显示标题与正文。
+4. 再次点击 Preview toggle，确认恢复单栏编辑。
+5. 打开 Context Panel toggle（PanelRight 图标），确认右侧抽屉出现，显示 3 张占位卡片。
+6. 点击抽屉右上角 X 或再次点击 Context Panel toggle，确认抽屉消失。
+7. 保存功能仍可用（修改内容后保存按钮出现且可点击）。
+8. 关闭 tab 不黑屏。
+9. TopNav 不遮挡 editor tabs。
+
+### 是否可进入下一轮
+- 等待 review。
+
+### 下一轮风险
+1. Toolbar 按钮目前只做 UI，未实现真实 Markdown 插入。
+2. Block Edit 模式尚未实现。
+3. Preview 目前仅为简单文本预览，未实现完整 Markdown 渲染。
+
+---
+
+## Phase Refactory Round 12 Frontend (2026-04-28): 修复新建文档生命周期 + Block/Classic 模式切换
+
+### 时间统计
+- 开始时间：2026-04-28 22:38
+- 结束时间：2026-04-28 22:55
+- 工作时长：17 分钟
+
+### 本轮目标
+1. 修复新建空文档自动落库问题：新建 editor tab 时只创建前端本地 draft，不调用 createDockItem，保存时才落库。
+2. 继续缩小 Editor 与原型差距：实现 Block Edit / Classic Edit 模式切换最小 UI。
+
+### 变更内容
+
+**目标 A：本地 draft tab 不自动落库**
+1. **draft ID 生成**：使用 `useRef` 维护递减的负整数 draft ID（`-1, -2, -3...`），与真实 Dock documentId（正整数）区分。
+2. **createDraftTab**：新建纯前端 draft tab，标题为 "Untitled"，正文为空，`editingItemId` 为负 draft ID，不调用任何后端接口。
+3. **handleNewNote**：改为调用 `createDraftTab`，不再自动创建 Dock 条目。
+4. **handleSaveEditor**：
+   - 识别 draft：`editingItemId < 0`
+   - draft 保存时：若标题和正文都为空，给出轻量提示（`setError`）不落库；否则调用 `createDockItem` + `upsertMindNode`，然后将 tab 从 draft 转换为真实 document tab（更新 tab id、documentId、title）。
+   - 已有文档保存时：继续调用 `updateDockItemText`。
+5. **handleActivateTab**：切换至 draft tab 时，不从 items 加载内容，保持前端状态。
+6. **handleCloseTab**：关闭 draft tab 后直接丢弃，不落库；切换到其他 editor tab 时正确加载内容。
+7. **isEditorActive 判断**：保留 `activeTabId.startsWith('tab-editor-') && editingItemId != null`，draft 的负 ID 也能满足条件。
+
+**目标 B：Block/Classic 模式切换最小 UI**
+1. **EditorTabView 扩展 props**：接收 `mode: 'classic' | 'block'` 和 `isDraft: boolean`。
+2. **Classic 模式**：保持现有 textarea + toolbar 不变。
+3. **Block 模式最小 UI**：
+   - toolbar 隐藏 Classic 工具按钮，只保留 Preview / Context Panel toggle。
+   - 内容区呈 block 风格：
+     - breadcrumb 行（Projects / Core Architecture）
+     - 标题 block：带 hover 出现的左侧 add/drag 手柄（`Plus`、`GripVertical` 图标）
+     - 正文 block：同样带手柄，textarea 输入
+   - 深色背景、细边框、hover 反馈，不引入新库。
+4. **保存按钮逻辑**：draft 时只要有标题或正文就显示保存按钮；已有文档保持 dirty 逻辑。
+5. **EditorOptionsMenu**：
+   - 接收 `mode` 和 `onSetMode` props。
+   - Block Edit / Classic Edit 按钮可点击切换模式，带 `Check` 图标标识当前模式。
+   - 点击后自动关闭下拉菜单。
+
+### 遇到的问题与解决方式
+1. **draftCounter 闭包问题**：最初用普通变量 `draftCounter` 在 `useCallback` 中导致 lint warning（依赖缺失）。改用 `useRef` 存储计数器，避免闭包陷阱。
+2. **draft 保存后 tab 转换**：需要同步更新 `tabs` 数组中的 tab id 和 documentId，并切换 `activeTabId`，否则保存后 tab 状态不一致。通过 `setTabs(prev => prev.map(...))` 实现。
+
+### 自动验证结果
+- `git diff --check --cached`: 通过（exit code 0）
+- `pnpm --dir apps/web typecheck`: 通过（0 errors）
+- `pnpm --dir apps/web test`: 通过（13 files, 286 tests passed）
+- `pnpm --dir apps/web lint`: 通过（0 errors，1 warning 在 demo prototype）
+- `pnpm --dir apps/web build`: 通过（所有路由正常生成）
+
+### 手工验证标准
+1. 打开 `/workspace`。
+2. 点击 TopNav Editor，在没有文档时进入本地 draft editor（标题 Untitled，正文为空）。
+3. 不输入内容直接关闭 tab，Dock 不新增 New Note/Untitled。
+4. 新建 draft，输入内容但不保存，关闭后 Dock 不新增文档。
+5. 新建 draft，输入内容后保存，Dock 才出现对应文档，tab 从 draft 转为真实文档 tab。
+6. 从 Dock/Home 打开已有文档，保存走更新逻辑（不新建）。
+7. Classic / Block 模式切换正常（通过 Editor Options 下拉菜单）。
+8. Preview / Context Panel 在 Classic 和 Block 模式下都正常。
+9. 关闭 tab 不黑屏。
+
+### 是否可进入下一轮
+- 等待 review。
+
+### 下一轮风险
+1. Toolbar 按钮目前只做 UI，未实现真实 Markdown 插入。
+2. Block Edit 目前只有最小可见 UI，未实现真实 block engine（block 增删、拖拽、类型切换）。
+3. Preview 目前仅为简单文本预览，未实现完整 Markdown 渲染。
+
+---
+
+## Phase Refactory Round 13 Frontend (2026-04-28): 修复 draft tab 独立状态 + Block 模式视觉优化
+
+### 时间统计
+- 开始时间：2026-04-28 23:03
+- 结束时间：2026-04-28 23:20
+- 工作时长：17 分钟
+
+### 本轮目标
+1. 修复 draft tab 状态：为每个本地 draft 保存独立 title/content，不允许多个 draft 共用全局 editorTitle/editorContent 后丢失或串内容。
+2. 继续缩小 Editor 与原型 gap：Block 模式视觉优化。
+
+### 变更内容
+
+**目标 A：draft map 独立状态管理**
+1. **新增 drafts state**：`const [drafts, setDrafts] = useState<Record<number, { title: string; content: string }>>({})`
+2. **createDraftTab**：生成 draftId 后，写入 `drafts[draftId] = { title: '', content: '' }`，然后激活该 draft。
+3. **draft 编辑同步**：`onTitleChange` / `onContentChange` 在 draft 模式下同步更新 `drafts[editingItemId]`。
+4. **handleActivateTab 切换 draft**：从 `drafts[draftId]` 恢复 title/content，不再依赖 tab.title 或全局状态。
+5. **handleCloseTab 关闭 draft**：从 `drafts` 中删除对应 draft；若切换到另一个 draft，加载另一个 draft 的 title/content。
+6. **handleSaveEditor 保存 draft**：
+   - 从 `drafts[editingItemId]` 读取 title/content 进行保存。
+   - 保存成功后删除旧 `drafts[draftId]`，tab 转为真实 document tab。
+7. **已有 Dock 文档**：保存仍走 `updateDockItemText`，不新建文档。
+
+**目标 B：Block 模式视觉优化**
+1. **去掉硬编码 breadcrumb**："Projects / Core Architecture" 改为 "Drafts / {当前标题或 Untitled}"，更中性且不误导。
+2. **block hover 边界优化**：标题 block 和正文 block 增加 `rounded-lg border border-transparent hover:border-white/[0.06] hover:bg-white/[0.02]`，更贴近原型的细边框和深色 hover 背景。
+3. **输入框内边距调整**：`px-2 -mx-2` 让输入文字与 block 边界对齐，hover 时视觉效果更自然。
+4. **间距微调**：标题与正文 block 间距从 `mt-4 space-y-2` 改为 `mt-2 space-y-1`，更紧凑。
+
+### 遇到的问题与解决方式
+1. **lint error: Forbidden non-null assertion**：`handleCloseTab` 中 `closingTab.documentId!` 触发 eslint 报错。通过提取常量 `const closingDocId = closingTab?.documentId` 后使用 `delete d[closingDocId]` 解决。
+
+### 自动验证结果
+- `git diff --check --cached`: 通过（exit code 0）
+- `pnpm --dir apps/web typecheck`: 通过（0 errors）
+- `pnpm --dir apps/web test`: 通过（13 files, 286 tests passed）
+- `pnpm --dir apps/web lint`: 通过（0 errors，1 warning 在 demo prototype）
+- `pnpm --dir apps/web build`: 通过（所有路由正常生成）
+
+### 手工验证标准
+1. 打开 `/workspace`。
+2. 新建 draft A，输入标题和正文，不保存。
+3. 新建 draft B，输入不同标题和正文，不保存。
+4. 在 draft A/B 之间切换，确认内容不串、不丢。
+5. 关闭 draft A，Dock 不新增文档。
+6. 保存 draft B，Dock 才新增文档，tab 转真实文档。
+7. 打开已有 Dock 文档，保存走更新逻辑。
+8. Classic/Block 切换正常。
+9. Preview/Context Panel 正常。
+10. 关闭 tab 不黑屏。
+
+### 是否可进入下一轮
+- 等待 review。
+
+### 下一轮风险
+1. Toolbar 按钮目前只做 UI，未实现真实 Markdown 插入。
+2. Block Edit 目前只有最小可见 UI，未实现真实 block engine（block 增删、拖拽、类型切换）。
+3. Preview 目前仅为简单文本预览，未实现完整 Markdown 渲染。
+## 日志更正说明 (2026-04-28)
+
+Round 13 标题使用了英文（"Phase Refactory Round 13 Frontend"），未做到全中文标题要求。从本轮（第 14 轮）开始修正，后续所有日志标题均使用全中文，不再使用英文标题前缀。
+
+---
+
+## 第 14 轮前端重构 (2026-04-28): 日志更正 + Dock Finder 原型迁移 + Editor 收口
+
+### 时间统计
+- 开始时间：2026-04-28 23:27
+- 结束时间：2026-04-28 23:45
+- 工作时长：18 分钟
+
+### 本轮目标
+1. 增量修正日志流程，标注 Round 13 标题问题。
+2. Dock 视图按原型做第一批迁移，改为 Finder/Miller Columns 基础结构。
+3. Editor 少量收口：修复已有文档 tab 切换时 dirty 状态残留问题。
+
+### 变更内容
+
+**目标 A：日志流程修正**
+- 在文件末尾追加更正说明，标注 Round 13 标题未全中文问题，从本轮开始修正。
+
+**目标 B：Dock Finder/Miller Columns 迁移**
+1. **组件重命名**：`DockInlineView` → `DockFinderView`。
+2. **左侧侧边栏**（w-48，bg-[#161616]）：
+   - SHORTCUTS 区：Inbox（"所有条目"），显示条目总数，点击清除选中。
+   - STATUS 区：按 pending/suggested/archived/reopened 分组，带状态图标和计数。
+   - ACTIONS 区：录入按钮（打开 FloatingRecorder）。
+3. **中间主栏**（flex-1 overflow-y）：
+   - item row 风格贴近原型 `.finder-item`：`rounded-md`、图标 + 标题 + 状态标签。
+   - 选中态：`bg-emerald-500/90 text-[#111] font-medium` 与原型 accent 色对齐。
+   - hover 态：`hover:bg-white/[0.06]`。
+   - 显示 `topic || rawText.slice(0, 50)` 和状态标签。
+4. **右侧 preview panel**（w-80，bg-[#161616]，shadow-xl）：
+   - 顶部状态标签 + 关闭按钮。
+   - 文件图标（w-24 h-24 rounded-2xl，bg-white/5、border）。
+   - 标题 + 类型描述（Document · Markdown）。
+   - 内容预览区（line-clamp-4）。
+   - 操作区：suggest/archive/reopen/open-in-editor，按当前状态显示对应按钮。
+5. **功能保持不变**：
+   - archive/reopen/suggest 调用链完整。
+   - "在编辑器中打开" 点击后进入 Editor 并打开真实文档 tab。
+   - 加载/错误/空态状态保留。
+
+**目标 C：Editor dirty 状态修复**
+- 在 `EditorTabView` 中新增 `useEffect`：监听 `editingItemId` 变化，重置 `dirty` 为 `false`。
+- 修复场景：切换到另一个已有文档 tab 后，保存按钮不应错误显示（因为未修改过内容）。
+
+### 遇到的问题与解决方式
+1. **DockIcon 未使用**：旧组件替换后 `Dock as DockIcon` 不再使用，从 import 中移除，lint 通过。
+
+### 自动验证结果
+- `git diff --check --cached`: 通过（exit code 0）
+- `pnpm --dir apps/web typecheck`: 通过（0 errors）
+- `pnpm --dir apps/web test`: 通过（13 files, 286 tests passed）
+- `pnpm --dir apps/web lint`: 通过（0 errors，1 warning 在 demo prototype）
+- `pnpm --dir apps/web build`: 通过（所有路由正常生成）
+
+### 手工验证标准
+1. 打开 `/workspace`。
+2. 进入 Dock，确认 Dock 呈 Finder/Miller Columns 基础布局（左侧侧边栏 + 中间列表 + 右侧预览面板）。
+3. 点击 Dock item，右侧 preview panel 显示内容（标题、类型、内容预览、操作按钮）。
+4. 点击 "在编辑器中打开"，进入 Editor 并打开真实文档。
+5. archive/reopen/suggest 没有运行时报错（在 preview panel 操作区可见对应按钮）。
+6. 新建两个 draft，切换内容不串、不丢。
+7. 关闭未保存 draft，Dock 不新增文档。
+8. 保存 draft 后 Dock 才新增文档。
+9. 已有文档切换 tab 后保存按钮状态正确（不显示未保存）。
+10. Classic/Block、Preview/Context Panel 仍可用。
+
+### 是否可进入下一轮
+- 等待 review。
+
+### 下一轮风险
+1. Dock Finder 目前为单层 column（flat items），未实现多层级文件夹导航。
+2. Toolbar 按钮目前只做 UI，未实现真实 Markdown 插入。
+3. Block Edit 目前只有最小可见 UI，未实现真实 block engine。
+
+---
+
+## 日志更正说明 (2026-04-28)
+
+1. 第 14 轮日志位置异常：实际追加在 Round 12/13 之前（文件第 766 行），系追加时未注意到文件末尾已有 Round 13 内容。后续以文件末尾追加记录为准。
+2. 第 14 轮工时修正：实际开始时间 23:27，结束时间 23:45，工作时长应为 18 分钟，不是 13 分钟。
+3. 从第 15 轮开始，所有日志统一在文件真实末尾追加，标题全中文，不再出现位置错乱。
+
+---
+
+## 第 15 轮前端重构 (2026-04-28): 日志更正 + Dock Finder 交互补齐 + 原型差距压缩
+
+### 时间统计
+- 开始时间：2026-04-28 23:50
+- 结束时间：2026-04-28 23:54
+- 工作时长：4 分钟
+
+### 本轮目标
+1. 增量修正日志：追加第 14 轮位置异常和工时修正说明。
+2. Dock Finder 交互补齐：左侧 STATUS 分组实现可用筛选，active 样式明确，筛选后自动清空被隐藏条目的选中状态。
+3. 继续缩小 Dock 与原型差距：中间栏增加 path bar，preview panel 按钮样式对齐原型。
+
+### 变更内容
+
+**目标 A：日志增量更正**
+- 在文件真实末尾追加「日志更正说明」段落，说明第 14 轮日志位置异常（插在 Round 12/13 之前）和工时修正（18 分钟而非 13 分钟）。
+- 明确后续以文件末尾追加记录为准。
+
+**目标 B：Dock Finder 交互补齐**
+1. **状态筛选 state**：`DockFinderView` 内新增 `filterStatus: EntryStatus | null`，默认 `null`（显示全部）。
+2. **左侧 STATUS 点击筛选**：pending / suggested / archived / reopened 均可点击，点击后中间列表只显示对应状态条目。
+3. **左侧 active 样式**：「所有条目」和每个 STATUS 项都有明确的选中态（`bg-emerald-500/90 text-[#111] font-medium`）与未选中态区分。
+4. **自动清空选中**：`handleSelectFilter` 中判断若当前 `selectedItem` 的状态与新筛选状态不符，自动调用 `onSelectItem(null)`，避免右侧 preview panel 显示不在当前列表里的条目。
+5. **右侧 preview 条件渲染**：使用 `effectiveSelectedItem`（仅在选中项存在于当前筛选列表时才显示），双重保险防止显示被隐藏条目。
+
+**目标 C：缩小 Dock 与原型差距**
+1. **中间栏 path bar**：在列表区顶部增加 `h-9` header，显示当前位置（如「所有条目 / 12 项」或「已归档 / 3 项」），对齐 Finder column 当前位置语义。
+2. **空态文案细化**：筛选后空态显示「暂无已归档条目」等，比笼统「暂无条目」更明确。
+3. **preview panel 按钮样式**：
+   - suggest / archive / reopen 改为低调 ghost 样式（`text-slate-400 hover:text-white`，无背景色）。
+   - 「在编辑器中打开」改为 accent 按钮样式（`bg-emerald-500/90 hover:bg-emerald-500 text-[#111]`），与原型主要操作按钮对齐。
+4. **功能链路保持**：archive / reopen / suggest / open-in-editor 调用链完整，未改动后端。
+
+### 遇到的问题与解决方式
+- 无重大问题。筛选逻辑为纯前端状态，不引入新库，不改动后端。
+
+### 自动验证结果
+- `git diff --check --cached`: 通过（exit code 0）
+- `pnpm --dir apps/web typecheck`: 通过（0 errors）
+- `pnpm --dir apps/web test`: 通过（13 files, 286 tests passed）
+- `pnpm --dir apps/web lint`: 通过（0 errors，1 warning 在 demo prototype）
+- `pnpm --dir apps/web build`: 通过（所有路由正常生成）
+
+### 手工验证标准
+1. 打开 `/workspace`。
+2. 进入 Dock，点击 STATUS 分组中的 pending / suggested / archived / reopened，确认中间列表只显示对应状态条目。
+3. 点击「所有条目」，确认恢复显示全部列表。
+4. 筛选切换后，若当前选中条目被隐藏，确认右侧 preview panel 自动关闭，不显示被隐藏条目。
+5. 点击条目后，右侧 preview panel 正常显示内容、状态标签、操作按钮。
+6. 点击「在编辑器中打开」，确认进入 Editor 并打开真实文档。
+7. suggest / archive / reopen 点击后不报错。
+8. 新建两个 draft，切换内容不串、不丢。
+9. 关闭未保存 draft，确认 Dock 不新增文档。
+10. Classic / Block、Preview / Context Panel 仍可用。
+
+### 是否可进入下一轮
+- 等待 review。
+
+### 下一轮风险
+1. Dock Finder 目前为单层 column（flat items），未实现多层级文件夹导航。
+2. Toolbar 按钮目前只做 UI，未实现真实 Markdown 插入。
+3. Block Edit 目前只有最小可见 UI，未实现真实 block engine。
+
+---
