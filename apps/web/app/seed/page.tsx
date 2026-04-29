@@ -6,7 +6,7 @@ import { Loader2, Database, Trash2, ArrowRight } from 'lucide-react'
 
 import { getCurrentUser } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { backfillStructureData, createEntryRelation } from '@/lib/repository'
+import { backfillStructureData, createEntryRelation, upsertMindNode, upsertMindEdge } from '@/lib/repository'
 
 interface SeedResult {
   dockItemsCreated: number
@@ -16,6 +16,8 @@ interface SeedResult {
   collectionsCreated: number
   tagRelationsCreated: number
   entryRelationsCreated: number
+  mindNodesCreated: number
+  mindEdgesCreated: number
 }
 
 interface SeedEntry {
@@ -1122,6 +1124,579 @@ const SEED_CHAT_SESSIONS: SeedChatSession[] = [
   },
 ]
 
+interface SeedMindNode {
+  nodeType: 'root' | 'domain' | 'project' | 'topic' | 'document' | 'fragment' | 'source' | 'tag' | 'question' | 'insight' | 'time'
+  label: string
+  state: 'drifting' | 'suggested' | 'anchored' | 'archived' | 'dormant' | 'active' | 'conflicted' | 'isolated'
+  documentId: number | null
+  degreeScore: number
+}
+
+interface SeedMindEdge {
+  sourceLabel: string
+  sourceType: string
+  targetLabel: string
+  targetType: string
+  edgeType: 'parent_child' | 'semantic' | 'reference' | 'source' | 'temporal' | 'confirmed' | 'suggested'
+  strength: number
+}
+
+const SEED_MIND_NODES: SeedMindNode[] = [
+  { nodeType: 'root', label: 'World Tree', state: 'anchored', documentId: null, degreeScore: 10 },
+  { nodeType: 'domain', label: 'Core Architecture', state: 'active', documentId: null, degreeScore: 8 },
+  { nodeType: 'domain', label: 'Personal Growth', state: 'active', documentId: null, degreeScore: 6 },
+  { nodeType: 'domain', label: 'Product Strategy', state: 'active', documentId: null, degreeScore: 7 },
+  { nodeType: 'domain', label: 'Data Intelligence', state: 'active', documentId: null, degreeScore: 7 },
+  { nodeType: 'domain', label: 'Design System', state: 'active', documentId: null, degreeScore: 5 },
+  { nodeType: 'domain', label: 'DevOps & Infrastructure', state: 'active', documentId: null, degreeScore: 5 },
+  { nodeType: 'domain', label: 'User Research', state: 'active', documentId: null, degreeScore: 4 },
+  { nodeType: 'domain', label: 'Business & Growth', state: 'active', documentId: null, degreeScore: 4 },
+  { nodeType: 'project', label: 'MindDock', state: 'anchored', documentId: null, degreeScore: 9 },
+  { nodeType: 'project', label: 'System Rebuild', state: 'anchored', documentId: null, degreeScore: 5 },
+  { nodeType: 'project', label: 'Graph Algorithm', state: 'suggested', documentId: null, degreeScore: 4 },
+  { nodeType: 'project', label: 'Search Engine', state: 'suggested', documentId: null, degreeScore: 4 },
+  { nodeType: 'project', label: 'Sync Service', state: 'drifting', documentId: null, degreeScore: 3 },
+  { nodeType: 'topic', label: 'Physics Engine', state: 'active', documentId: null, degreeScore: 6 },
+  { nodeType: 'topic', label: 'UX Guidelines', state: 'active', documentId: null, degreeScore: 5 },
+  { nodeType: 'topic', label: 'API Reference', state: 'active', documentId: null, degreeScore: 4 },
+  { nodeType: 'topic', label: 'Reading Notes', state: 'dormant', documentId: null, degreeScore: 3 },
+  { nodeType: 'topic', label: 'Embedding & Vector', state: 'active', documentId: null, degreeScore: 5 },
+  { nodeType: 'topic', label: 'Prompt Engineering', state: 'active', documentId: null, degreeScore: 4 },
+  { nodeType: 'topic', label: 'CI/CD Pipeline', state: 'active', documentId: null, degreeScore: 3 },
+  { nodeType: 'topic', label: 'Monitoring & Alerting', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'topic', label: 'User Interview', state: 'active', documentId: null, degreeScore: 3 },
+  { nodeType: 'topic', label: 'A/B Testing', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Graph Engine Physics', state: 'anchored', documentId: null, degreeScore: 5 },
+  { nodeType: 'document', label: 'Algorithm Design', state: 'anchored', documentId: null, degreeScore: 4 },
+  { nodeType: 'document', label: 'RAG Architecture', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Local-first Architecture', state: 'anchored', documentId: null, degreeScore: 4 },
+  { nodeType: 'document', label: 'Prompt Engineering', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Design Psychology Notes', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Thinking Fast and Slow', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Hackers and Painters', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Edge Computing Research', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'PWA Offline Research', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Dexie Query Notes', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Next.js Cache Notes', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Tailwind v4 Notes', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Container Queries Notes', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Web Audio API Research', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'LLM Agent Architecture', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Code Review Summary', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Pricing Strategy', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Open Source Strategy', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Onboarding Design', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Import Test Report', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Voice Input Test Report', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Search Performance Optimization', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Entry List Performance', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Dock Batch Operations', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Chat Typewriter Effect', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Markdown Rendering', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Dark Mode Border Fix', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Unit Test Coverage', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Investor Meeting Prep', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'User Growth Strategy', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'MVP Scope Discussion', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'API Alignment Meeting', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Dock Card Interaction', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'v2 Priority Discussion', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Product Review Meeting', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Client Demo Feedback', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'AI Meetup Notes', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Tag Editor Drag Sort', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Bidirectional Link Concept', state: 'suggested', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Smart Grouping Concept', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Daily Review Concept', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'NL Query Concept', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Knowledge Map Concept', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Related Recommendations Concept', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Browser Import Concept', state: 'suggested', documentId: null, degreeScore: 1 },
+  { nodeType: 'document', label: 'Custom Rules Concept', state: 'suggested', documentId: null, degreeScore: 1 },
+  { nodeType: 'document', label: 'Emoji Tag Concept', state: 'drifting', documentId: null, degreeScore: 1 },
+  { nodeType: 'document', label: 'WeChat Import Concept', state: 'suggested', documentId: null, degreeScore: 1 },
+  { nodeType: 'document', label: 'Vector Database Comparison', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Embedding Model Evaluation', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Semantic Chunking Strategy', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Hybrid Search Design', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Re-ranking Algorithm', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Fine-tuning vs RAG', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Multi-modal Retrieval', state: 'drifting', documentId: null, degreeScore: 1 },
+  { nodeType: 'document', label: 'Design Token System', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Component Library Spec', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Color System Guide', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Typography Scale', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Motion Design Principles', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Accessibility Checklist', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Dark Mode Design Guide', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Responsive Breakpoints', state: 'dormant', documentId: null, degreeScore: 1 },
+  { nodeType: 'document', label: 'GitHub Actions Workflow', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Docker Compose Setup', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Vercel Deploy Config', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Error Tracking Setup', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Performance Budget', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Log Aggregation Design', state: 'drifting', documentId: null, degreeScore: 1 },
+  { nodeType: 'document', label: 'User Interview Script', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Survey Results Analysis', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Persona Definition', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Journey Map v1', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Usability Test Report', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Feature Request Tracker', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'NPS Score Analysis', state: 'drifting', documentId: null, degreeScore: 1 },
+  { nodeType: 'document', label: 'Competitive Landscape', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'Go-to-Market Plan', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Revenue Model Design', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Partnership Strategy', state: 'drifting', documentId: null, degreeScore: 1 },
+  { nodeType: 'document', label: 'Content Marketing Plan', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Community Building Guide', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'CRDT Conflict Resolution', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'document', label: 'IndexedDB Performance Tuning', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'WebWorker Architecture', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Service Worker Caching', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Zustand vs Jotai Comparison', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'React Server Components Notes', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Virtual List Implementation', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'document', label: 'Keyboard Navigation Spec', state: 'suggested', documentId: null, degreeScore: 1 },
+  { nodeType: 'document', label: 'Data Export Format Design', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'source', label: 'text', state: 'anchored', documentId: null, degreeScore: 8 },
+  { nodeType: 'source', label: 'chat', state: 'anchored', documentId: null, degreeScore: 5 },
+  { nodeType: 'source', label: 'import', state: 'anchored', documentId: null, degreeScore: 4 },
+  { nodeType: 'source', label: 'voice', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'tag', label: '技术', state: 'active', documentId: null, degreeScore: 9 },
+  { nodeType: 'tag', label: '产品', state: 'active', documentId: null, degreeScore: 8 },
+  { nodeType: 'tag', label: '学习', state: 'active', documentId: null, degreeScore: 6 },
+  { nodeType: 'tag', label: '前端', state: 'active', documentId: null, degreeScore: 5 },
+  { nodeType: 'tag', label: '性能', state: 'active', documentId: null, degreeScore: 4 },
+  { nodeType: 'tag', label: '设计', state: 'dormant', documentId: null, degreeScore: 3 },
+  { nodeType: 'tag', label: '项目管理', state: 'dormant', documentId: null, degreeScore: 3 },
+  { nodeType: 'tag', label: '工作', state: 'dormant', documentId: null, degreeScore: 2 },
+  { nodeType: 'tag', label: 'AI', state: 'active', documentId: null, degreeScore: 5 },
+  { nodeType: 'tag', label: '架构', state: 'active', documentId: null, degreeScore: 4 },
+  { nodeType: 'tag', label: '支付', state: 'isolated', documentId: null, degreeScore: 1 },
+  { nodeType: 'tag', label: '生活', state: 'isolated', documentId: null, degreeScore: 1 },
+  { nodeType: 'insight', label: 'Local-first + AI is the best combo', state: 'anchored', documentId: null, degreeScore: 4 },
+  { nodeType: 'insight', label: 'Chunk strategy matters more than embedding model', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'insight', label: 'Knowledge management is about connections not storage', state: 'suggested', documentId: null, degreeScore: 3 },
+  { nodeType: 'insight', label: 'UI should reduce cognitive load for fast thinking', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'insight', label: 'Design tokens enable consistent theming across platforms', state: 'anchored', documentId: null, degreeScore: 2 },
+  { nodeType: 'insight', label: 'Hybrid search outperforms pure vector search', state: 'anchored', documentId: null, degreeScore: 3 },
+  { nodeType: 'insight', label: 'Observability is a feature not an afterthought', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'insight', label: 'User research should drive product decisions not assumptions', state: 'suggested', documentId: null, degreeScore: 2 },
+  { nodeType: 'question', label: 'How to handle cross-device sync?', state: 'drifting', documentId: null, degreeScore: 2 },
+  { nodeType: 'question', label: 'Should we use CRDT or event sourcing?', state: 'drifting', documentId: null, degreeScore: 2 },
+  { nodeType: 'question', label: 'What is the optimal pricing model?', state: 'drifting', documentId: null, degreeScore: 1 },
+  { nodeType: 'question', label: 'How to balance AI automation with user control?', state: 'drifting', documentId: null, degreeScore: 2 },
+  { nodeType: 'question', label: 'When to introduce collaboration features?', state: 'drifting', documentId: null, degreeScore: 1 },
+  { nodeType: 'question', label: 'Should we build a plugin system?', state: 'drifting', documentId: null, degreeScore: 1 },
+  { nodeType: 'time', label: '2026-Q2', state: 'active', documentId: null, degreeScore: 3 },
+  { nodeType: 'time', label: '2026-April', state: 'active', documentId: null, degreeScore: 4 },
+  { nodeType: 'time', label: '2026-May', state: 'active', documentId: null, degreeScore: 3 },
+  { nodeType: 'time', label: '2026-Q3', state: 'suggested', documentId: null, degreeScore: 2 },
+]
+
+const SEED_MIND_EDGES: SeedMindEdge[] = [
+  { sourceLabel: 'World Tree', sourceType: 'root', targetLabel: 'Core Architecture', targetType: 'domain', edgeType: 'parent_child', strength: 0.9 },
+  { sourceLabel: 'World Tree', sourceType: 'root', targetLabel: 'Personal Growth', targetType: 'domain', edgeType: 'parent_child', strength: 0.8 },
+  { sourceLabel: 'World Tree', sourceType: 'root', targetLabel: 'Product Strategy', targetType: 'domain', edgeType: 'parent_child', strength: 0.85 },
+  { sourceLabel: 'World Tree', sourceType: 'root', targetLabel: 'Data Intelligence', targetType: 'domain', edgeType: 'parent_child', strength: 0.85 },
+  { sourceLabel: 'World Tree', sourceType: 'root', targetLabel: 'Design System', targetType: 'domain', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'World Tree', sourceType: 'root', targetLabel: 'DevOps & Infrastructure', targetType: 'domain', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'World Tree', sourceType: 'root', targetLabel: 'User Research', targetType: 'domain', edgeType: 'parent_child', strength: 0.65 },
+  { sourceLabel: 'World Tree', sourceType: 'root', targetLabel: 'Business & Growth', targetType: 'domain', edgeType: 'parent_child', strength: 0.65 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'MindDock', targetType: 'project', edgeType: 'parent_child', strength: 0.9 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'System Rebuild', targetType: 'project', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'Graph Algorithm', targetType: 'project', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'Data Intelligence', sourceType: 'domain', targetLabel: 'Search Engine', targetType: 'project', edgeType: 'parent_child', strength: 0.8 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'Sync Service', targetType: 'project', edgeType: 'parent_child', strength: 0.5 },
+  { sourceLabel: 'MindDock', sourceType: 'project', targetLabel: 'Physics Engine', targetType: 'topic', edgeType: 'parent_child', strength: 0.8 },
+  { sourceLabel: 'MindDock', sourceType: 'project', targetLabel: 'UX Guidelines', targetType: 'topic', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'MindDock', sourceType: 'project', targetLabel: 'API Reference', targetType: 'topic', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'Personal Growth', sourceType: 'domain', targetLabel: 'Reading Notes', targetType: 'topic', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'Data Intelligence', sourceType: 'domain', targetLabel: 'Embedding & Vector', targetType: 'topic', edgeType: 'parent_child', strength: 0.8 },
+  { sourceLabel: 'Data Intelligence', sourceType: 'domain', targetLabel: 'Prompt Engineering', targetType: 'topic', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'DevOps & Infrastructure', sourceType: 'domain', targetLabel: 'CI/CD Pipeline', targetType: 'topic', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'DevOps & Infrastructure', sourceType: 'domain', targetLabel: 'Monitoring & Alerting', targetType: 'topic', edgeType: 'parent_child', strength: 0.5 },
+  { sourceLabel: 'User Research', sourceType: 'domain', targetLabel: 'User Interview', targetType: 'topic', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'User Research', sourceType: 'domain', targetLabel: 'A/B Testing', targetType: 'topic', edgeType: 'parent_child', strength: 0.5 },
+  { sourceLabel: 'Physics Engine', sourceType: 'topic', targetLabel: 'Graph Engine Physics', targetType: 'document', edgeType: 'parent_child', strength: 0.9 },
+  { sourceLabel: 'Physics Engine', sourceType: 'topic', targetLabel: 'Algorithm Design', targetType: 'document', edgeType: 'parent_child', strength: 0.8 },
+  { sourceLabel: 'Physics Engine', sourceType: 'topic', targetLabel: 'RAG Architecture', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Physics Engine', sourceType: 'topic', targetLabel: 'Local-first Architecture', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'UX Guidelines', sourceType: 'topic', targetLabel: 'Design Psychology Notes', targetType: 'document', edgeType: 'reference', strength: 0.7 },
+  { sourceLabel: 'UX Guidelines', sourceType: 'topic', targetLabel: 'Onboarding Design', targetType: 'document', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'UX Guidelines', sourceType: 'topic', targetLabel: 'Dock Card Interaction', targetType: 'document', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'API Reference', sourceType: 'topic', targetLabel: 'API Alignment Meeting', targetType: 'document', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'Reading Notes', sourceType: 'topic', targetLabel: 'Thinking Fast and Slow', targetType: 'document', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'Reading Notes', sourceType: 'topic', targetLabel: 'Hackers and Painters', targetType: 'document', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'Reading Notes', sourceType: 'topic', targetLabel: 'Design Psychology Notes', targetType: 'document', edgeType: 'parent_child', strength: 0.5 },
+  { sourceLabel: 'Product Strategy', sourceType: 'domain', targetLabel: 'Pricing Strategy', targetType: 'document', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'Product Strategy', sourceType: 'domain', targetLabel: 'Open Source Strategy', targetType: 'document', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'Product Strategy', sourceType: 'domain', targetLabel: 'MVP Scope Discussion', targetType: 'document', edgeType: 'parent_child', strength: 0.8 },
+  { sourceLabel: 'Product Strategy', sourceType: 'domain', targetLabel: 'v2 Priority Discussion', targetType: 'document', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'Product Strategy', sourceType: 'domain', targetLabel: 'User Growth Strategy', targetType: 'document', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'Product Strategy', sourceType: 'domain', targetLabel: 'Investor Meeting Prep', targetType: 'document', edgeType: 'parent_child', strength: 0.5 },
+  { sourceLabel: 'Embedding & Vector', sourceType: 'topic', targetLabel: 'Vector Database Comparison', targetType: 'document', edgeType: 'parent_child', strength: 0.9 },
+  { sourceLabel: 'Embedding & Vector', sourceType: 'topic', targetLabel: 'Embedding Model Evaluation', targetType: 'document', edgeType: 'parent_child', strength: 0.8 },
+  { sourceLabel: 'Embedding & Vector', sourceType: 'topic', targetLabel: 'Semantic Chunking Strategy', targetType: 'document', edgeType: 'parent_child', strength: 0.8 },
+  { sourceLabel: 'Embedding & Vector', sourceType: 'topic', targetLabel: 'Hybrid Search Design', targetType: 'document', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'Embedding & Vector', sourceType: 'topic', targetLabel: 'Re-ranking Algorithm', targetType: 'document', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'Prompt Engineering', sourceType: 'topic', targetLabel: 'Fine-tuning vs RAG', targetType: 'document', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'Prompt Engineering', sourceType: 'topic', targetLabel: 'Multi-modal Retrieval', targetType: 'document', edgeType: 'parent_child', strength: 0.5 },
+  { sourceLabel: 'Design System', sourceType: 'domain', targetLabel: 'Design Token System', targetType: 'document', edgeType: 'parent_child', strength: 0.8 },
+  { sourceLabel: 'Design System', sourceType: 'domain', targetLabel: 'Component Library Spec', targetType: 'document', edgeType: 'parent_child', strength: 0.8 },
+  { sourceLabel: 'Design System', sourceType: 'domain', targetLabel: 'Color System Guide', targetType: 'document', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'Design System', sourceType: 'domain', targetLabel: 'Typography Scale', targetType: 'document', edgeType: 'parent_child', strength: 0.5 },
+  { sourceLabel: 'Design System', sourceType: 'domain', targetLabel: 'Motion Design Principles', targetType: 'document', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'Design System', sourceType: 'domain', targetLabel: 'Accessibility Checklist', targetType: 'document', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'Design System', sourceType: 'domain', targetLabel: 'Dark Mode Design Guide', targetType: 'document', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'Design System', sourceType: 'domain', targetLabel: 'Responsive Breakpoints', targetType: 'document', edgeType: 'parent_child', strength: 0.4 },
+  { sourceLabel: 'DevOps & Infrastructure', sourceType: 'domain', targetLabel: 'GitHub Actions Workflow', targetType: 'document', edgeType: 'parent_child', strength: 0.8 },
+  { sourceLabel: 'DevOps & Infrastructure', sourceType: 'domain', targetLabel: 'Docker Compose Setup', targetType: 'document', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'DevOps & Infrastructure', sourceType: 'domain', targetLabel: 'Vercel Deploy Config', targetType: 'document', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'DevOps & Infrastructure', sourceType: 'domain', targetLabel: 'Error Tracking Setup', targetType: 'document', edgeType: 'parent_child', strength: 0.5 },
+  { sourceLabel: 'DevOps & Infrastructure', sourceType: 'domain', targetLabel: 'Performance Budget', targetType: 'document', edgeType: 'parent_child', strength: 0.5 },
+  { sourceLabel: 'DevOps & Infrastructure', sourceType: 'domain', targetLabel: 'Log Aggregation Design', targetType: 'document', edgeType: 'parent_child', strength: 0.4 },
+  { sourceLabel: 'User Research', sourceType: 'domain', targetLabel: 'User Interview Script', targetType: 'document', edgeType: 'parent_child', strength: 0.8 },
+  { sourceLabel: 'User Research', sourceType: 'domain', targetLabel: 'Survey Results Analysis', targetType: 'document', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'User Research', sourceType: 'domain', targetLabel: 'Persona Definition', targetType: 'document', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'User Research', sourceType: 'domain', targetLabel: 'Journey Map v1', targetType: 'document', edgeType: 'parent_child', strength: 0.5 },
+  { sourceLabel: 'User Research', sourceType: 'domain', targetLabel: 'Usability Test Report', targetType: 'document', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'User Research', sourceType: 'domain', targetLabel: 'Feature Request Tracker', targetType: 'document', edgeType: 'parent_child', strength: 0.5 },
+  { sourceLabel: 'User Research', sourceType: 'domain', targetLabel: 'NPS Score Analysis', targetType: 'document', edgeType: 'parent_child', strength: 0.4 },
+  { sourceLabel: 'Business & Growth', sourceType: 'domain', targetLabel: 'Competitive Landscape', targetType: 'document', edgeType: 'parent_child', strength: 0.8 },
+  { sourceLabel: 'Business & Growth', sourceType: 'domain', targetLabel: 'Go-to-Market Plan', targetType: 'document', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'Business & Growth', sourceType: 'domain', targetLabel: 'Revenue Model Design', targetType: 'document', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'Business & Growth', sourceType: 'domain', targetLabel: 'Partnership Strategy', targetType: 'document', edgeType: 'parent_child', strength: 0.4 },
+  { sourceLabel: 'Business & Growth', sourceType: 'domain', targetLabel: 'Content Marketing Plan', targetType: 'document', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'Business & Growth', sourceType: 'domain', targetLabel: 'Community Building Guide', targetType: 'document', edgeType: 'parent_child', strength: 0.5 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'CRDT Conflict Resolution', targetType: 'document', edgeType: 'parent_child', strength: 0.7 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'IndexedDB Performance Tuning', targetType: 'document', edgeType: 'parent_child', strength: 0.6 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'WebWorker Architecture', targetType: 'document', edgeType: 'parent_child', strength: 0.5 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'Service Worker Caching', targetType: 'document', edgeType: 'parent_child', strength: 0.5 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'Zustand vs Jotai Comparison', targetType: 'document', edgeType: 'parent_child', strength: 0.4 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'React Server Components Notes', targetType: 'document', edgeType: 'parent_child', strength: 0.4 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'Virtual List Implementation', targetType: 'document', edgeType: 'parent_child', strength: 0.5 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'Keyboard Navigation Spec', targetType: 'document', edgeType: 'parent_child', strength: 0.3 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'Data Export Format Design', targetType: 'document', edgeType: 'parent_child', strength: 0.4 },
+  { sourceLabel: 'RAG Architecture', sourceType: 'document', targetLabel: 'LLM Agent Architecture', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'RAG Architecture', sourceType: 'document', targetLabel: 'Prompt Engineering', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'RAG Architecture', sourceType: 'document', targetLabel: 'Vector Database Comparison', targetType: 'document', edgeType: 'semantic', strength: 0.8 },
+  { sourceLabel: 'RAG Architecture', sourceType: 'document', targetLabel: 'Embedding Model Evaluation', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'RAG Architecture', sourceType: 'document', targetLabel: 'Semantic Chunking Strategy', targetType: 'document', edgeType: 'semantic', strength: 0.8 },
+  { sourceLabel: 'RAG Architecture', sourceType: 'document', targetLabel: 'Hybrid Search Design', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'RAG Architecture', sourceType: 'document', targetLabel: 'Re-ranking Algorithm', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'RAG Architecture', sourceType: 'document', targetLabel: 'Fine-tuning vs RAG', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Local-first Architecture', sourceType: 'document', targetLabel: 'Edge Computing Research', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Local-first Architecture', sourceType: 'document', targetLabel: 'PWA Offline Research', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Local-first Architecture', sourceType: 'document', targetLabel: 'CRDT Conflict Resolution', targetType: 'document', edgeType: 'semantic', strength: 0.8 },
+  { sourceLabel: 'Local-first Architecture', sourceType: 'document', targetLabel: 'IndexedDB Performance Tuning', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Local-first Architecture', sourceType: 'document', targetLabel: 'Service Worker Caching', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Local-first Architecture', sourceType: 'document', targetLabel: 'Sync Service', targetType: 'project', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Dexie Query Notes', sourceType: 'document', targetLabel: 'Next.js Cache Notes', targetType: 'document', edgeType: 'temporal', strength: 0.4 },
+  { sourceLabel: 'Dexie Query Notes', sourceType: 'document', targetLabel: 'IndexedDB Performance Tuning', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Search Performance Optimization', sourceType: 'document', targetLabel: 'Entry List Performance', targetType: 'document', edgeType: 'semantic', strength: 0.8 },
+  { sourceLabel: 'Search Performance Optimization', sourceType: 'document', targetLabel: 'Virtual List Implementation', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Search Performance Optimization', sourceType: 'document', targetLabel: 'Hybrid Search Design', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Search Performance Optimization', sourceType: 'document', targetLabel: 'Vector Database Comparison', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Dock Batch Operations', sourceType: 'document', targetLabel: 'Dock Card Interaction', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Chat Typewriter Effect', sourceType: 'document', targetLabel: 'Voice Input Test Report', targetType: 'document', edgeType: 'semantic', strength: 0.4 },
+  { sourceLabel: 'Markdown Rendering', sourceType: 'document', targetLabel: 'Import Test Report', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Markdown Rendering', sourceType: 'document', targetLabel: 'Data Export Format Design', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Dark Mode Border Fix', sourceType: 'document', targetLabel: 'Tailwind v4 Notes', targetType: 'document', edgeType: 'reference', strength: 0.4 },
+  { sourceLabel: 'Dark Mode Border Fix', sourceType: 'document', targetLabel: 'Container Queries Notes', targetType: 'document', edgeType: 'reference', strength: 0.3 },
+  { sourceLabel: 'Dark Mode Border Fix', sourceType: 'document', targetLabel: 'Dark Mode Design Guide', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Bidirectional Link Concept', sourceType: 'document', targetLabel: 'Smart Grouping Concept', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Daily Review Concept', sourceType: 'document', targetLabel: 'NL Query Concept', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Knowledge Map Concept', sourceType: 'document', targetLabel: 'Related Recommendations Concept', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Bidirectional Link Concept', sourceType: 'document', targetLabel: 'Knowledge Map Concept', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Client Demo Feedback', sourceType: 'document', targetLabel: 'Product Review Meeting', targetType: 'document', edgeType: 'temporal', strength: 0.5 },
+  { sourceLabel: 'AI Meetup Notes', sourceType: 'document', targetLabel: 'LLM Agent Architecture', targetType: 'document', edgeType: 'reference', strength: 0.4 },
+  { sourceLabel: 'AI Meetup Notes', sourceType: 'document', targetLabel: 'RAG Architecture', targetType: 'document', edgeType: 'reference', strength: 0.5 },
+  { sourceLabel: 'Code Review Summary', sourceType: 'document', targetLabel: 'Unit Test Coverage', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Code Review Summary', sourceType: 'document', targetLabel: 'Error Tracking Setup', targetType: 'document', edgeType: 'semantic', strength: 0.4 },
+  { sourceLabel: 'Graph Engine Physics', sourceType: 'document', targetLabel: 'text', targetType: 'source', edgeType: 'source', strength: 0.9 },
+  { sourceLabel: 'Algorithm Design', sourceType: 'document', targetLabel: 'text', targetType: 'source', edgeType: 'source', strength: 0.9 },
+  { sourceLabel: 'RAG Architecture', sourceType: 'document', targetLabel: 'text', targetType: 'source', edgeType: 'source', strength: 0.8 },
+  { sourceLabel: 'Local-first Architecture', sourceType: 'document', targetLabel: 'import', targetType: 'source', edgeType: 'source', strength: 0.7 },
+  { sourceLabel: 'Prompt Engineering', sourceType: 'document', targetLabel: 'import', targetType: 'source', edgeType: 'source', strength: 0.7 },
+  { sourceLabel: 'Voice Input Test Report', sourceType: 'document', targetLabel: 'voice', targetType: 'source', edgeType: 'source', strength: 0.8 },
+  { sourceLabel: 'Smart Grouping Concept', sourceType: 'document', targetLabel: 'chat', targetType: 'source', edgeType: 'source', strength: 0.7 },
+  { sourceLabel: 'Bidirectional Link Concept', sourceType: 'document', targetLabel: 'chat', targetType: 'source', edgeType: 'source', strength: 0.7 },
+  { sourceLabel: 'Daily Review Concept', sourceType: 'document', targetLabel: 'chat', targetType: 'source', edgeType: 'source', strength: 0.6 },
+  { sourceLabel: 'NL Query Concept', sourceType: 'document', targetLabel: 'chat', targetType: 'source', edgeType: 'source', strength: 0.6 },
+  { sourceLabel: 'Vector Database Comparison', sourceType: 'document', targetLabel: 'import', targetType: 'source', edgeType: 'source', strength: 0.8 },
+  { sourceLabel: 'Embedding Model Evaluation', sourceType: 'document', targetLabel: 'import', targetType: 'source', edgeType: 'source', strength: 0.7 },
+  { sourceLabel: 'User Interview Script', sourceType: 'document', targetLabel: 'voice', targetType: 'source', edgeType: 'source', strength: 0.6 },
+  { sourceLabel: 'Design Token System', sourceType: 'document', targetLabel: 'text', targetType: 'source', edgeType: 'source', strength: 0.7 },
+  { sourceLabel: 'GitHub Actions Workflow', sourceType: 'document', targetLabel: 'text', targetType: 'source', edgeType: 'source', strength: 0.8 },
+  { sourceLabel: 'Competitive Landscape', sourceType: 'document', targetLabel: 'import', targetType: 'source', edgeType: 'source', strength: 0.6 },
+  { sourceLabel: '技术', sourceType: 'tag', targetLabel: 'Graph Engine Physics', targetType: 'document', edgeType: 'confirmed', strength: 0.9 },
+  { sourceLabel: '技术', sourceType: 'tag', targetLabel: 'Algorithm Design', targetType: 'document', edgeType: 'confirmed', strength: 0.9 },
+  { sourceLabel: '技术', sourceType: 'tag', targetLabel: 'RAG Architecture', targetType: 'document', edgeType: 'confirmed', strength: 0.8 },
+  { sourceLabel: '技术', sourceType: 'tag', targetLabel: 'Search Performance Optimization', targetType: 'document', edgeType: 'confirmed', strength: 0.8 },
+  { sourceLabel: '技术', sourceType: 'tag', targetLabel: 'Entry List Performance', targetType: 'document', edgeType: 'confirmed', strength: 0.8 },
+  { sourceLabel: '技术', sourceType: 'tag', targetLabel: 'Dexie Query Notes', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '技术', sourceType: 'tag', targetLabel: 'Next.js Cache Notes', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '技术', sourceType: 'tag', targetLabel: 'LLM Agent Architecture', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '技术', sourceType: 'tag', targetLabel: 'Vector Database Comparison', targetType: 'document', edgeType: 'confirmed', strength: 0.8 },
+  { sourceLabel: '技术', sourceType: 'tag', targetLabel: 'Embedding Model Evaluation', targetType: 'document', edgeType: 'confirmed', strength: 0.8 },
+  { sourceLabel: '技术', sourceType: 'tag', targetLabel: 'CRDT Conflict Resolution', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '技术', sourceType: 'tag', targetLabel: 'GitHub Actions Workflow', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '产品', sourceType: 'tag', targetLabel: 'MVP Scope Discussion', targetType: 'document', edgeType: 'confirmed', strength: 0.9 },
+  { sourceLabel: '产品', sourceType: 'tag', targetLabel: 'v2 Priority Discussion', targetType: 'document', edgeType: 'confirmed', strength: 0.8 },
+  { sourceLabel: '产品', sourceType: 'tag', targetLabel: 'Dock Card Interaction', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '产品', sourceType: 'tag', targetLabel: 'Pricing Strategy', targetType: 'document', edgeType: 'confirmed', strength: 0.6 },
+  { sourceLabel: '产品', sourceType: 'tag', targetLabel: 'Bidirectional Link Concept', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '产品', sourceType: 'tag', targetLabel: 'Smart Grouping Concept', targetType: 'document', edgeType: 'confirmed', strength: 0.6 },
+  { sourceLabel: '产品', sourceType: 'tag', targetLabel: 'Competitive Landscape', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '产品', sourceType: 'tag', targetLabel: 'Go-to-Market Plan', targetType: 'document', edgeType: 'confirmed', strength: 0.6 },
+  { sourceLabel: '学习', sourceType: 'tag', targetLabel: 'Thinking Fast and Slow', targetType: 'document', edgeType: 'confirmed', strength: 0.8 },
+  { sourceLabel: '学习', sourceType: 'tag', targetLabel: 'Hackers and Painters', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '学习', sourceType: 'tag', targetLabel: 'Design Psychology Notes', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '学习', sourceType: 'tag', targetLabel: 'RAG Architecture', targetType: 'document', edgeType: 'confirmed', strength: 0.6 },
+  { sourceLabel: '学习', sourceType: 'tag', targetLabel: 'Semantic Chunking Strategy', targetType: 'document', edgeType: 'confirmed', strength: 0.6 },
+  { sourceLabel: '前端', sourceType: 'tag', targetLabel: 'Tailwind v4 Notes', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '前端', sourceType: 'tag', targetLabel: 'Container Queries Notes', targetType: 'document', edgeType: 'confirmed', strength: 0.6 },
+  { sourceLabel: '前端', sourceType: 'tag', targetLabel: 'Web Audio API Research', targetType: 'document', edgeType: 'confirmed', strength: 0.6 },
+  { sourceLabel: '前端', sourceType: 'tag', targetLabel: 'Dark Mode Border Fix', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '前端', sourceType: 'tag', targetLabel: 'Design Token System', targetType: 'document', edgeType: 'confirmed', strength: 0.6 },
+  { sourceLabel: '前端', sourceType: 'tag', targetLabel: 'Component Library Spec', targetType: 'document', edgeType: 'confirmed', strength: 0.6 },
+  { sourceLabel: '前端', sourceType: 'tag', targetLabel: 'Virtual List Implementation', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '前端', sourceType: 'tag', targetLabel: 'React Server Components Notes', targetType: 'document', edgeType: 'confirmed', strength: 0.6 },
+  { sourceLabel: '性能', sourceType: 'tag', targetLabel: 'Search Performance Optimization', targetType: 'document', edgeType: 'confirmed', strength: 0.9 },
+  { sourceLabel: '性能', sourceType: 'tag', targetLabel: 'Entry List Performance', targetType: 'document', edgeType: 'confirmed', strength: 0.9 },
+  { sourceLabel: '性能', sourceType: 'tag', targetLabel: 'IndexedDB Performance Tuning', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '性能', sourceType: 'tag', targetLabel: 'Performance Budget', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '设计', sourceType: 'tag', targetLabel: 'Design Psychology Notes', targetType: 'document', edgeType: 'confirmed', strength: 0.8 },
+  { sourceLabel: '设计', sourceType: 'tag', targetLabel: 'Onboarding Design', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '设计', sourceType: 'tag', targetLabel: 'Design Token System', targetType: 'document', edgeType: 'confirmed', strength: 0.8 },
+  { sourceLabel: '设计', sourceType: 'tag', targetLabel: 'Color System Guide', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '设计', sourceType: 'tag', targetLabel: 'Motion Design Principles', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '设计', sourceType: 'tag', targetLabel: 'Dark Mode Design Guide', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: 'AI', sourceType: 'tag', targetLabel: 'RAG Architecture', targetType: 'document', edgeType: 'confirmed', strength: 0.9 },
+  { sourceLabel: 'AI', sourceType: 'tag', targetLabel: 'LLM Agent Architecture', targetType: 'document', edgeType: 'confirmed', strength: 0.8 },
+  { sourceLabel: 'AI', sourceType: 'tag', targetLabel: 'Prompt Engineering', targetType: 'document', edgeType: 'confirmed', strength: 0.8 },
+  { sourceLabel: 'AI', sourceType: 'tag', targetLabel: 'Vector Database Comparison', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: 'AI', sourceType: 'tag', targetLabel: 'Embedding Model Evaluation', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: 'AI', sourceType: 'tag', targetLabel: 'Semantic Chunking Strategy', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: 'AI', sourceType: 'tag', targetLabel: 'Hybrid Search Design', targetType: 'document', edgeType: 'confirmed', strength: 0.6 },
+  { sourceLabel: 'AI', sourceType: 'tag', targetLabel: 'Fine-tuning vs RAG', targetType: 'document', edgeType: 'confirmed', strength: 0.6 },
+  { sourceLabel: '架构', sourceType: 'tag', targetLabel: 'Local-first Architecture', targetType: 'document', edgeType: 'confirmed', strength: 0.9 },
+  { sourceLabel: '架构', sourceType: 'tag', targetLabel: 'CRDT Conflict Resolution', targetType: 'document', edgeType: 'confirmed', strength: 0.8 },
+  { sourceLabel: '架构', sourceType: 'tag', targetLabel: 'WebWorker Architecture', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '架构', sourceType: 'tag', targetLabel: 'Service Worker Caching', targetType: 'document', edgeType: 'confirmed', strength: 0.7 },
+  { sourceLabel: '架构', sourceType: 'tag', targetLabel: 'Zustand vs Jotai Comparison', targetType: 'document', edgeType: 'confirmed', strength: 0.6 },
+  { sourceLabel: 'Local-first + AI is the best combo', sourceType: 'insight', targetLabel: 'Local-first Architecture', targetType: 'document', edgeType: 'semantic', strength: 0.8 },
+  { sourceLabel: 'Local-first + AI is the best combo', sourceType: 'insight', targetLabel: 'PWA Offline Research', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Local-first + AI is the best combo', sourceType: 'insight', targetLabel: 'LLM Agent Architecture', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Local-first + AI is the best combo', sourceType: 'insight', targetLabel: 'RAG Architecture', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Chunk strategy matters more than embedding model', sourceType: 'insight', targetLabel: 'RAG Architecture', targetType: 'document', edgeType: 'semantic', strength: 0.9 },
+  { sourceLabel: 'Chunk strategy matters more than embedding model', sourceType: 'insight', targetLabel: 'Semantic Chunking Strategy', targetType: 'document', edgeType: 'semantic', strength: 0.8 },
+  { sourceLabel: 'Chunk strategy matters more than embedding model', sourceType: 'insight', targetLabel: 'Embedding Model Evaluation', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Knowledge management is about connections not storage', sourceType: 'insight', targetLabel: 'Knowledge Map Concept', targetType: 'document', edgeType: 'semantic', strength: 0.8 },
+  { sourceLabel: 'Knowledge management is about connections not storage', sourceType: 'insight', targetLabel: 'Bidirectional Link Concept', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Knowledge management is about connections not storage', sourceType: 'insight', targetLabel: 'Related Recommendations Concept', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'UI should reduce cognitive load for fast thinking', sourceType: 'insight', targetLabel: 'Design Psychology Notes', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'UI should reduce cognitive load for fast thinking', sourceType: 'insight', targetLabel: 'Onboarding Design', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'UI should reduce cognitive load for fast thinking', sourceType: 'insight', targetLabel: 'Motion Design Principles', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Design tokens enable consistent theming across platforms', sourceType: 'insight', targetLabel: 'Design Token System', targetType: 'document', edgeType: 'semantic', strength: 0.9 },
+  { sourceLabel: 'Design tokens enable consistent theming across platforms', sourceType: 'insight', targetLabel: 'Component Library Spec', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Design tokens enable consistent theming across platforms', sourceType: 'insight', targetLabel: 'Color System Guide', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Hybrid search outperforms pure vector search', sourceType: 'insight', targetLabel: 'Hybrid Search Design', targetType: 'document', edgeType: 'semantic', strength: 0.9 },
+  { sourceLabel: 'Hybrid search outperforms pure vector search', sourceType: 'insight', targetLabel: 'Vector Database Comparison', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Hybrid search outperforms pure vector search', sourceType: 'insight', targetLabel: 'Re-ranking Algorithm', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Observability is a feature not an afterthought', sourceType: 'insight', targetLabel: 'Error Tracking Setup', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Observability is a feature not an afterthought', sourceType: 'insight', targetLabel: 'Log Aggregation Design', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Observability is a feature not an afterthought', sourceType: 'insight', targetLabel: 'Performance Budget', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'User research should drive product decisions not assumptions', sourceType: 'insight', targetLabel: 'User Interview Script', targetType: 'document', edgeType: 'semantic', strength: 0.8 },
+  { sourceLabel: 'User research should drive product decisions not assumptions', sourceType: 'insight', targetLabel: 'Persona Definition', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'User research should drive product decisions not assumptions', sourceType: 'insight', targetLabel: 'Survey Results Analysis', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'How to handle cross-device sync?', sourceType: 'question', targetLabel: 'Local-first Architecture', targetType: 'document', edgeType: 'reference', strength: 0.6 },
+  { sourceLabel: 'How to handle cross-device sync?', sourceType: 'question', targetLabel: 'Edge Computing Research', targetType: 'document', edgeType: 'reference', strength: 0.5 },
+  { sourceLabel: 'How to handle cross-device sync?', sourceType: 'question', targetLabel: 'Sync Service', targetType: 'project', edgeType: 'reference', strength: 0.7 },
+  { sourceLabel: 'Should we use CRDT or event sourcing?', sourceType: 'question', targetLabel: 'Local-first Architecture', targetType: 'document', edgeType: 'reference', strength: 0.7 },
+  { sourceLabel: 'Should we use CRDT or event sourcing?', sourceType: 'question', targetLabel: 'CRDT Conflict Resolution', targetType: 'document', edgeType: 'reference', strength: 0.8 },
+  { sourceLabel: 'What is the optimal pricing model?', sourceType: 'question', targetLabel: 'Pricing Strategy', targetType: 'document', edgeType: 'reference', strength: 0.7 },
+  { sourceLabel: 'What is the optimal pricing model?', sourceType: 'question', targetLabel: 'Revenue Model Design', targetType: 'document', edgeType: 'reference', strength: 0.6 },
+  { sourceLabel: 'How to balance AI automation with user control?', sourceType: 'question', targetLabel: 'LLM Agent Architecture', targetType: 'document', edgeType: 'reference', strength: 0.6 },
+  { sourceLabel: 'How to balance AI automation with user control?', sourceType: 'question', targetLabel: 'Prompt Engineering', targetType: 'document', edgeType: 'reference', strength: 0.5 },
+  { sourceLabel: 'When to introduce collaboration features?', sourceType: 'question', targetLabel: 'v2 Priority Discussion', targetType: 'document', edgeType: 'reference', strength: 0.6 },
+  { sourceLabel: 'When to introduce collaboration features?', sourceType: 'question', targetLabel: 'MVP Scope Discussion', targetType: 'document', edgeType: 'reference', strength: 0.5 },
+  { sourceLabel: 'Should we build a plugin system?', sourceType: 'question', targetLabel: 'Open Source Strategy', targetType: 'document', edgeType: 'reference', strength: 0.5 },
+  { sourceLabel: 'Should we build a plugin system?', sourceType: 'question', targetLabel: 'Custom Rules Concept', targetType: 'document', edgeType: 'reference', strength: 0.6 },
+  { sourceLabel: '2026-Q2', sourceType: 'time', targetLabel: '2026-April', targetType: 'time', edgeType: 'parent_child', strength: 0.9 },
+  { sourceLabel: '2026-Q2', sourceType: 'time', targetLabel: '2026-May', targetType: 'time', edgeType: 'parent_child', strength: 0.9 },
+  { sourceLabel: '2026-Q3', sourceType: 'time', targetLabel: '2026-Q2', targetType: 'time', edgeType: 'parent_child', strength: 0.8 },
+  { sourceLabel: '2026-April', sourceType: 'time', targetLabel: 'Product Review Meeting', targetType: 'document', edgeType: 'temporal', strength: 0.5 },
+  { sourceLabel: '2026-April', sourceType: 'time', targetLabel: 'MVP Scope Discussion', targetType: 'document', edgeType: 'temporal', strength: 0.4 },
+  { sourceLabel: '2026-May', sourceType: 'time', targetLabel: 'v2 Priority Discussion', targetType: 'document', edgeType: 'temporal', strength: 0.4 },
+  { sourceLabel: '2026-May', sourceType: 'time', targetLabel: 'Go-to-Market Plan', targetType: 'document', edgeType: 'temporal', strength: 0.3 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'Personal Growth', targetType: 'domain', edgeType: 'semantic', strength: 0.3 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'Product Strategy', targetType: 'domain', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'Data Intelligence', targetType: 'domain', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Core Architecture', sourceType: 'domain', targetLabel: 'DevOps & Infrastructure', targetType: 'domain', edgeType: 'semantic', strength: 0.4 },
+  { sourceLabel: 'Personal Growth', sourceType: 'domain', targetLabel: 'Product Strategy', targetType: 'domain', edgeType: 'semantic', strength: 0.3 },
+  { sourceLabel: 'Personal Growth', sourceType: 'domain', targetLabel: 'User Research', targetType: 'domain', edgeType: 'semantic', strength: 0.4 },
+  { sourceLabel: 'Product Strategy', sourceType: 'domain', targetLabel: 'Business & Growth', targetType: 'domain', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Product Strategy', sourceType: 'domain', targetLabel: 'User Research', targetType: 'domain', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Data Intelligence', sourceType: 'domain', targetLabel: 'Product Strategy', targetType: 'domain', edgeType: 'semantic', strength: 0.4 },
+  { sourceLabel: 'Data Intelligence', sourceType: 'domain', targetLabel: 'Design System', targetType: 'domain', edgeType: 'semantic', strength: 0.3 },
+  { sourceLabel: 'Design System', sourceType: 'domain', targetLabel: 'User Research', targetType: 'domain', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'DevOps & Infrastructure', sourceType: 'domain', targetLabel: 'Core Architecture', targetType: 'domain', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Algorithm Design', sourceType: 'document', targetLabel: 'Graph Engine Physics', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Algorithm Design', sourceType: 'document', targetLabel: 'Vector Database Comparison', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'LLM Agent Architecture', sourceType: 'document', targetLabel: 'Prompt Engineering', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'LLM Agent Architecture', sourceType: 'document', targetLabel: 'Fine-tuning vs RAG', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'LLM Agent Architecture', sourceType: 'document', targetLabel: 'Multi-modal Retrieval', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Embedding Model Evaluation', sourceType: 'document', targetLabel: 'Semantic Chunking Strategy', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Hybrid Search Design', sourceType: 'document', targetLabel: 'Re-ranking Algorithm', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Hybrid Search Design', sourceType: 'document', targetLabel: 'Vector Database Comparison', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Design Token System', sourceType: 'document', targetLabel: 'Component Library Spec', targetType: 'document', edgeType: 'semantic', strength: 0.8 },
+  { sourceLabel: 'Design Token System', sourceType: 'document', targetLabel: 'Color System Guide', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Design Token System', sourceType: 'document', targetLabel: 'Dark Mode Design Guide', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Motion Design Principles', sourceType: 'document', targetLabel: 'Dark Mode Design Guide', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Motion Design Principles', sourceType: 'document', targetLabel: 'Chat Typewriter Effect', targetType: 'document', edgeType: 'semantic', strength: 0.4 },
+  { sourceLabel: 'GitHub Actions Workflow', sourceType: 'document', targetLabel: 'Docker Compose Setup', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'GitHub Actions Workflow', sourceType: 'document', targetLabel: 'Vercel Deploy Config', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Error Tracking Setup', sourceType: 'document', targetLabel: 'Performance Budget', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Error Tracking Setup', sourceType: 'document', targetLabel: 'Log Aggregation Design', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'User Interview Script', sourceType: 'document', targetLabel: 'Persona Definition', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'User Interview Script', sourceType: 'document', targetLabel: 'Survey Results Analysis', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Persona Definition', sourceType: 'document', targetLabel: 'Journey Map v1', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Usability Test Report', sourceType: 'document', targetLabel: 'Feature Request Tracker', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Usability Test Report', sourceType: 'document', targetLabel: 'Dock Card Interaction', targetType: 'document', edgeType: 'semantic', strength: 0.4 },
+  { sourceLabel: 'Competitive Landscape', sourceType: 'document', targetLabel: 'Pricing Strategy', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Competitive Landscape', sourceType: 'document', targetLabel: 'Open Source Strategy', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Go-to-Market Plan', sourceType: 'document', targetLabel: 'Content Marketing Plan', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Go-to-Market Plan', sourceType: 'document', targetLabel: 'Community Building Guide', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Revenue Model Design', sourceType: 'document', targetLabel: 'Pricing Strategy', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'CRDT Conflict Resolution', sourceType: 'document', targetLabel: 'Sync Service', targetType: 'project', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'CRDT Conflict Resolution', sourceType: 'document', targetLabel: 'Edge Computing Research', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'WebWorker Architecture', sourceType: 'document', targetLabel: 'Virtual List Implementation', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'WebWorker Architecture', sourceType: 'document', targetLabel: 'Search Performance Optimization', targetType: 'document', edgeType: 'semantic', strength: 0.4 },
+  { sourceLabel: 'Service Worker Caching', sourceType: 'document', targetLabel: 'PWA Offline Research', targetType: 'document', edgeType: 'semantic', strength: 0.7 },
+  { sourceLabel: 'Zustand vs Jotai Comparison', sourceType: 'document', targetLabel: 'React Server Components Notes', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Client Demo Feedback', sourceType: 'document', targetLabel: 'Feature Request Tracker', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Client Demo Feedback', sourceType: 'document', targetLabel: 'Competitive Landscape', targetType: 'document', edgeType: 'semantic', strength: 0.4 },
+  { sourceLabel: 'Product Review Meeting', sourceType: 'document', targetLabel: 'v2 Priority Discussion', targetType: 'document', edgeType: 'temporal', strength: 0.6 },
+  { sourceLabel: 'MVP Scope Discussion', sourceType: 'document', targetLabel: 'v2 Priority Discussion', targetType: 'document', edgeType: 'temporal', strength: 0.7 },
+  { sourceLabel: 'MVP Scope Discussion', sourceType: 'document', targetLabel: 'Open Source Strategy', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'API Alignment Meeting', sourceType: 'document', targetLabel: 'API Reference', targetType: 'topic', edgeType: 'reference', strength: 0.5 },
+  { sourceLabel: 'Dock Card Interaction', sourceType: 'document', targetLabel: 'Onboarding Design', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Tag Editor Drag Sort', sourceType: 'document', targetLabel: 'Dock Batch Operations', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Tag Editor Drag Sort', sourceType: 'document', targetLabel: 'Keyboard Navigation Spec', targetType: 'document', edgeType: 'semantic', strength: 0.4 },
+  { sourceLabel: 'Data Export Format Design', sourceType: 'document', targetLabel: 'Import Test Report', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Data Export Format Design', sourceType: 'document', targetLabel: 'WeChat Import Concept', targetType: 'document', edgeType: 'semantic', strength: 0.4 },
+  { sourceLabel: 'Data Export Format Design', sourceType: 'document', targetLabel: 'Browser Import Concept', targetType: 'document', edgeType: 'semantic', strength: 0.4 },
+  { sourceLabel: 'Accessibility Checklist', sourceType: 'document', targetLabel: 'Dark Mode Design Guide', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Accessibility Checklist', sourceType: 'document', targetLabel: 'Keyboard Navigation Spec', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'NPS Score Analysis', sourceType: 'document', targetLabel: 'Survey Results Analysis', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'NPS Score Analysis', sourceType: 'document', targetLabel: 'Client Demo Feedback', targetType: 'document', edgeType: 'semantic', strength: 0.4 },
+  { sourceLabel: 'Partnership Strategy', sourceType: 'document', targetLabel: 'Open Source Strategy', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Partnership Strategy', sourceType: 'document', targetLabel: 'Community Building Guide', targetType: 'document', edgeType: 'semantic', strength: 0.4 },
+  { sourceLabel: 'Content Marketing Plan', sourceType: 'document', targetLabel: 'Open Source Strategy', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Journey Map v1', sourceType: 'document', targetLabel: 'Onboarding Design', targetType: 'document', edgeType: 'semantic', strength: 0.5 },
+  { sourceLabel: 'Graph Engine Physics', sourceType: 'document', targetLabel: 'Algorithm Design', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Thinking Fast and Slow', sourceType: 'document', targetLabel: 'Design Psychology Notes', targetType: 'document', edgeType: 'semantic', strength: 0.6 },
+  { sourceLabel: 'Hackers and Painters', sourceType: 'document', targetLabel: 'Open Source Strategy', targetType: 'document', edgeType: 'reference', strength: 0.4 },
+  { sourceLabel: 'Hackers and Painters', sourceType: 'document', targetLabel: 'Pricing Strategy', targetType: 'document', edgeType: 'reference', strength: 0.3 },
+]
+
+const SEED_DOCUMENT_TO_ENTRY: Record<string, string> = {
+  'Product Review Meeting': '产品评审会议准备',
+  'RAG Architecture': 'RAG 架构优化阅读笔记',
+  'Dock Card Interaction': 'Dock 卡片交互对齐',
+  'Markdown Rendering': 'Entry 详情页 Markdown 渲染',
+  'Local-first Architecture': '本地优先架构调研笔记',
+  'Smart Grouping Concept': 'Dock 智能分组功能构想',
+  'API Alignment Meeting': 'API 接口对齐会议',
+  'Search Performance Optimization': '搜索性能优化',
+  'Dexie Query Notes': 'Dexie 查询注意事项',
+  'Design Psychology Notes': '《设计心理学》第 2 章笔记',
+  'Entry List Performance': 'Entry 列表虚拟滚动优化',
+  'v2 Priority Discussion': 'v2 功能优先级讨论',
+  'Bidirectional Link Concept': '双向链接功能构想',
+  'Next.js Cache Notes': 'Next.js 缓存机制笔记',
+  'Voice Input Test Report': '语音输入功能测试报告',
+  'Tag Editor Drag Sort': 'Tag 编辑器拖拽排序',
+  'LLM Agent Architecture': 'LLM Agent 架构阅读笔记',
+  'Daily Review Concept': '每日回顾功能构想',
+  'Client Demo Feedback': '客户产品演示反馈',
+  'Dark Mode Border Fix': '暗色模式边框颜色修复',
+  'Tailwind v4 Notes': 'Tailwind CSS v4 新特性笔记',
+  'Code Review Summary': 'Code Review 问题汇总',
+  'PWA Offline Research': 'PWA 离线场景调研',
+  'Dock Batch Operations': 'Dock 批量操作功能',
+  'Chat Typewriter Effect': 'Chat 消息打字机效果',
+  'Pricing Strategy': '产品定价策略思考',
+  'AI Meetup Notes': 'AI 时代知识管理 Meetup 笔记',
+  'Thinking Fast and Slow': '《思考快与慢》第 5 章笔记',
+  'Hackers and Painters': '《黑客与画家》第 8 章笔记',
+  'Edge Computing Research': 'Edge Computing + 本地优先调研',
+  'Open Source Strategy': '开源策略思考',
+  'MVP Scope Discussion': 'MVP 功能边界讨论',
+  'Investor Meeting Prep': '投资人沟通会议准备',
+  'User Growth Strategy': '用户增长策略讨论',
+  'Prompt Engineering': 'Prompt Engineering 最佳实践',
+  'NL Query Concept': '自然语言查询功能构想',
+  'Web Audio API Research': 'Web Audio API 调研笔记',
+  'Container Queries Notes': 'CSS Container Queries 笔记',
+  'Zustand vs Jotai Comparison': 'Zustand vs Jotai 状态管理对比',
+  'Import Test Report': 'Import 功能测试报告',
+  'Onboarding Design': '用户 Onboarding 流程设计',
+  'Unit Test Coverage': '提升单元测试覆盖率',
+  'Graph Engine Physics': '',
+  'Algorithm Design': '',
+  'Design Token System': '',
+  'Component Library Spec': '',
+  'Color System Guide': '',
+  'Typography Scale': '',
+  'Motion Design Principles': '',
+  'Accessibility Checklist': '',
+  'Dark Mode Design Guide': '',
+  'Responsive Breakpoints': '',
+  'GitHub Actions Workflow': '',
+  'Docker Compose Setup': '',
+  'Vercel Deploy Config': '',
+  'Error Tracking Setup': '',
+  'Performance Budget': '',
+  'Log Aggregation Design': '',
+  'User Interview Script': '',
+  'Survey Results Analysis': '',
+  'Persona Definition': '',
+  'Journey Map v1': '',
+  'Usability Test Report': '',
+  'Feature Request Tracker': '',
+  'NPS Score Analysis': '',
+  'Competitive Landscape': '',
+  'Go-to-Market Plan': '',
+  'Revenue Model Design': '',
+  'Partnership Strategy': '',
+  'Content Marketing Plan': '',
+  'Community Building Guide': '',
+  'CRDT Conflict Resolution': '',
+  'IndexedDB Performance Tuning': '',
+  'WebWorker Architecture': '',
+  'Service Worker Caching': '',
+  'React Server Components Notes': '',
+  'Virtual List Implementation': '',
+  'Keyboard Navigation Spec': '',
+  'Data Export Format Design': '',
+  'Knowledge Map Concept': '',
+  'Related Recommendations Concept': '',
+  'Browser Import Concept': '',
+  'Custom Rules Concept': '',
+  'Emoji Tag Concept': '',
+  'WeChat Import Concept': '',
+  'Vector Database Comparison': '',
+  'Embedding Model Evaluation': '',
+  'Semantic Chunking Strategy': '',
+  'Hybrid Search Design': '',
+  'Re-ranking Algorithm': '',
+  'Fine-tuning vs RAG': '',
+  'Multi-modal Retrieval': '',
+}
+
 export default function SeedPage() {
   const [result, setResult] = useState<SeedResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -1279,6 +1854,65 @@ export default function SeedPage() {
         }
       }
 
+      let mindNodesCreated = 0
+      const allDockItems = await db.table('dockItems').where('userId').equals(userId).toArray()
+      const dockLabelToId = new Map<string, number>()
+      for (const di of allDockItems) {
+        const label = ((di.topic || (di.rawText as string || '').slice(0, 50)) as string).trim().toLowerCase()
+        dockLabelToId.set(label, di.id as number)
+      }
+      const mindEntries = await db.table('entries').where('userId').equals(userId).toArray()
+      const entryTitleToDockId = new Map<string, number>()
+      for (const entry of mindEntries) {
+        const title = (entry.title as string || '').trim().toLowerCase()
+        if (title && entry.sourceDockItemId != null) {
+          entryTitleToDockId.set(title, entry.sourceDockItemId as number)
+        }
+      }
+
+      for (const mn of SEED_MIND_NODES) {
+        let docId: number | null = mn.documentId
+        if (docId === null && mn.nodeType === 'document') {
+          const entryTitle = SEED_DOCUMENT_TO_ENTRY[mn.label]
+          if (entryTitle) {
+            const match = entryTitleToDockId.get(entryTitle.trim().toLowerCase())
+            if (match !== undefined) {
+              docId = match
+            }
+          }
+          if (docId === null) {
+            const directMatch = dockLabelToId.get(mn.label.trim().toLowerCase())
+            if (directMatch !== undefined) {
+              docId = directMatch
+            }
+          }
+        }
+        await upsertMindNode({
+          userId,
+          nodeType: mn.nodeType,
+          label: mn.label,
+          state: mn.state,
+          documentId: docId,
+          degreeScore: mn.degreeScore,
+        })
+        mindNodesCreated++
+      }
+
+      let mindEdgesCreated = 0
+      for (const me of SEED_MIND_EDGES) {
+        const sourceNodeId = `${userId}_mn_${me.sourceType}_${me.sourceLabel.trim().toLowerCase().replace(/\s+/g, '_').slice(0, 40)}`
+        const targetNodeId = `${userId}_mn_${me.targetType}_${me.targetLabel.trim().toLowerCase().replace(/\s+/g, '_').slice(0, 40)}`
+        await upsertMindEdge({
+          userId,
+          sourceNodeId,
+          targetNodeId,
+          edgeType: me.edgeType,
+          strength: me.strength,
+          source: 'system',
+        })
+        mindEdgesCreated++
+      }
+
       setResult({
         dockItemsCreated,
         entriesCreated,
@@ -1287,6 +1921,8 @@ export default function SeedPage() {
         collectionsCreated: backfillResult.collectionsCreated,
         tagRelationsCreated: backfillResult.tagRelationsCreated,
         entryRelationsCreated,
+        mindNodesCreated,
+        mindEdgesCreated,
       })
     } catch (e) {
       setError(e instanceof Error ? e.message : '未知错误')
@@ -1358,6 +1994,16 @@ export default function SeedPage() {
         await db.table('widgets').bulkDelete(widgetIds)
       }
 
+      const mindNodeIds = await db.table('mindNodes').where('userId').equals(userId).primaryKeys()
+      if (mindNodeIds.length > 0) {
+        await db.table('mindNodes').bulkDelete(mindNodeIds)
+      }
+
+      const mindEdgeIds = await db.table('mindEdges').where('userId').equals(userId).primaryKeys()
+      if (mindEdgeIds.length > 0) {
+        await db.table('mindEdges').bulkDelete(mindEdgeIds)
+      }
+
       setResult(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : '未知错误')
@@ -1375,6 +2021,8 @@ export default function SeedPage() {
   const entryTypes = Array.from(new Set(SEED_ITEMS.filter((s) => s.entry).map((s) => s.entry?.type ?? '')))
   const sourceTypes = Array.from(new Set(SEED_ITEMS.map((s) => s.sourceType)))
   const daySpan = Math.max(...SEED_ITEMS.map((s) => s.dayOffset)) - Math.min(...SEED_ITEMS.map((s) => s.dayOffset))
+  const mindNodeTypes = Array.from(new Set(SEED_MIND_NODES.map(n => n.nodeType)))
+  const mindEdgeTypes = Array.from(new Set(SEED_MIND_EDGES.map(e => e.edgeType)))
 
   return (
     <div className="flex min-h-screen atlax-page-bg items-center justify-center p-8 selection:bg-blue-200 dark:selection:bg-blue-900">
@@ -1436,6 +2084,14 @@ export default function SeedPage() {
               <span>知识结构（自动 backfill）</span>
               <span className="font-medium text-slate-800 dark:text-slate-200">集合 + 标签关系 + 条目关系</span>
             </div>
+            <div className="flex justify-between">
+              <span>Mind 节点（{mindNodeTypes.join('/')}）</span>
+              <span className="font-medium text-slate-800 dark:text-slate-200">{SEED_MIND_NODES.length} 个</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Mind 边（{mindEdgeTypes.join('/')}）</span>
+              <span className="font-medium text-slate-800 dark:text-slate-200">{SEED_MIND_EDGES.length} 条</span>
+            </div>
           </div>
           <p className="text-xs text-slate-400 dark:text-slate-500 mt-3">归档条目与 Dock 一一对应，点击&ldquo;重新整理&rdquo;可回到 Dock</p>
         </div>
@@ -1463,7 +2119,7 @@ export default function SeedPage() {
           <div className="mt-4 p-4 bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/20 rounded-xl">
             <p className="text-sm text-green-700 dark:text-green-400 font-medium">数据填充成功</p>
             <p className="text-xs text-green-600 dark:text-green-400 mt-1">
-              创建了 {result.dockItemsCreated} 条 Dock 条目、{result.entriesCreated} 条归档条目、{result.tagsCreated} 个标签、{result.chatSessionsCreated} 条 Chat 会话、{result.collectionsCreated} 个集合、{result.tagRelationsCreated} 条标签关系、{result.entryRelationsCreated} 条条目关系
+              创建了 {result.dockItemsCreated} 条 Dock 条目、{result.entriesCreated} 条归档条目、{result.tagsCreated} 个标签、{result.chatSessionsCreated} 条 Chat 会话、{result.collectionsCreated} 个集合、{result.tagRelationsCreated} 条标签关系、{result.entryRelationsCreated} 条条目关系、{result.mindNodesCreated} 个 Mind 节点、{result.mindEdgesCreated} 条 Mind 边
             </p>
           </div>
         )}

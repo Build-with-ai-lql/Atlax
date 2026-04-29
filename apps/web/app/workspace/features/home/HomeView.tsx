@@ -64,7 +64,7 @@ export default function HomeView({ userId, userName: _userName, onOpenEditor, on
             <div className="flex items-center justify-center gap-4 mt-8">
               <div className="h-px w-10 bg-white/10" />
               <p className="font-mono text-[10px] text-[var(--text-muted)] tracking-[0.2em] uppercase">
-                {nodeCount} Nodes active in your workspace.
+                {nodeCount.toLocaleString()} Nodes active
               </p>
               <div className="h-px w-10 bg-white/10" />
             </div>

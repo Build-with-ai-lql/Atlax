@@ -1,7 +1,7 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
-import { Send, Minimize2, Sparkles, Loader2, X, MoreHorizontal, LayoutList, FileCode2, Pencil, FolderOutput, Download, Trash2, Check, Inbox, Archive, FileText, Circle, RotateCcw, Lightbulb, CircleSlash, ChevronRight } from 'lucide-react'
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { Send, Minimize2, Sparkles, Loader2, MoreHorizontal, LayoutList, FileCode2, Pencil, FolderOutput, Download, Trash2, Check, Inbox, Archive, FileText, LayoutGrid, List, Columns, Search, Folder, Plus, PenTool, Circle, RotateCcw, Lightbulb, ChevronRight } from 'lucide-react'
 
 import { getCurrentUser, registerUser, logoutUser, type LocalUser } from '@/lib/auth'
 import GoldenTopNav from './_components/GoldenTopNav'
@@ -15,10 +15,12 @@ import {
   suggestItem,
   updateDockItemText,
   upsertMindNode,
+  upsertMindEdge,
   type DockItem,
   type StoredMindNode,
   type StoredMindEdge,
 } from '@/lib/repository'
+import { db } from '@/lib/db'
 import type { EntryStatus } from '@/lib/types'
 import { recordEvent, type AppMode } from '@/lib/events'
 
@@ -26,6 +28,11 @@ import WorkspaceTabs, { type Tab } from './features/shared/WorkspaceTabs'
 import HomeView from './features/home/HomeView'
 import EditorTabView from './features/editor/EditorTabView'
 import MindCanvasStage from './features/mind/MindCanvasStage'
+import type { MindEdgeType } from '@atlax/domain'
+import { toDockTreeViewModel, type DockTreeNode } from './features/dock/dockTreeAdapter'
+import GlobalSidebar from './_components/GlobalSidebar'
+import FloatingChatPanel from './_components/FloatingChatPanel'
+import QuickNote from './_components/QuickNote'
 
 type ActiveModule = 'home' | 'mind' | 'dock' | 'editor'
 
@@ -61,6 +68,7 @@ export default function WorkspacePage() {
   const [editingItemId, setEditingItemId] = useState<number | null>(null)
 
   const [editorMode, setEditorMode] = useState<'classic' | 'block'>('block')
+  const [editorNavExpanded, setEditorNavExpanded] = useState(false)
 
   const draftCounterRef = React.useRef(0)
   const [drafts, setDrafts] = useState<Record<number, { title: string; content: string }>>({})
@@ -69,8 +77,82 @@ export default function WorkspacePage() {
 
   const [mindNodes, setMindNodes] = useState<StoredMindNode[]>([])
   const [mindEdges, setMindEdges] = useState<StoredMindEdge[]>([])
-  const [mindInputText, setMindInputText] = useState('')
   const [mindRefreshKey, setMindRefreshKey] = useState(0)
+
+  const [sharedProjectFilter, setSharedProjectFilter] = useState<string | null>(null)
+  const [sharedTagFilter, setSharedTagFilter] = useState<string | null>(null)
+  const [sharedDockSearch, setSharedDockSearch] = useState('')
+  const [mockFolderNodes, setMockFolderNodes] = useState<DockTreeNode[]>([])
+  const mockFolderIdCounter = useRef(-1000)
+
+  const workspaceMapping = useMemo(() => {
+    const labelToDockItem = new Map<string, DockItem>()
+    const dockIdToLabel = new Map<number, string>()
+    const labelToMindNode = new Map<string, StoredMindNode>()
+    const dockIdToMindNode = new Map<number, StoredMindNode>()
+    const mindNodeToDockId = new Map<string, number>()
+
+    items.forEach(item => {
+      const label = (item.topic || item.rawText.slice(0, 50)).trim().toLowerCase()
+      labelToDockItem.set(label, item)
+      dockIdToLabel.set(item.id, label)
+    })
+
+    mindNodes.forEach(node => {
+      const label = node.label.trim().toLowerCase()
+      labelToMindNode.set(label, node)
+      if (node.documentId != null) {
+        dockIdToMindNode.set(node.documentId, node)
+        mindNodeToDockId.set(node.id, node.documentId)
+      }
+    })
+
+    const findDockItemByMindNode = (nodeId: string): DockItem | null => {
+      const node = mindNodes.find(n => n.id === nodeId)
+      if (!node) return null
+      if (node.documentId != null) {
+        const item = items.find(i => i.id === node.documentId)
+        if (item) return item
+      }
+      const label = node.label.trim().toLowerCase()
+      const match = labelToDockItem.get(label)
+      return match || null
+    }
+
+    const findMindNodeByDockItem = (dockItemId: number): StoredMindNode | null => {
+      const direct = dockIdToMindNode.get(dockItemId)
+      if (direct) return direct
+      const label = dockIdToLabel.get(dockItemId)
+      if (label) return labelToMindNode.get(label) || null
+      return null
+    }
+
+    const getGraphChainForDockItem = (dockItemId: number): string[] => {
+      const node = findMindNodeByDockItem(dockItemId)
+      if (!node) return ['World Tree']
+      const chain: string[] = [node.label]
+      let currentId: string | null = node.id
+      const visited = new Set<string>()
+      while (currentId) {
+        if (visited.has(currentId)) break
+        visited.add(currentId)
+        const parentEdge = mindEdges.find(e => e.targetNodeId === currentId && e.edgeType === 'parent_child')
+        if (!parentEdge) break
+        const parentNode = mindNodes.find(n => n.id === parentEdge.sourceNodeId)
+        if (!parentNode) break
+        chain.unshift(parentNode.label)
+        currentId = parentNode.id
+      }
+      if (chain[0] !== 'World Tree') chain.unshift('World Tree')
+      return chain
+    }
+
+    const findDockItemByLabel = (label: string): DockItem | null => {
+      return labelToDockItem.get(label.trim().toLowerCase()) || null
+    }
+
+    return { findDockItemByMindNode, findMindNodeByDockItem, getGraphChainForDockItem, findDockItemByLabel, mindNodeToDockId }
+  }, [items, mindNodes, mindEdges])
 
   const [toastMessage, setToastMessage] = useState('')
   const toastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -103,19 +185,33 @@ export default function WorkspacePage() {
     }
   }, [userId])
 
+  const ensureWorldTreeRoot = useCallback(async () => {
+    if (!userId) return
+    try {
+      const nodes = await listMindNodes(userId)
+      const hasRoot = nodes.some(n => n.nodeType === 'root')
+      if (!hasRoot) {
+        await upsertMindNode({ userId, nodeType: 'root', label: 'World Tree', state: 'active' })
+      }
+    } catch (err) {
+      console.error('[MindData] Failed to ensure World Tree root:', err)
+    }
+  }, [userId])
+
   const loadMindData = useCallback(async () => {
     if (!userId) return
     try {
+      await ensureWorldTreeRoot()
       const [nodes, edges] = await Promise.all([
         listMindNodes(userId),
         listMindEdges(userId),
       ])
       setMindNodes(nodes)
       setMindEdges(edges)
-    } catch {
-      // silently fail
+    } catch (err) {
+      console.error('[MindData] Failed to load mind data:', err)
     }
-  }, [userId])
+  }, [userId, ensureWorldTreeRoot])
 
   useEffect(() => {
     if (userId) {
@@ -134,23 +230,46 @@ export default function WorkspacePage() {
     setUser(null)
   }, [])
 
+  const createSourceNodeWithRoot = useCallback(async (label: string, dockItemId: number) => {
+    if (!userId) return
+    await ensureWorldTreeRoot()
+    const sourceNode = await upsertMindNode({
+      userId,
+      nodeType: 'source',
+      label: label.slice(0, 80),
+      documentId: dockItemId,
+      state: 'active',
+    })
+    const allNodes = await listMindNodes(userId)
+    const rootNode = allNodes.find(n => n.nodeType === 'root')
+    if (rootNode) {
+      await upsertMindEdge({ userId, sourceNodeId: rootNode.id, targetNodeId: sourceNode.id, edgeType: 'parent_child', strength: 0.5, source: 'system' })
+    }
+  }, [userId, ensureWorldTreeRoot])
+
   const handleCapture = useCallback(async (text: string) => {
     if (!text.trim() || !userId) return
     try {
       const newId = await createDockItem(userId, text.trim())
-      await upsertMindNode({
-        userId,
-        nodeType: 'source',
-        label: text.trim().slice(0, 80),
-        documentId: newId,
-        state: 'active',
-      })
+      await createSourceNodeWithRoot(text.trim(), newId)
       refreshAll()
       recordEvent(userId, { type: 'capture_created', sourceType: 'text', dockItemId: newId })
     } catch (e) {
       setError(e instanceof Error ? e.message : '创建失败')
     }
-  }, [userId, refreshAll])
+  }, [userId, refreshAll, createSourceNodeWithRoot])
+
+  const handleQuickNoteSave = useCallback(async (text: string, title: string) => {
+    if (!text.trim() || !userId) return
+    try {
+      const newId = await createDockItem(userId, text.trim(), 'text', { topic: title })
+      await createSourceNodeWithRoot(text.trim(), newId)
+      refreshAll()
+      recordEvent(userId, { type: 'capture_created', sourceType: 'text', dockItemId: newId })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Quick Note 保存失败')
+    }
+  }, [userId, refreshAll, createSourceNodeWithRoot])
 
   const handleSuggest = useCallback(async (itemId: number) => {
     if (!userId) return
@@ -244,13 +363,7 @@ export default function WorkspacePage() {
       }
       try {
         const newId = await createDockItem(userId, content || title)
-        await upsertMindNode({
-          userId,
-          nodeType: 'source',
-          label: title.slice(0, 80),
-          documentId: newId,
-          state: 'active',
-        })
+        await createSourceNodeWithRoot(title, newId)
         refreshAll()
         const oldTabId = `tab-editor-draft-${editingItemId}`
         const newTabId = `tab-editor-${newId}`
@@ -275,7 +388,7 @@ export default function WorkspacePage() {
         setError(e instanceof Error ? e.message : '保存失败')
       }
     }
-  }, [editingItemId, userId, drafts, editorContent, refreshAll])
+  }, [editingItemId, userId, drafts, editorContent, refreshAll, createSourceNodeWithRoot])
 
   const handleActivateTab = useCallback((tabId: string) => {
     setActiveTabId(tabId)
@@ -360,8 +473,15 @@ export default function WorkspacePage() {
     handleNewNote()
   }, [handleNewNote])
 
+  const handlePinTab = useCallback((tabId: string) => {
+    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, isPinned: !t.isPinned } : t))
+  }, [])
+
   const handleModuleChange = useCallback((mod: ActiveModule) => {
     setActiveModule(mod)
+    if (mod !== 'editor') {
+      setEditorNavExpanded(false)
+    }
     if (mod === 'editor') {
       const editorTabs = tabs.filter(t => t.type === 'editor')
       if (editorTabs.length > 0) {
@@ -395,11 +515,21 @@ export default function WorkspacePage() {
     setEditorMode(mode)
   }, [])
 
-  const handleMindInput = useCallback(async () => {
-    if (!mindInputText.trim()) return
-    await handleCapture(mindInputText.trim())
-    setMindInputText('')
-  }, [mindInputText, handleCapture])
+  const sidebarDocuments = useMemo(() => {
+    const descriptors = [
+      'Graph Engine Physics',
+      'Algorithm Design',
+      'Reading Notes',
+    ]
+    return descriptors.map(label => {
+      const match = workspaceMapping.findDockItemByLabel(label)
+      return { label, dockItemId: match ? match.id : null }
+    })
+  }, [workspaceMapping])
+
+  const handleSwitchToMind = useCallback(() => {
+    handleModuleChange('mind')
+  }, [handleModuleChange])
 
   if (!authChecked) {
     return (
@@ -472,7 +602,8 @@ export default function WorkspacePage() {
       <div className="relative flex h-screen w-full flex-col overflow-hidden bg-[var(--bg-base)] font-sans text-[var(--text-main)] selection:bg-[var(--accent)] selection:text-white">
         <div className="ambient-glow" />
 
-        <div id="canvas-container" className="canvas-container canvas-dimmed">
+        <div id="canvas-container" className={`canvas-container ${activeModule === 'editor' ? 'canvas-dimmed' : 'canvas-nebula'}`}>
+          <NebulaBackground activeModule={activeModule} mindNodes={mindNodes} mindEdges={mindEdges} />
         </div>
 
         <GoldenTopNav
@@ -481,120 +612,224 @@ export default function WorkspacePage() {
           onOpenRecorder={() => setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')}
           user={user}
           onLogout={handleLogout}
-          isCollapsed={isEditorActive && activeModule === 'editor'}
+          isCollapsed={isEditorActive && activeModule === 'editor' && !editorNavExpanded}
+          onCollapseRequest={() => setEditorNavExpanded(false)}
+          onExpandRequest={() => setEditorNavExpanded(true)}
+          onToast={showToast}
+          onSearchAction={(label: string) => {
+            const match = workspaceMapping.findDockItemByLabel(label)
+            if (match) {
+              openEditorTab(match.id)
+            } else if (label.toLowerCase().includes('graph') || label.toLowerCase().includes('world tree')) {
+              handleModuleChange('mind')
+              showToast(`Navigated to Mind view for "${label}"`)
+            } else {
+              handleModuleChange('dock')
+              setSharedDockSearch(label)
+              showToast(`Searching Dock for "${label}"`)
+            }
+          }}
         />
 
-        <main id="main-container" className="relative z-10 flex-1 overflow-hidden main-transition">
-          {isEditorActive && activeModule === 'editor' ? (
-            <div id="view-editor" className="view-section active w-full h-full flex-col pointer-events-auto">
-              <div className="w-full h-full flex flex-col overflow-hidden">
-                <div className="h-14 bg-[var(--bg-sidebar)] border-b border-[var(--border-line)] flex items-end pl-16 pr-3 pb-0 shrink-0 relative">
-                  <WorkspaceTabs
-                    tabs={tabs.filter(t => t.type === 'editor')}
-                    activeTabId={activeTabId}
-                    onActivateTab={handleActivateTab}
-                    onCloseTab={handleCloseTab}
-                    onNewTab={handleNewTab}
-                  />
-                  <EditorOptionsMenu
-                    mode={editorMode}
-                    onSetMode={handleSetEditorMode}
-                  />
-                </div>
-                <EditorTabView
-                  editingItemId={editingItemId}
-                  editorTitle={editorTitle}
-                  editorContent={editorContent}
-                  onTitleChange={(title) => {
-                    setEditorTitle(title)
-                    if (editingItemId != null && editingItemId < 0) {
-                      setDrafts(prev => ({ ...prev, [editingItemId]: { ...prev[editingItemId], title } }))
-                    }
-                  }}
-                  onContentChange={(content) => {
-                    setEditorContent(content)
-                    if (editingItemId != null && editingItemId < 0) {
-                      setDrafts(prev => ({ ...prev, [editingItemId]: { ...prev[editingItemId], content } }))
-                    }
-                  }}
-                  onSave={handleSaveEditor}
+        <GlobalSidebar
+          userName={user.name}
+          onSwitchToEditor={() => handleModuleChange('editor')}
+          onSwitchToDock={() => handleModuleChange('dock')}
+          onSwitchToMind={handleSwitchToMind}
+          onNewNote={handleNewNote}
+          onCapture={handleCapture}
+          onToast={showToast}
+          documents={sidebarDocuments}
+          onOpenDocument={(documentRef: number | string) => {
+            if (typeof documentRef === 'number') {
+              const item = items.find(i => i.id === documentRef)
+              if (item) {
+                openEditorTab(documentRef)
+                return
+              }
+            }
+            const label = typeof documentRef === 'string' ? documentRef : String(documentRef)
+            const match = workspaceMapping.findDockItemByLabel(label)
+            if (match) {
+              openEditorTab(match.id)
+            } else {
+              showToast(`Document "${label}" not found in Dock`)
+            }
+          }}
+          onSwitchToDockWithSearch={(query: string) => {
+            setSharedDockSearch(query)
+            setSharedProjectFilter(null)
+            setSharedTagFilter(null)
+            handleModuleChange('dock')
+            showToast(`Search in Dock: "${query}"`)
+          }}
+          onProjectClick={(project: string) => {
+            setSharedProjectFilter(project)
+            setSharedTagFilter(null)
+            showToast(`Filtered by project: ${project}`)
+          }}
+          onCreateProjectFolder={() => {
+            const newId = mockFolderIdCounter.current--
+            const newNode: DockTreeNode = {
+              id: newId,
+              type: 'project',
+              name: `New Project ${Math.abs(newId)}`,
+              title: `New Project ${Math.abs(newId)}`,
+              children: [],
+              parentId: null,
+              depth: 0,
+              documentId: null,
+              contentType: 'mock',
+              tags: [],
+              preview: '',
+              metadata: { mock: true },
+            }
+            setMockFolderNodes(prev => [...prev, newNode])
+            showToast(`Created local project "New Project ${Math.abs(newId)}" (mock, not persisted)`)
+          }}
+        />
+
+        <FloatingChatPanel
+          onToast={showToast}
+          activeModule={activeModule}
+        />
+
+        <QuickNote
+          onToast={showToast}
+          onSave={handleQuickNoteSave}
+        />
+
+        <main id="main-container" className="relative z-10 flex-1 overflow-hidden" style={{ marginLeft: 'var(--sidebar-width, 0px)', width: 'calc(100% - var(--sidebar-width, 0px))', transition: 'margin-left 0.4s cubic-bezier(0.23,1,0.32,1), width 0.4s cubic-bezier(0.23,1,0.32,1)' }}>
+          <div id="view-editor" className={`view-section ${activeModule === 'editor' && isEditorActive ? 'active' : ''} flex flex-col`} onPointerDown={() => { if (editorNavExpanded) setEditorNavExpanded(false) }}>
+            <div className="w-full h-full flex flex-col overflow-hidden">
+              <div className="h-14 bg-[var(--bg-sidebar)] border-b border-[var(--border-line)] flex items-end pl-16 pr-3 pb-0 shrink-0 relative">
+                <WorkspaceTabs
+                  tabs={tabs.filter(t => t.type === 'editor')}
+                  activeTabId={activeTabId}
+                  onActivateTab={handleActivateTab}
+                  onCloseTab={handleCloseTab}
+                  onNewTab={handleNewTab}
+                  onPinTab={handlePinTab}
+                  onToast={showToast}
+                />
+                <EditorOptionsMenu
                   mode={editorMode}
-                  isDraft={isActiveDraft}
+                  onSetMode={handleSetEditorMode}
+                  onToast={showToast}
                 />
               </div>
+              <EditorTabView
+                editingItemId={editingItemId}
+                editorTitle={editorTitle}
+                editorContent={editorContent}
+                onTitleChange={(title) => {
+                  setEditorTitle(title)
+                  if (editingItemId != null && editingItemId < 0) {
+                    setDrafts(prev => ({ ...prev, [editingItemId]: { ...prev[editingItemId], title } }))
+                  }
+                }}
+                onContentChange={(content) => {
+                  setEditorContent(content)
+                  if (editingItemId != null && editingItemId < 0) {
+                    setDrafts(prev => ({ ...prev, [editingItemId]: { ...prev[editingItemId], content } }))
+                  }
+                }}
+                onSave={handleSaveEditor}
+                mode={editorMode}
+                isDraft={isActiveDraft}
+                onToast={showToast}
+              />
             </div>
-          ) : (
-            <div className="w-full h-full pt-20 pb-4 px-6 flex justify-center overflow-hidden">
-              {activeModule === 'home' && (
-                <div id="view-home" className="view-section active w-full max-w-5xl h-full flex-col pointer-events-auto overflow-y-auto no-scrollbar">
-                  <HomeView
-                    userId={userId}
-                    userName={user.name}
-                    onOpenEditor={openEditorTab}
-                    onNewNote={handleNewNote}
-                    onSwitchToDock={() => handleModuleChange('dock')}
-                    onSwitchToMind={() => handleModuleChange('mind')}
-                    onCapture={handleCapture}
-                    nodeCount={nodeCount}
-                  />
-                </div>
-              )}
+          </div>
 
-              {activeModule === 'mind' && (
-                <div id="view-mind" className="view-section active absolute inset-0 w-full h-full flex-col pointer-events-none">
-                  <MindCanvasStage
-                    nodes={mindNodes}
-                    edges={mindEdges}
-                    onOpenEditor={openEditorTab}
-                    onToast={showToast}
-                  />
-                  {nodeCount === 0 && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                      <h1 className="text-5xl font-light text-white/80 tracking-tight mb-2">Nebula Tree</h1>
-                      <p className="text-sm text-[var(--text-muted)] mb-12">你的知识星空</p>
-                    </div>
-                  )}
-                  <div className="absolute bottom-8 w-full max-w-2xl px-6 z-20 pointer-events-auto">
-                    <div className="glass rounded-2xl flex items-center p-2 pl-4">
-                      <Sparkles size={16} className="text-emerald-500 flex-shrink-0" />
-                      <input
-                        type="text"
-                        value={mindInputText}
-                        onChange={(e) => setMindInputText(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleMindInput() }}
-                        placeholder="输入灵感并回车..."
-                        className="flex-1 bg-transparent outline-none px-4 py-2.5 text-[14px] font-light placeholder-slate-600 text-white"
-                      />
-                      <div className="flex items-center px-3 space-x-2 border-l border-[var(--border-line)]">
-                        <span className="text-[9px] uppercase tracking-widest text-emerald-500/80 font-mono">GROW</span>
-                        <kbd className="px-1.5 py-0.5 rounded text-[9px] bg-white/5 border border-white/10 text-slate-500">↵</kbd>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {activeModule === 'dock' && (
-                <div id="view-dock" className="view-section active w-full h-full flex-col pointer-events-auto">
-                  <div className="glass w-full h-full rounded-2xl flex flex-col overflow-hidden shadow-2xl border border-[var(--border-line)]">
-                    <DockFinderView
-                      items={items}
-                      selectedItemId={selectedItemId}
-                      loading={loading}
-                      error={error}
-                      onSelectItem={setSelectedItemId}
-                      onArchive={handleArchive}
-                      onSuggest={handleSuggest}
-                      onOpenEditor={openEditorTab}
-                      onReopen={handleReopen}
-                      onOpenRecorder={() => setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')}
-                      selectedItem={selectedItem}
-                    />
-                  </div>
-                </div>
-              )}
+          <div id="view-home" className={`view-section ${activeModule === 'home' ? 'active' : ''} overflow-y-auto no-scrollbar pt-20 pb-4 px-6`}>
+            <div className="w-full max-w-5xl mx-auto">
+              <HomeView
+                userId={userId}
+                userName={user.name}
+                onOpenEditor={openEditorTab}
+                onNewNote={handleNewNote}
+                onSwitchToDock={() => handleModuleChange('dock')}
+                onSwitchToMind={() => handleModuleChange('mind')}
+                onCapture={handleCapture}
+                nodeCount={nodeCount}
+              />
             </div>
-          )}
+          </div>
+
+          <div id="view-mind" className={`view-section ${activeModule === 'mind' ? 'active' : ''}`}>
+            <MindCanvasStage
+              nodes={mindNodes}
+              edges={mindEdges}
+              onOpenEditor={(nodeId: number) => {
+                const item = items.find(i => i.id === nodeId)
+                if (item) {
+                  openEditorTab(nodeId)
+                } else {
+                  const dockItem = workspaceMapping.findDockItemByMindNode(String(nodeId))
+                  if (dockItem) {
+                    openEditorTab(dockItem.id)
+                  } else {
+                    showToast('This node has no linked document (unlinked)')
+                  }
+                }
+              }}
+              onToast={showToast}
+              activeModule={activeModule}
+              onCreateEdge={async (sourceId, targetId, edgeType: MindEdgeType) => {
+                if (!userId) return
+                try {
+                  await upsertMindEdge({ userId, sourceNodeId: sourceId, targetNodeId: targetId, edgeType, strength: 0.5, source: 'user' })
+                  refreshAll()
+                  showToast('Edge synced to knowledge graph')
+                } catch (err) {
+                  console.error('[MindCanvas] Failed to sync edge:', err)
+                  showToast('Edge created locally (sync failed)')
+                }
+              }}
+              onDeleteEdge={async (sourceId: string, targetId: string) => {
+                if (!userId) return
+                try {
+                  const edge = mindEdges.find(e => (e.sourceNodeId === sourceId && e.targetNodeId === targetId) || (e.sourceNodeId === targetId && e.targetNodeId === sourceId))
+                  if (edge) {
+                    await db.table('mindEdges').delete(edge.id)
+                    refreshAll()
+                    showToast('Edge removed from knowledge graph')
+                  }
+                } catch (err) {
+                  console.error('[MindCanvas] Failed to delete edge:', err)
+                  showToast('Edge removed locally (sync failed)')
+                }
+              }}
+            />
+          </div>
+
+          <div id="view-dock" className={`view-section ${activeModule === 'dock' ? 'active' : ''} overflow-y-auto no-scrollbar pt-20 pb-4 px-6`}>
+            <DockFinderView
+              items={items}
+              selectedItemId={selectedItemId}
+              loading={loading}
+              error={error}
+              onSelectItem={setSelectedItemId}
+              onArchive={handleArchive}
+              onSuggest={handleSuggest}
+              onOpenEditor={openEditorTab}
+              onReopen={handleReopen}
+              onOpenRecorder={() => setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')}
+              selectedItem={selectedItem}
+              onToast={showToast}
+              onSwitchToMind={handleSwitchToMind}
+              graphChainForItem={(id: number) => workspaceMapping.getGraphChainForDockItem(id)}
+              findMindNodeForItem={(id: number) => workspaceMapping.findMindNodeByDockItem(id)}
+              initialProjectFilter={sharedProjectFilter}
+              initialTagFilter={sharedTagFilter}
+              initialDockSearch={sharedDockSearch}
+              onProjectFilterChange={setSharedProjectFilter}
+              onTagFilterChange={setSharedTagFilter}
+              onDockSearchChange={setSharedDockSearch}
+              externalMockNodes={mockFolderNodes}
+            />
+          </div>
         </main>
 
         {toastMessage && (
@@ -619,7 +854,7 @@ export default function WorkspacePage() {
   )
 }
 
-function EditorOptionsMenu({ mode, onSetMode }: { mode: 'classic' | 'block'; onSetMode: (mode: 'classic' | 'block') => void }) {
+function EditorOptionsMenu({ mode, onSetMode, onToast }: { mode: 'classic' | 'block'; onSetMode: (mode: 'classic' | 'block') => void; onToast?: (msg: string) => void }) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -652,17 +887,17 @@ function EditorOptionsMenu({ mode, onSetMode }: { mode: 'classic' | 'block'; onS
             </button>
             <div className="my-1 border-t border-white/[0.06]" />
             <div className="px-2 py-1 text-[9px] font-bold text-slate-500 tracking-wider">ACTIONS</div>
-            <button className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors">
+            <button onClick={() => { onToast?.('Rename coming soon'); setOpen(false) }} className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors">
               <Pencil size={14} /> Rename
             </button>
-            <button className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors">
+            <button onClick={() => { onToast?.('Move to... coming soon'); setOpen(false) }} className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors">
               <FolderOutput size={14} /> Move to...
             </button>
-            <button className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors">
+            <button onClick={() => { onToast?.('Export as PDF coming soon'); setOpen(false) }} className="w-full text-left px-2 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors">
               <Download size={14} /> Export as PDF
             </button>
             <div className="my-1 border-t border-white/[0.06]" />
-            <button className="w-full text-left px-2 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors">
+            <button onClick={() => { onToast?.('Delete coming soon'); setOpen(false) }} className="w-full text-left px-2 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors">
               <Trash2 size={14} /> Delete
             </button>
           </div>
@@ -672,7 +907,7 @@ function EditorOptionsMenu({ mode, onSetMode }: { mode: 'classic' | 'block'; onS
   )
 }
 
-function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, onArchive, onSuggest, onOpenEditor, onReopen, onOpenRecorder, selectedItem }: {
+function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, onSuggest, onOpenEditor, onOpenRecorder, selectedItem, onToast, onSwitchToMind, graphChainForItem, findMindNodeForItem, initialProjectFilter, initialTagFilter, initialDockSearch, onProjectFilterChange, onTagFilterChange, onDockSearchChange, externalMockNodes }: {
   items: DockItem[]
   selectedItemId: number | null
   loading: boolean
@@ -684,41 +919,248 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
   onReopen: (id: number) => void
   onOpenRecorder: () => void
   selectedItem: DockItem | null
+  onToast: (msg: string) => void
+  onSwitchToMind: () => void
+  graphChainForItem: (id: number) => string[]
+  findMindNodeForItem: (id: number) => StoredMindNode | null
+  initialProjectFilter: string | null
+  initialTagFilter: string | null
+  initialDockSearch: string
+  onProjectFilterChange: (project: string | null) => void
+  onTagFilterChange: (tag: string | null) => void
+  onDockSearchChange: (query: string) => void
+  externalMockNodes: DockTreeNode[]
 }) {
   const [filterStatus, setFilterStatus] = useState<EntryStatus | null>(null)
+  const [dockSearch, setDockSearch] = useState('')
+  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'columns'>('columns')
+  const [selectedProject, setSelectedProject] = useState<string | null>(initialProjectFilter)
+  const [selectedTag, setSelectedTag] = useState<string | null>(initialTagFilter)
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false)
+  const [addTagInput, setAddTagInput] = useState('')
+  const [showAddTag, setShowAddTag] = useState(false)
+  const [columnStack, setColumnStack] = useState<DockTreeNode[]>([])
+  const [selectedColumnNode, setSelectedColumnNode] = useState<DockTreeNode | null>(null)
+  const [mockTreeNodes, setMockTreeNodes] = useState<DockTreeNode[]>([])
+  const mockIdCounter = useRef(-1)
+  const moreRef = useRef<HTMLDivElement>(null)
 
-  const statusIcon = (status: EntryStatus) => {
-    switch (status) {
-      case 'pending': return <Circle size={14} className="text-yellow-500/70" />
-      case 'suggested': return <Lightbulb size={14} className="text-blue-400/70" />
-      case 'archived': return <Archive size={14} className="text-emerald-400/70" />
-      case 'reopened': return <RotateCcw size={14} className="text-orange-400/70" />
-      case 'ignored': return <CircleSlash size={14} className="text-slate-500/70" />
-      default: return <Circle size={14} className="text-slate-500/70" />
+  const dockTreeViewModel = useMemo(() => toDockTreeViewModel(items), [items])
+
+  // TODO(backend-boundary): Dock hierarchy create is mock-only. No backend persistence.
+  // Real project/folder CRUD needs backend schema + BFF API.
+  // Frontend interaction must remain verifiable even without backend.
+  const handleCreateMockFolder = useCallback(() => {
+    const newId = mockIdCounter.current--
+    let parentNode: DockTreeNode | null = null
+    let parentName: string = 'Root'
+
+    if (selectedColumnNode && (selectedColumnNode.type === 'project' || selectedColumnNode.type === 'folder')) {
+      parentNode = selectedColumnNode
+      parentName = selectedColumnNode.name
+    } else if (columnStack.length > 0) {
+      const lastCol = columnStack[columnStack.length - 1]
+      if (lastCol.type === 'project' || lastCol.type === 'folder') {
+        parentNode = lastCol
+        parentName = lastCol.name
+      }
+    } else if (selectedProject) {
+      parentNode = dockTreeViewModel.roots.find(r => r.name === selectedProject) || null
+      parentName = selectedProject
     }
-  }
+
+    const isUnderParent = parentNode !== null
+    const parentRef = parentNode as DockTreeNode | undefined
+    const newNode: DockTreeNode = {
+      id: newId,
+      type: isUnderParent ? 'folder' : 'project',
+      name: isUnderParent ? `New Folder ${Math.abs(newId)}` : `New Project ${Math.abs(newId)}`,
+      title: isUnderParent ? `New Folder ${Math.abs(newId)}` : `New Project ${Math.abs(newId)}`,
+      children: [],
+      parentId: parentRef?.id ?? null,
+      depth: parentRef ? (parentRef.depth + 1) : 0,
+      documentId: null,
+      contentType: 'mock',
+      tags: [],
+      preview: '',
+      metadata: { mock: true, parentId: parentRef?.id ?? null },
+    }
+
+    setMockTreeNodes(prev => [...prev, newNode])
+
+    if (isUnderParent && parentRef) {
+      setSelectedColumnNode(newNode)
+      if (!columnStack.some(n => n.id === parentRef.id)) {
+        setColumnStack(prev => [...prev, parentRef])
+      }
+    }
+
+    onToast(`Created local ${isUnderParent ? 'folder' : 'project'} under "${parentName}" (mock, not persisted)`)
+  }, [selectedColumnNode, columnStack, selectedProject, dockTreeViewModel.roots, onToast])
+
+  // TODO(backend-boundary): mergedRoots merges adapter tree + local mock nodes.
+  // This is NOT production persistence — mock nodes are session-only.
+  const mergedRoots = useMemo(() => {
+    function deepCloneNode(node: DockTreeNode): DockTreeNode {
+      return {
+        ...node,
+        children: node.children.map(deepCloneNode),
+      }
+    }
+    const roots = dockTreeViewModel.roots.map(deepCloneNode)
+    const nodeById = new Map<number, DockTreeNode>()
+    function indexTree(nodes: DockTreeNode[]) {
+      nodes.forEach(n => {
+        nodeById.set(n.id, n)
+        if (n.children.length > 0) indexTree(n.children)
+      })
+    }
+    indexTree(roots)
+    const allMockNodes = [...mockTreeNodes, ...externalMockNodes]
+    allMockNodes.forEach(mockNode => {
+      if (mockNode.type === 'project') {
+        roots.push({ ...mockNode, children: mockNode.children.map(deepCloneNode) })
+      } else {
+        const parentId = mockNode.metadata?.parentId as number | null | undefined
+        const parentProject = mockNode.metadata?.parentProject as string | undefined
+        let parent: DockTreeNode | undefined
+        if (parentId != null) {
+          parent = nodeById.get(parentId)
+        }
+        if (!parent && parentProject) {
+          parent = roots.find(r => r.name === parentProject)
+        }
+        if (parent) {
+          const childNode: DockTreeNode = { ...mockNode, parentId: parent.id, children: mockNode.children.map(deepCloneNode) }
+          parent.children.push(childNode)
+          nodeById.set(childNode.id, childNode)
+        } else {
+          const orphanNode: DockTreeNode = { ...mockNode, type: 'project', children: mockNode.children.map(deepCloneNode), metadata: { ...mockNode.metadata, orphan: true } }
+          roots.push(orphanNode)
+          nodeById.set(orphanNode.id, orphanNode)
+        }
+      }
+    })
+    return roots
+  }, [dockTreeViewModel.roots, mockTreeNodes, externalMockNodes])
+
+  const filteredRoots = useMemo(() => {
+    if (!selectedProject) return mergedRoots
+    const match = mergedRoots.find(r => r.name === selectedProject)
+    return match ? [match] : []
+  }, [selectedProject, mergedRoots])
+
+  useEffect(() => {
+    if (selectedProject) {
+      const projectRoot = mergedRoots.find(r => r.name === selectedProject)
+      if (projectRoot) {
+        setColumnStack([])
+        setSelectedColumnNode(null)
+      } else {
+        onToast(`Project "${selectedProject}" not found in Dock tree`)
+      }
+    } else {
+      setColumnStack([])
+      setSelectedColumnNode(null)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProject, mergedRoots])
+
+  useEffect(() => {
+    if (initialProjectFilter !== selectedProject) setSelectedProject(initialProjectFilter)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialProjectFilter])
+  useEffect(() => {
+    if (initialTagFilter !== selectedTag) setSelectedTag(initialTagFilter)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTagFilter])
+  useEffect(() => {
+    if (initialDockSearch && initialDockSearch !== dockSearch) setDockSearch(initialDockSearch)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialDockSearch])
+
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (moreMenuOpen && moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreMenuOpen(false)
+    }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [moreMenuOpen])
 
   const counts: Record<EntryStatus, number> = { pending: 0, suggested: 0, archived: 0, ignored: 0, reopened: 0 }
   items.forEach(i => { counts[i.status] = (counts[i.status] || 0) + 1 })
 
-  const filteredItems = filterStatus ? items.filter(i => i.status === filterStatus) : items
+  let filteredItems = filterStatus ? items.filter(i => i.status === filterStatus) : items
+  if (selectedProject) {
+    const projectRoot = mergedRoots.find(r => r.name === selectedProject)
+    if (projectRoot) {
+      const descendantIds = new Set<number>()
+      const collectIds = (node: DockTreeNode) => {
+        if (node.documentId != null) descendantIds.add(node.documentId)
+        node.children.forEach(collectIds)
+      }
+      projectRoot.children.forEach(collectIds)
+      filteredItems = filteredItems.filter(i => descendantIds.has(i.id) || (i.selectedProject && i.selectedProject === selectedProject))
+    }
+  }
+  if (selectedTag) {
+    filteredItems = filteredItems.filter(i => {
+      const text = (i.topic || i.rawText).toLowerCase()
+      return text.includes(selectedTag.toLowerCase())
+    })
+  }
+  const searchFiltered = dockSearch ? filteredItems.filter(i => (i.topic || i.rawText).toLowerCase().includes(dockSearch.toLowerCase())) : filteredItems
 
-  // 如果当前选中项被筛选隐藏，自动清空选中
-  const visibleSelected = selectedItemId != null && filteredItems.some(i => i.id === selectedItemId)
+  const visibleSelected = selectedItemId != null && searchFiltered.some(i => i.id === selectedItemId)
   const effectiveSelectedItem = visibleSelected ? selectedItem : null
 
   const handleSelectFilter = (st: EntryStatus | null) => {
     setFilterStatus(st)
+    setSelectedProject(null)
+    setSelectedTag(null)
     if (st != null && selectedItemId != null) {
       const item = items.find(i => i.id === selectedItemId)
-      if (item && item.status !== st) {
-        onSelectItem(null)
-      }
+      if (item && item.status !== st) onSelectItem(null)
     }
   }
 
-  const sidebarActiveClass = 'bg-emerald-500/90 text-[#111] font-medium'
-  const sidebarInactiveClass = 'text-slate-300 hover:bg-white/[0.06]'
+  const handleProjectClick = (proj: string) => {
+    if (selectedProject === proj) {
+      setSelectedProject(null)
+      onProjectFilterChange(null)
+      onToast(`Project filter cleared`)
+    } else {
+      setSelectedProject(proj)
+      setSelectedTag(null)
+      setFilterStatus(null)
+      onProjectFilterChange(proj)
+      onTagFilterChange(null)
+      onToast(`Filtered by project: ${proj}`)
+    }
+  }
+
+  const handleTagClick = (tag: string) => {
+    if (selectedTag === tag) {
+      setSelectedTag(null)
+      onTagFilterChange(null)
+      onToast(`Tag filter cleared`)
+    } else {
+      setSelectedTag(tag)
+      setSelectedProject(null)
+      setFilterStatus(null)
+      onTagFilterChange(tag)
+      onProjectFilterChange(null)
+      onToast(`Filtered by tag: #${tag}`)
+    }
+  }
+
+  const handleAddTag = () => {
+    if (addTagInput.trim()) {
+      onToast(`Tag "#${addTagInput.trim()}" added (mock)`)
+      setAddTagInput('')
+      setShowAddTag(false)
+    }
+  }
 
   const formatDate = (d: Date | string | null) => {
     if (!d) return '-'
@@ -726,225 +1168,404 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
     return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
   }
 
+  const statusIcon = (status: EntryStatus) => {
+    switch (status) {
+      case 'pending': return <Circle size={12} className="text-yellow-500/70" />
+      case 'suggested': return <Lightbulb size={12} className="text-blue-400/70" />
+      case 'archived': return <Archive size={12} className="text-emerald-400/70" />
+      case 'reopened': return <RotateCcw size={12} className="text-orange-400/70" />
+      default: return <Circle size={12} className="text-slate-500/70" />
+    }
+  }
+
+  const itemContent = (item: DockItem, isActive: boolean) => {
+    const title = item.topic || item.rawText.slice(0, 50)
+    return (
+      <>
+        <FileText size={16} className={`shrink-0 ${isActive ? 'text-[#111]' : 'text-[var(--text-muted)] group-hover:text-white'}`} />
+        <span className="truncate pointer-events-none">{title}</span>
+        {item.status !== 'pending' && (
+          <span className={`text-[9px] px-1.5 py-0.5 rounded shrink-0 ml-2 ${isActive ? 'bg-[#111]/10 text-[#111]/70' : 'bg-white/5 text-[var(--text-muted)]'}`}>
+            {STATUS_LABELS[item.status]?.label}
+          </span>
+        )}
+      </>
+    )
+  }
+
   return (
-    <div className="h-full flex overflow-hidden bg-[#111]">
-      {/* Left sidebar */}
-      <div className="w-48 bg-[#161616] border-r border-white/[0.06] flex flex-col py-3 overflow-y-auto shrink-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div className="px-4 text-[10px] font-bold text-slate-500 tracking-wider mb-2">SHORTCUTS</div>
-        <div className="space-y-0.5 px-2">
-          <div
-            onClick={() => handleSelectFilter(null)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-md cursor-pointer transition-colors text-sm ${
-              filterStatus === null ? sidebarActiveClass : sidebarInactiveClass
-            }`}
-          >
-            <Inbox size={14} />
-            <span className="truncate">所有条目</span>
-            <span className="ml-auto text-[10px] opacity-60">{items.length}</span>
+    <div className="glass w-full h-full rounded-2xl flex flex-col overflow-hidden shadow-2xl border border-[var(--border-line)]">
+      <div className="h-14 border-b border-[var(--border-line)] flex items-center justify-between px-4 shrink-0 bg-[#161616]">
+        <div className="flex items-center gap-4">
+          <h2 className="text-xl font-bold text-white tracking-tight ml-2">Dock</h2>
+          <div className="w-px h-5 bg-[var(--border-line)]" />
+          <div className="flex items-center bg-black/40 rounded-lg p-1 border border-[var(--border-line)]">
+            <button onClick={() => setViewMode('grid')} className={`p-1 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-white/10 text-white shadow-sm' : 'text-[var(--text-muted)] hover:text-white'}`} title="Grid View"><LayoutGrid size={16} /></button>
+            <button onClick={() => setViewMode('list')} className={`p-1 rounded-md transition-colors ${viewMode === 'list' ? 'bg-white/10 text-white shadow-sm' : 'text-[var(--text-muted)] hover:text-white'}`} title="List View"><List size={16} /></button>
+            <button onClick={() => setViewMode('columns')} className={`p-1 rounded-md transition-colors ${viewMode === 'columns' ? 'bg-white/10 text-white shadow-sm' : 'text-[var(--text-muted)] hover:text-white'}`} title="Column View"><Columns size={16} /></button>
           </div>
-        </div>
-
-        <div className="px-4 text-[10px] font-bold text-slate-500 tracking-wider mt-6 mb-2">STATUS</div>
-        <div className="space-y-0.5 px-2">
-          {(['pending', 'suggested', 'archived', 'reopened'] as EntryStatus[]).map(st => (
-            counts[st] > 0 && (
-              <div
-                key={st}
-                onClick={() => handleSelectFilter(st)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-md cursor-pointer transition-colors text-sm ${
-                  filterStatus === st ? sidebarActiveClass : 'text-slate-400 hover:bg-white/[0.06]'
-                }`}
-              >
-                {statusIcon(st)}
-                <span>{STATUS_LABELS[st].label}</span>
-                <span className="ml-auto text-[10px] opacity-60">{counts[st]}</span>
-              </div>
-            )
-          ))}
-        </div>
-
-        <div className="px-4 text-[10px] font-bold text-slate-500 tracking-wider mt-6 mb-2">ACTIONS</div>
-        <div className="space-y-0.5 px-2">
-          <button onClick={onOpenRecorder} className="w-full text-left flex items-center gap-2 px-3 py-1.5 rounded-md cursor-pointer text-slate-400 hover:bg-white/[0.06] hover:text-white transition-colors text-sm">
-            <Sparkles size={14} className="text-emerald-400" />
-            <span>录入</span>
+          <button onClick={handleCreateMockFolder} className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-[var(--border-line)] rounded-lg text-xs text-[var(--text-muted)] hover:text-white transition-colors" title="New Folder">
+            <Folder size={14} /> <span>+ Folder</span>
           </button>
         </div>
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <Search size={16} className="w-4 h-4 text-[var(--text-muted)] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input type="text" value={dockSearch} onChange={e => { setDockSearch(e.target.value); onDockSearchChange(e.target.value) }} placeholder="Filter inside dock..." className="bg-black/40 border border-[var(--border-line)] rounded-lg pl-9 pr-4 py-1.5 text-sm outline-none focus:border-[var(--accent)] transition-colors w-48 text-white placeholder:text-gray-500 shadow-inner" />
+          </div>
+          <div className="relative" ref={moreRef}>
+            <button onClick={() => setMoreMenuOpen(v => !v)} className="p-1.5 text-[var(--text-muted)] hover:text-white transition-colors rounded-md hover:bg-white/10" title="More Options"><MoreHorizontal size={16} /></button>
+            {moreMenuOpen && (
+              <div className="absolute right-0 top-full mt-1 w-44 glass rounded-xl p-1 shadow-2xl z-[110]">
+                <button onClick={() => { onOpenRecorder(); setMoreMenuOpen(false) }} className="w-full text-left px-2 py-1.5 text-xs text-[var(--text-muted)] hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors"><Sparkles size={14} className="text-[var(--accent)]" /> New Capture</button>
+                <button onClick={() => { onToast('Sort by date (mock)'); setMoreMenuOpen(false) }} className="w-full text-left px-2 py-1.5 text-xs text-[var(--text-muted)] hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors"><ChevronRight size={14} /> Sort by Date</button>
+                <button onClick={() => { onToast('Export as Markdown (mock)'); setMoreMenuOpen(false) }} className="w-full text-left px-2 py-1.5 text-xs text-[var(--text-muted)] hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors"><Download size={14} /> Export</button>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* Miller Columns: Group column + Item column */}
-      <div className="flex-1 flex overflow-hidden min-w-0">
-        {/* Group/Status column */}
-        <div className="w-52 border-r border-white/[0.06] flex flex-col overflow-hidden shrink-0 bg-[#111]">
-          <div className="h-9 flex items-center px-4 border-b border-white/[0.06] bg-[#111] shrink-0">
-            <span className="text-[10px] text-slate-500 font-medium tracking-wide">集合</span>
+      <div className="flex-1 flex overflow-hidden bg-[#111]">
+        <div className="w-48 bg-[#161616] border-r border-[var(--border-line)] flex flex-col py-3 overflow-y-auto shrink-0 no-scrollbar">
+          <div className="px-4 text-[10px] font-bold text-[var(--text-muted)] tracking-wider mb-2">SHORTCUTS</div>
+          <div className="space-y-0.5 px-2">
+            <div onClick={() => handleSelectFilter(null)} className={`finder-item ${filterStatus === null && !selectedProject && !selectedTag ? 'active' : ''}`}>
+              <span className="flex items-center gap-2"><Inbox size={16} /> Inbox</span>
+            </div>
+            <div onClick={() => handleSelectFilter('archived')} className={`finder-item ${filterStatus === 'archived' ? 'active' : ''}`}>
+              <span className="flex items-center gap-2"><Archive size={16} /> Archive</span>
+            </div>
           </div>
-          <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden py-2">
-            {loading ? (
-              <div className="flex items-center justify-center h-32">
-                <Loader2 className="animate-spin text-slate-500" size={20} />
+
+          <div className="px-4 text-[10px] font-bold text-[var(--text-muted)] tracking-wider mt-6 mb-2">PROJECTS</div>
+          <div className="space-y-0.5 px-2">
+            <div onClick={() => handleProjectClick('Core Architecture')} className={`finder-item ${selectedProject === 'Core Architecture' ? 'active' : ''}`}>
+              <span className="flex items-center gap-2"><Folder size={16} className="text-[var(--node-domain)]" /> Core Architecture</span>
+            </div>
+            <div onClick={() => handleProjectClick('Personal Growth')} className={`finder-item ${selectedProject === 'Personal Growth' ? 'active' : ''}`}>
+              <span className="flex items-center gap-2"><Folder size={16} className="text-blue-400" /> Personal Growth</span>
+            </div>
+          </div>
+
+          <div className="px-4 text-[10px] font-bold text-[var(--text-muted)] tracking-wider mt-6 mb-2">TAGS</div>
+          <div className="space-y-0.5 px-2 flex flex-wrap gap-1">
+            {['physics', 'algo', 'book', '技术', '产品', '学习'].map(tag => (
+              <span key={tag} onClick={() => handleTagClick(tag)} className={`px-2 py-1 border rounded-md text-xs cursor-pointer hover:text-white transition-colors ${selectedTag === tag ? 'bg-[var(--accent)] text-[#111] border-[var(--accent)]' : 'bg-white/5 border-[var(--border-line)] text-[var(--text-muted)]'}`}>#{tag}</span>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {viewMode === 'columns' && (
+            <div className="flex-1 flex overflow-x-auto overflow-y-hidden no-scrollbar">
+              <ColumnListView
+                columnStack={columnStack}
+                setColumnStack={setColumnStack}
+                selectedColumnNode={selectedColumnNode}
+                setSelectedColumnNode={setSelectedColumnNode}
+                filteredRoots={filteredRoots}
+                loading={loading}
+                error={error}
+                filteredItems={searchFiltered}
+                onSelectItem={onSelectItem}
+                selectedItemId={selectedItemId}
+                itemContent={itemContent}
+                onToast={onToast}
+              />
+            </div>
+          )}
+
+          {viewMode === 'grid' && (
+            <div className="flex-1 overflow-y-auto no-scrollbar p-4">
+              <div className="text-[10px] text-[var(--text-muted)] font-medium tracking-wide mb-3">
+                {selectedProject ? selectedProject : selectedTag ? `#${selectedTag}` : filterStatus ? STATUS_LABELS[filterStatus].label : '所有条目'}
+                <span className="mx-2">/</span>{searchFiltered.length} 项
               </div>
-            ) : error ? (
-              <div className="flex items-center justify-center h-32">
-                <p className="text-red-400 text-sm">{error}</p>
+              {searchFiltered.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-20 text-slate-500">
+                  <Inbox size={24} className="opacity-30 mb-3" /><p className="text-sm">暂无条目</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                  {searchFiltered.map((item) => {
+                    const isActive = selectedItemId === item.id
+                    return (
+                      <div key={item.id} onClick={() => onSelectItem(isActive ? null : item.id)}
+                        className={`p-4 rounded-xl border cursor-pointer transition-all hover:shadow-lg ${isActive ? 'bg-[var(--accent)]/15 border-[var(--accent)]/40 shadow-lg' : 'bg-white/5 border-[var(--border-line)] hover:bg-white/10 hover:border-white/20'}`}
+                      >
+                        <div className="flex items-center gap-2 mb-2">
+                          {statusIcon(item.status)}
+                          <span className="text-[9px] text-[var(--text-muted)] uppercase">{item.sourceType}</span>
+                        </div>
+                        <h4 className={`text-sm font-medium mb-1 line-clamp-2 ${isActive ? 'text-white' : 'text-gray-200'}`}>{item.topic || item.rawText.slice(0, 60)}</h4>
+                        <p className="text-[11px] text-[var(--text-muted)] line-clamp-2">{item.rawText.slice(0, 100)}</p>
+                        {item.userTags && item.userTags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {item.userTags.map(tag => (
+                              <span key={tag} className="px-1.5 py-0.5 bg-white/5 border border-[var(--border-line)] rounded text-[9px] text-[var(--text-muted)]">#{tag}</span>
+                            ))}
+                          </div>
+                        )}
+                        <div className="mt-3 text-[10px] text-[var(--text-muted)] flex items-center justify-between">
+                          <span>{STATUS_LABELS[item.status]?.label}</span>
+                          <span>{formatDate(item.createdAt)}</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {viewMode === 'list' && (
+            <div className="flex-1 overflow-y-auto no-scrollbar">
+              <div className="sticky top-0 h-9 flex items-center px-4 border-b border-[var(--border-line)] bg-[#111] shrink-0 text-[10px] text-[var(--text-muted)] font-medium tracking-wide">
+                <span className="w-8"></span>
+                <span className="flex-1">TITLE</span>
+                <span className="w-16 text-center">STATUS</span>
+                <span className="w-12 text-center">TYPE</span>
+                <span className="w-20 text-center hidden md:block">TAGS</span>
+                <span className="w-20 text-right">DATE</span>
               </div>
-            ) : (
-              <div>
-                <div
-                  onClick={() => handleSelectFilter(null)}
-                  className={`flex items-center justify-between px-3 py-1.5 mx-2 rounded-md cursor-pointer transition-colors text-sm ${
-                    filterStatus === null
-                      ? 'bg-emerald-500/90 text-[#111] font-medium'
-                      : 'text-slate-300 hover:bg-white/[0.06]'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 truncate min-w-0">
-                    <Inbox size={14} className={`shrink-0 ${filterStatus === null ? 'text-[#111]/60' : 'text-slate-500'}`} />
-                    <span className="truncate">所有条目</span>
+              {searchFiltered.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-20 text-slate-500">
+                  <Inbox size={24} className="opacity-30 mb-3" /><p className="text-sm">暂无条目</p>
+                </div>
+              ) : (searchFiltered.map((item) => {
+                const isActive = selectedItemId === item.id
+                return (
+                  <div key={item.id} onClick={() => onSelectItem(isActive ? null : item.id)}
+                    className={`flex items-center px-4 py-2 cursor-pointer transition-colors border-b border-[var(--border-line)]/50 ${isActive ? 'bg-[var(--accent)]/15 text-white' : 'hover:bg-white/5 text-gray-300'}`}
+                  >
+                    <span className="w-8">{statusIcon(item.status)}</span>
+                    <span className="flex-1 text-sm truncate">{item.topic || item.rawText.slice(0, 60)}</span>
+                    <span className="w-16 text-center text-xs text-[var(--text-muted)]">{STATUS_LABELS[item.status]?.label}</span>
+                    <span className="w-12 text-center text-xs text-[var(--text-muted)]">{item.sourceType}</span>
+                    <span className="w-20 text-center hidden md:block text-[10px] text-[var(--text-muted)]">
+                      {item.userTags && item.userTags.length > 0 ? item.userTags.slice(0, 2).map(t => `#${t}`).join(' ') : '-'}
+                    </span>
+                    <span className="w-20 text-right text-xs text-[var(--text-muted)]">{formatDate(item.createdAt)}</span>
                   </div>
-                  <span className="ml-2 text-[10px] opacity-60 shrink-0">{items.length}</span>
-                </div>
-                {(['pending', 'suggested', 'archived', 'reopened'] as EntryStatus[]).map(st => (
-                  counts[st] > 0 && (
-                    <div
-                      key={st}
-                      onClick={() => handleSelectFilter(st)}
-                      className={`flex items-center justify-between px-3 py-1.5 mx-2 rounded-md cursor-pointer transition-colors text-sm ${
-                        filterStatus === st
-                          ? 'bg-emerald-500/90 text-[#111] font-medium'
-                          : 'text-slate-300 hover:bg-white/[0.06]'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 truncate min-w-0">
-                        {statusIcon(st)}
-                        <span className="truncate">{STATUS_LABELS[st].label}</span>
-                      </div>
-                      <span className="ml-2 text-[10px] opacity-60 shrink-0">{counts[st]}</span>
-                    </div>
-                  )
-                ))}
-              </div>
-            )}
-          </div>
+                )
+              }))}
+            </div>
+          )}
         </div>
 
-        {/* Item column */}
-        <div className="flex-1 flex flex-col overflow-hidden min-w-0 bg-[#111]">
-          <div className="h-9 flex items-center px-4 border-b border-white/[0.06] bg-[#111] shrink-0">
-            <span className="text-[10px] text-slate-500 font-medium tracking-wide">
-              {filterStatus ? STATUS_LABELS[filterStatus].label : '所有条目'}
-            </span>
-            <span className="mx-2 text-slate-600">/</span>
-            <span className="text-[10px] text-slate-500">{filteredItems.length} 项</span>
-          </div>
-          <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden py-2">
-            {loading ? (
-              <div className="flex items-center justify-center h-32">
-                <Loader2 className="animate-spin text-slate-500" size={20} />
+        {effectiveSelectedItem && (
+          <div className="w-80 bg-[#161616] border-l border-[var(--border-line)] flex flex-col shrink-0 overflow-y-auto no-scrollbar shadow-xl">
+            <div className="flex-1 overflow-y-auto no-scrollbar p-6 flex flex-col items-center">
+              <div className="w-24 h-24 rounded-2xl bg-white/5 border border-[var(--border-line)] flex items-center justify-center mb-6 mt-4 shadow-inner">
+                <FileText size={40} className="text-[var(--node-doc)]" />
               </div>
-            ) : error ? (
-              <div className="flex items-center justify-center h-32">
-                <p className="text-red-400 text-sm">{error}</p>
-              </div>
-            ) : filteredItems.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-slate-500">
-                <Inbox size={24} className="opacity-30 mb-3" />
-                <p className="text-sm">{filterStatus ? `暂无${STATUS_LABELS[filterStatus].label}条目` : '暂无条目'}</p>
-                <button onClick={onOpenRecorder} className="mt-4 text-xs text-emerald-400 hover:underline">录入</button>
-              </div>
-            ) : (
-              <div>
-                {filteredItems.map((item) => {
-                  const isActive = selectedItemId === item.id
-                  return (
-                    <div
-                      key={item.id}
-                      onClick={() => onSelectItem(isActive ? null : item.id)}
-                      className={`flex items-center justify-between px-3 py-1.5 mx-2 rounded-md cursor-pointer transition-colors text-sm ${
-                        isActive
-                          ? 'bg-emerald-500/90 text-[#111] font-medium'
-                          : 'text-slate-300 hover:bg-white/[0.06]'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 truncate min-w-0">
-                        <FileText size={14} className={`shrink-0 ${isActive ? 'text-[#111]/60' : 'text-slate-500'}`} />
-                        <span className="truncate">{item.topic || item.rawText.slice(0, 50)}</span>
+              <h3 className="text-xl font-bold text-white text-center w-full break-words mb-1">
+                {effectiveSelectedItem.topic || effectiveSelectedItem.rawText.slice(0, 40)}
+              </h3>
+              <p className="text-xs text-[var(--text-muted)] mb-8">Document · Markdown</p>
+              <div className="w-full space-y-4 text-xs">
+                <div className="flex flex-col gap-1 border-b border-[var(--border-line)] pb-4">
+                  <span className="text-[var(--text-muted)] font-semibold tracking-wider text-[10px]">TAGS</span>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {effectiveSelectedItem.userTags && effectiveSelectedItem.userTags.length > 0 ? (
+                      effectiveSelectedItem.userTags.map(tag => (
+                        <span key={tag} className="px-2 py-0.5 bg-black/40 border border-[var(--border-line)] rounded-md text-[10px] text-[var(--text-muted)]">#{tag}</span>
+                      ))
+                    ) : (
+                      <span className="text-[10px] text-[var(--text-muted)]/50 italic">No tags</span>
+                    )}
+                    {showAddTag ? (
+                      <div className="flex items-center gap-1">
+                        <input type="text" value={addTagInput} onChange={e => setAddTagInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleAddTag() }} placeholder="tag name" className="w-16 bg-black/40 border border-[var(--border-line)] rounded px-1.5 py-0.5 text-[10px] outline-none text-white" autoFocus />
+                        <button onClick={handleAddTag} className="text-[var(--accent)] text-[10px]">Add</button>
+                        <button onClick={() => { setShowAddTag(false); setAddTagInput('') }} className="text-[var(--text-muted)] text-[10px]">✕</button>
                       </div>
-                      {item.status !== 'pending' && (
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded shrink-0 ml-2 ${isActive ? 'bg-[#111]/10 text-[#111]/70' : 'bg-white/5 text-slate-500'}`}>
-                          {STATUS_LABELS[item.status]?.label}
-                        </span>
-                      )}
-                    </div>
-                  )
-                })}
+                    ) : (
+                      <button onClick={() => setShowAddTag(true)} className="w-6 h-6 rounded-md bg-white/5 hover:bg-white/10 flex items-center justify-center text-[var(--text-muted)] hover:text-white transition-colors" title="Add Tag"><Plus size={12} /></button>
+                    )}
+                  </div>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-[var(--text-muted)] font-semibold tracking-wider text-[10px]">CREATED</span>
+                  <span className="text-gray-300">{formatDate(effectiveSelectedItem.createdAt)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-[var(--text-muted)] font-semibold tracking-wider text-[10px]">MODIFIED</span>
+                  <span className="text-gray-300">{formatDate(effectiveSelectedItem.processedAt)}</span>
+                </div>
+                <div className="flex flex-col gap-1.5 border-t border-[var(--border-line)] pt-4 mt-4">
+                  <span className="text-[var(--text-muted)] font-semibold tracking-wider text-[10px]">GRAPH CHAIN</span>
+                  <div className="text-[10px] text-blue-400 bg-blue-400/10 border border-blue-400/20 px-2 py-1.5 rounded-lg leading-relaxed">
+                    {graphChainForItem(effectiveSelectedItem.id).join(' > ')}
+                  </div>
+                </div>
               </div>
-            )}
+            </div>
+            <div className="p-4 border-t border-[var(--border-line)] bg-black/20 flex flex-col gap-2 shrink-0">
+              <button onClick={() => onOpenEditor(effectiveSelectedItem.id)} className="w-full py-2 bg-[var(--accent)] text-[#111] hover:bg-[#b097ff] font-medium text-sm rounded-lg transition-colors flex items-center justify-center gap-2">
+                <PenTool size={16} /> Edit Content
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    const mindNode = findMindNodeForItem(effectiveSelectedItem.id)
+                    if (mindNode) {
+                      onSwitchToMind()
+                      onToast(`Mind: focused on "${mindNode.label}"`)
+                    } else {
+                      onToast('No Mind node linked to this document')
+                    }
+                  }}
+                  className="flex-1 py-2 bg-white/5 hover:bg-white/10 text-white font-medium text-sm rounded-lg transition-colors flex items-center justify-center gap-2 border border-[var(--border-line)]"
+                >
+                  <Lightbulb size={16} className="text-amber-400" /> View in Graph
+                </button>
+                <button onClick={() => onSuggest(effectiveSelectedItem.id)} className="flex-1 py-2 bg-white/5 hover:bg-white/10 text-white font-medium text-sm rounded-lg transition-colors flex items-center justify-center gap-2 border border-[var(--border-line)]">
+                  <Sparkles size={16} className="text-[var(--accent)]" /> 生成建议
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
+        )}
       </div>
+    </div>
+  )
+}
 
-      {/* Right preview panel */}
-      {effectiveSelectedItem && (
-        <div className="w-80 bg-[#161616] border-l border-white/[0.06] flex flex-col shrink-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden shadow-xl">
-          <div className="flex items-center justify-between p-4 border-b border-white/[0.06]">
-            <span className={`text-[10px] px-2 py-0.5 rounded border ${STATUS_LABELS[effectiveSelectedItem.status]?.bg} ${STATUS_LABELS[effectiveSelectedItem.status]?.color}`}>
-              {STATUS_LABELS[effectiveSelectedItem.status]?.label}
-            </span>
-            <button onClick={() => onSelectItem(null)} className="p-1.5 text-slate-500 hover:text-white rounded-md hover:bg-white/10 transition-colors">
-              <X size={14} />
+function ColumnListView({ columnStack, setColumnStack, selectedColumnNode, setSelectedColumnNode, filteredRoots, loading, error, filteredItems, onSelectItem, selectedItemId: _selectedItemId, itemContent: _itemContent, onToast }: {
+  columnStack: DockTreeNode[]
+  setColumnStack: React.Dispatch<React.SetStateAction<DockTreeNode[]>>
+  selectedColumnNode: DockTreeNode | null
+  setSelectedColumnNode: React.Dispatch<React.SetStateAction<DockTreeNode | null>>
+  filteredRoots: DockTreeNode[]
+  loading: boolean
+  error: string | null
+  filteredItems: DockItem[]
+  onSelectItem: (id: number | null) => void
+  selectedItemId: number | null
+  itemContent: (item: DockItem, isActive: boolean) => React.ReactNode
+  onToast: (msg: string) => void
+}) {
+  const breadcrumbs = columnStack.map((node, idx) => ({
+    label: node.name,
+    type: node.type,
+    action: () => setColumnStack(prev => prev.slice(0, idx + 1)),
+  }))
+
+  const handleNodeClick = (node: DockTreeNode) => {
+    if (node.type === 'project' || node.type === 'folder') {
+      if (node.children.length > 0) {
+        setColumnStack(prev => [...prev, node])
+      } else {
+        onToast(`Folder "${node.name}" is empty`)
+      }
+    } else {
+      if (node.documentId != null) {
+        onSelectItem(node.documentId)
+        setSelectedColumnNode(node)
+      }
+    }
+  }
+
+  const handleRootClick = () => {
+    setColumnStack([])
+  }
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <Loader2 className="animate-spin text-slate-500" size={20} />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <p className="text-red-400 text-sm">{error}</p>
+      </div>
+    )
+  }
+
+  const filteredFileIds = new Set(filteredItems.map(i => i.id))
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="h-8 flex items-center px-4 border-b border-[var(--border-line)] shrink-0 gap-1 text-[10px] text-[var(--text-muted)] overflow-x-auto no-scrollbar">
+        <button onClick={handleRootClick} className="hover:text-white transition-colors shrink-0 font-medium">
+          All
+        </button>
+        {breadcrumbs.map((bc, idx) => (
+          <span key={idx} className="flex items-center gap-1 shrink-0">
+            <ChevronRight size={10} />
+            <button onClick={bc.action} className="hover:text-white transition-colors truncate max-w-[120px]">
+              {bc.label}
             </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex-1 flex overflow-x-auto overflow-y-hidden no-scrollbar">
+        <div className="finder-column overflow-y-auto no-scrollbar py-1 border-r border-[var(--border-line)] shrink-0 w-56">
+          <div className="h-7 flex items-center px-3 text-[9px] text-[var(--text-muted)] font-medium tracking-wide uppercase">
+            Roots
+            <span className="ml-auto">{filteredRoots.length} items</span>
           </div>
-          <div className="flex-1 p-6 flex flex-col items-center">
-            <div className="w-24 h-24 rounded-2xl bg-white/5 border border-white/[0.06] flex items-center justify-center mb-6 mt-4 shadow-inner">
-              <FileText size={40} className="text-indigo-400/60" />
-            </div>
-            <h3 className="text-lg font-bold text-white text-center w-full break-words mb-1">
-              {effectiveSelectedItem.topic || effectiveSelectedItem.rawText.slice(0, 40)}
-            </h3>
-            <p className="text-xs text-slate-500 mb-8">Document · Markdown</p>
-            <div className="w-full space-y-4 text-xs">
-              <div className="flex flex-col gap-1 border-b border-white/[0.06] pb-4">
-                <span className="text-slate-500 font-semibold tracking-wider text-[10px]">内容摘要</span>
-                <p className="text-slate-400 leading-relaxed line-clamp-4 whitespace-pre-wrap">{effectiveSelectedItem.rawText}</p>
-              </div>
-              <div className="flex flex-col gap-2 border-b border-white/[0.06] pb-4">
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-500 font-semibold tracking-wider text-[10px]">创建时间</span>
-                  <span className="text-slate-400">{formatDate(effectiveSelectedItem.createdAt)}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-500 font-semibold tracking-wider text-[10px]">处理时间</span>
-                  <span className="text-slate-400">{formatDate(effectiveSelectedItem.processedAt)}</span>
-                </div>
-              </div>
-              <div className="flex flex-col gap-1 border-b border-white/[0.06] pb-4">
-                <span className="text-slate-500 font-semibold tracking-wider text-[10px]">操作</span>
-                <div className="flex flex-col gap-2 mt-1">
-                  {effectiveSelectedItem.status === 'pending' && (
-                    <button onClick={() => onSuggest(effectiveSelectedItem.id)} className="text-left text-slate-400 hover:text-white transition-colors flex items-center gap-2 text-[11px]">
-                      <ChevronRight size={12} /> 建议
-                    </button>
+          {filteredRoots.length === 0 ? (
+            <div className="px-3 py-4 text-[10px] text-[var(--text-muted)]">Empty</div>
+          ) : (
+            filteredRoots.map(node => {
+              const isActive = selectedColumnNode?.id === node.id
+              return (
+                <div
+                  key={node.id}
+                  onClick={() => handleNodeClick(node)}
+                  className={`flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors text-sm ${isActive ? 'bg-[var(--accent)]/15 text-white' : 'text-gray-300 hover:bg-white/5 hover:text-white'}`}
+                >
+                  {node.type === 'project' ? <Folder size={14} className="text-[var(--node-domain)] shrink-0" />
+                    : node.type === 'folder' ? <Folder size={14} className="text-blue-400 shrink-0" />
+                    : <FileText size={14} className="text-[var(--node-doc)] shrink-0" />}
+                  <span className="truncate text-xs">{node.name}</span>
+                  {node.type !== 'file' && node.children.length > 0 && (
+                    <ChevronRight size={12} className="ml-auto text-[var(--text-muted)] shrink-0" />
                   )}
-                  {(effectiveSelectedItem.status === 'suggested' || effectiveSelectedItem.status === 'reopened') && (
-                    <button onClick={() => onArchive(effectiveSelectedItem.id)} className="text-left text-slate-400 hover:text-white transition-colors flex items-center gap-2 text-[11px]">
-                      <ChevronRight size={12} /> 归档
-                    </button>
-                  )}
-                  {effectiveSelectedItem.status === 'archived' && (
-                    <button onClick={() => onReopen(effectiveSelectedItem.id)} className="text-left text-slate-400 hover:text-white transition-colors flex items-center gap-2 text-[11px]">
-                      <ChevronRight size={12} /> 重新打开
-                    </button>
-                  )}
-                  <button onClick={() => onOpenEditor(effectiveSelectedItem.id)} className="text-left bg-emerald-500/90 hover:bg-emerald-500 text-[#111] transition-colors flex items-center gap-2 text-[11px] font-medium px-3 py-1.5 rounded-md mt-1">
-                    <ChevronRight size={12} /> 在编辑器中打开
-                  </button>
                 </div>
-              </div>
-            </div>
-          </div>
+              )
+            })
+          )}
         </div>
-      )}
+        {columnStack.map((colNode, _colIdx) => (
+          <div key={colNode.id} className="finder-column overflow-y-auto no-scrollbar py-1 border-r border-[var(--border-line)] shrink-0 w-56">
+            <div className="h-7 flex items-center px-3 text-[9px] text-[var(--text-muted)] font-medium tracking-wide uppercase">
+              {colNode.type}
+              <span className="ml-auto">{colNode.children.length} items</span>
+            </div>
+            {colNode.children.length === 0 ? (
+              <div className="px-3 py-4 text-[10px] text-[var(--text-muted)]">Empty</div>
+            ) : (
+              colNode.children.map(child => {
+                const isActive = selectedColumnNode?.id === child.id
+                const filtered = child.type === 'file' && child.documentId != null && !filteredFileIds.has(child.documentId)
+                return (
+                  <div
+                    key={child.id}
+                    onClick={() => handleNodeClick(child)}
+                    className={`flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors text-sm ${isActive ? 'bg-[var(--accent)]/15 text-white' : filtered ? 'text-[var(--text-muted)]/30' : 'text-gray-300 hover:bg-white/5 hover:text-white'}`}
+                  >
+                    {child.type === 'project' ? <Folder size={14} className="text-[var(--node-domain)] shrink-0" />
+                      : child.type === 'folder' ? <Folder size={14} className="text-blue-400 shrink-0" />
+                      : <FileText size={14} className="text-[var(--node-doc)] shrink-0" />}
+                    <span className="truncate text-xs">{child.name}</span>
+                    {child.type !== 'file' && child.children.length > 0 && (
+                      <ChevronRight size={12} className="ml-auto text-[var(--text-muted)] shrink-0" />
+                    )}
+                  </div>
+                )
+              })
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -1000,5 +1621,150 @@ function FloatingRecorder({ recorderState, setRecorderState, inputMode, setInput
         </div>
       </div>
     </div>
+  )
+}
+
+// NOTE: NebulaBackground is a PASSIVE derived background for Home/Dock views.
+// It is NOT the same engine as MindCanvasStage — it uses a simplified layout
+// and separate canvas. A shared engine unification is planned for a future round.
+// Decision: Round 35 chose Option B (degraded) — see dev log for rationale.
+// This is explicitly NOT "same engine" — it's a visual approximation.
+function NebulaBackground({ activeModule, mindNodes, mindEdges }: { activeModule: string; mindNodes: StoredMindNode[]; mindEdges: StoredMindEdge[] }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const animRef = useRef<number>(0)
+  const dataRef = useRef<{ nodes: { id: string; x: number; y: number; r: number; type: string; label: string }[]; edges: { sourceId: string; targetId: string; edgeType: string }[] }>({ nodes: [], edges: [] })
+
+  useEffect(() => {
+    const rootNodes = mindNodes.filter(n => n.nodeType === 'root')
+    const domainNodes = mindNodes.filter(n => n.nodeType === 'domain' || n.nodeType === 'project')
+    const leafNodes = mindNodes.filter(n => n.nodeType !== 'root' && n.nodeType !== 'domain' && n.nodeType !== 'project')
+
+    const bgNodes: { id: string; x: number; y: number; r: number; type: string; label: string }[] = []
+    const cx = 0
+    const cy = 0
+
+    if (rootNodes.length > 0) {
+      bgNodes.push({ id: rootNodes[0].id, x: cx, y: cy, r: 5, type: 'root', label: rootNodes[0].label })
+    } else if (domainNodes.length > 0) {
+      bgNodes.push({ id: '__wt_root__', x: cx, y: cy, r: 5, type: 'root', label: 'World Tree' })
+    }
+
+    domainNodes.forEach((n, i) => {
+      const angle = (i / Math.max(domainNodes.length, 1)) * Math.PI * 2
+      const dist = 120 + (n.degreeScore || 3) * 10
+      bgNodes.push({ id: n.id, x: cx + Math.cos(angle) * dist, y: cy + Math.sin(angle) * dist, r: 3, type: n.nodeType, label: n.label })
+    })
+
+    leafNodes.slice(0, 50).forEach((n, i) => {
+      const domainIdx = i % Math.max(domainNodes.length, 1)
+      const domain = domainNodes[domainIdx]
+      const parent = domain ? bgNodes.find(bn => bn.id === domain.id) : bgNodes[0]
+      const bx = parent ? parent.x : cx
+      const by = parent ? parent.y : cy
+      const angle = (i / Math.max(leafNodes.length, 1)) * Math.PI * 2 * 3
+      const dist = 35 + (i % 5) * 14
+      bgNodes.push({ id: n.id, x: bx + Math.cos(angle) * dist, y: by + Math.sin(angle) * dist, r: 1.5, type: n.nodeType, label: n.label })
+    })
+
+    const nodeIdSet = new Set(bgNodes.map(n => n.id))
+    const bgEdges = mindEdges.filter(e => nodeIdSet.has(e.sourceNodeId) && nodeIdSet.has(e.targetNodeId)).map(e => ({ sourceId: e.sourceNodeId, targetId: e.targetNodeId, edgeType: e.edgeType }))
+
+    dataRef.current = { nodes: bgNodes, edges: bgEdges }
+  }, [mindNodes, mindEdges])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const dpr = window.devicePixelRatio || 1
+    const resize = () => {
+      canvas.width = window.innerWidth * dpr
+      canvas.height = window.innerHeight * dpr
+      canvas.style.width = `${window.innerWidth}px`
+      canvas.style.height = `${window.innerHeight}px`
+    }
+    resize()
+    window.addEventListener('resize', resize)
+
+    const draw = () => {
+      const data = dataRef.current
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.save()
+      ctx.scale(dpr, dpr)
+
+      const cx = window.innerWidth / 2
+      const cy = window.innerHeight / 2
+      const t = Date.now() * 0.0003
+
+      for (let ring = 1; ring <= 3; ring++) {
+        const r = ring * 130
+        ctx.beginPath()
+        ctx.arc(cx, cy, r, 0, Math.PI * 2)
+        ctx.strokeStyle = `rgba(167,139,250,${0.02 / ring})`
+        ctx.lineWidth = 0.5
+        ctx.setLineDash([3, 8])
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
+
+      const nodeMap = new Map(data.nodes.map(n => [n.id, n]))
+
+      data.edges.forEach(e => {
+        const src = nodeMap.get(e.sourceId)
+        const tgt = nodeMap.get(e.targetId)
+        if (!src || !tgt) return
+        const sx = cx + src.x
+        const sy = cy + src.y
+        const tx = cx + tgt.x
+        const ty = cy + tgt.y
+        const isStructural = e.edgeType === 'parent_child'
+        ctx.beginPath()
+        ctx.moveTo(sx, sy)
+        ctx.lineTo(tx, ty)
+        ctx.strokeStyle = isStructural ? 'rgba(167,139,250,0.06)' : 'rgba(110,231,183,0.03)'
+        ctx.lineWidth = isStructural ? 0.8 : 0.4
+        ctx.stroke()
+      })
+
+      data.nodes.forEach(n => {
+        const nx = cx + n.x + Math.sin(t + n.x * 0.01) * 2
+        const ny = cy + n.y + Math.cos(t + n.y * 0.01) * 2
+        const color = n.type === 'root' ? 'rgba(196,181,253,' : n.type === 'domain' || n.type === 'project' ? 'rgba(139,92,246,' : n.type === 'document' ? 'rgba(110,231,183,' : 'rgba(167,139,250,'
+        const glowR = n.r * 3
+        const gradient = ctx.createRadialGradient(nx, ny, 0, nx, ny, glowR)
+        gradient.addColorStop(0, color + '0.3)')
+        gradient.addColorStop(1, color + '0)')
+        ctx.beginPath()
+        ctx.arc(nx, ny, glowR, 0, Math.PI * 2)
+        ctx.fillStyle = gradient
+        ctx.fill()
+
+        ctx.beginPath()
+        ctx.arc(nx, ny, n.r, 0, Math.PI * 2)
+        ctx.fillStyle = color + '0.5)'
+        ctx.fill()
+      })
+
+      ctx.restore()
+      animRef.current = requestAnimationFrame(draw)
+    }
+
+    animRef.current = requestAnimationFrame(draw)
+    return () => {
+      cancelAnimationFrame(animRef.current)
+      window.removeEventListener('resize', resize)
+    }
+  }, [activeModule])
+
+  const opacity = activeModule === 'editor' ? 0 : activeModule === 'mind' ? 0 : 0.7
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-0 w-full h-full pointer-events-none"
+      style={{ opacity, transition: 'opacity 0.6s ease' }}
+    />
   )
 }

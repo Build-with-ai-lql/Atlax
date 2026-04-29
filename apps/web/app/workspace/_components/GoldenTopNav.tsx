@@ -58,6 +58,10 @@ interface GoldenTopNavProps {
   user: LocalUser
   onLogout?: () => void
   isCollapsed?: boolean
+  onCollapseRequest?: () => void
+  onExpandRequest?: () => void
+  onToast?: (msg: string) => void
+  onSearchAction?: (label: string) => void
 }
 
 const GoldenTopNav: FC<GoldenTopNavProps> = ({
@@ -67,9 +71,21 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
   user,
   onLogout,
   isCollapsed: isCollapsedProp,
+  onCollapseRequest: _onCollapseRequest,
+  onExpandRequest,
+  onToast,
+  onSearchAction,
 }) => {
-  const [internalCollapsed, setInternalCollapsed] = useState(false)
-  const isCollapsed = isCollapsedProp ?? internalCollapsed
+  const [internalCollapsed, setInternalCollapsed] = useState<boolean | null>(null)
+  const isCollapsed = internalCollapsed !== null ? internalCollapsed : (isCollapsedProp ?? false)
+
+  useEffect(() => {
+    if (isCollapsedProp) {
+      setInternalCollapsed(true)
+    } else if (activeModule !== 'editor') {
+      setInternalCollapsed(null)
+    }
+  }, [isCollapsedProp, activeModule])
   const [isSearchMode, setIsSearchMode] = useState(false)
   const [isAccountOpen, setIsAccountOpen] = useState(false)
   const [navPosition, setNavPosition] = useState({ left: 50, top: 24, isPercentLeft: true })
@@ -83,20 +99,48 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
   } | null>(null)
   const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 })
   const justDraggedRef = useRef(false)
+  const justExpandedRef = useRef(false)
 
   useEffect(() => {
+    const sidebarWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width') || '0', 10)
     if (isCollapsed) {
-      setNavPosition({ left: 16, top: 4, isPercentLeft: false })
+      setNavPosition({ left: sidebarWidth + 16, top: 4, isPercentLeft: false })
     } else {
-      setNavPosition({ left: 50, top: 24, isPercentLeft: true })
+      if (sidebarWidth > 0) {
+        setNavPosition({ left: sidebarWidth + (window.innerWidth - sidebarWidth) / 2, top: 24, isPercentLeft: false })
+      } else {
+        setNavPosition({ left: 50, top: 24, isPercentLeft: true })
+      }
     }
   }, [isCollapsed])
 
   useEffect(() => {
-    if (activeModule !== 'editor' && navPosition.isPercentLeft === false && !isCollapsed) {
-      setNavPosition({ left: 50, top: 24, isPercentLeft: true })
+    const observer = new MutationObserver(() => {
+      const sidebarWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width') || '0', 10)
+      if (isCollapsed) {
+        setNavPosition(prev => prev.isPercentLeft ? prev : { ...prev, left: sidebarWidth + 16 })
+      } else {
+        if (sidebarWidth > 0) {
+          setNavPosition({ left: sidebarWidth + (window.innerWidth - sidebarWidth) / 2, top: 24, isPercentLeft: false })
+        } else {
+          setNavPosition({ left: 50, top: 24, isPercentLeft: true })
+        }
+      }
+    })
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] })
+    return () => observer.disconnect()
+  }, [isCollapsed])
+
+  useEffect(() => {
+    if (!isCollapsed) {
+      const sidebarWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width') || '0', 10)
+      if (sidebarWidth > 0) {
+        setNavPosition({ left: sidebarWidth + (window.innerWidth - sidebarWidth) / 2, top: 24, isPercentLeft: false })
+      } else {
+        setNavPosition({ left: 50, top: 24, isPercentLeft: true })
+      }
     }
-  }, [activeModule, isCollapsed, navPosition.isPercentLeft])
+  }, [activeModule, isCollapsed])
 
   const navRef = useRef<HTMLElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
@@ -150,7 +194,7 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
 
   const navStyle = useMemo(() => {
     const left = navPosition.isPercentLeft ? `${navPosition.left}%` : `${navPosition.left}px`
-    const transform = navPosition.isPercentLeft ? 'translateX(-50%)' : 'translateX(0)'
+    const transform = isCollapsed ? 'translateX(0)' : 'translateX(-50%)'
     return {
       top: `${navPosition.top}px`,
       left,
@@ -158,7 +202,7 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
       height: '48px',
       whiteSpace: 'nowrap' as const,
     }
-  }, [navPosition])
+  }, [navPosition, isCollapsed])
 
   const handleLogoPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
     if (!isCollapsed) return
@@ -199,9 +243,11 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
       if (isSearchMode) {
         setIsSearchMode(false)
       } else if (isCollapsedProp) {
-        onModuleChange('home')
-      } else {
         setInternalCollapsed(false)
+        onExpandRequest?.()
+        justExpandedRef.current = true
+        setTimeout(() => { justExpandedRef.current = false }, 300)
+      } else {
         onModuleChange('home')
       }
     }
@@ -210,6 +256,7 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
 
   const handleLogoClick = () => {
     if (justDraggedRef.current) return
+    if (justExpandedRef.current) return
     if (isCollapsed) return
     if (isSearchMode) {
       setIsSearchMode(false)
@@ -239,9 +286,9 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
             isCollapsed ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
           }`}
           style={{ touchAction: isCollapsed ? 'none' : 'auto' }}
-          title={isCollapsed ? 'Drag to move / Click to return Home' : 'Return Home'}
+          title={isCollapsed ? 'Drag to move / Click to expand' : 'Return Home'}
         >
-          <Brain className="h-5 w-5 pointer-events-none text-emerald-400" />
+          <Brain className="h-5 w-5 pointer-events-none text-slate-200" />
         </button>
 
         <div
@@ -395,7 +442,7 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
               {suggestion.section && (!SEARCH_SUGGESTIONS[idx - 1]?.section || SEARCH_SUGGESTIONS[idx - 1].section !== suggestion.section) && (
                 <div className="px-3 py-2 text-[10px] font-bold tracking-wider text-[var(--text-muted)] uppercase">{suggestion.section}</div>
               )}
-              <button className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-white transition-colors hover:bg-white/10">
+              <button onClick={() => { setIsSearchMode(false); if (onSearchAction) { onSearchAction(suggestion.label) } else { onToast?.(`Search: ${suggestion.label}`) } }} className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-white transition-colors hover:bg-white/10">
                 <Icon className={`h-4 w-4 pointer-events-none ${toneClasses[suggestion.tone]}`} />
                 {suggestion.label}
               </button>
@@ -420,19 +467,19 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
           <p className="text-sm font-medium text-white">{user.name}</p>
           <p className="text-xs text-[var(--text-muted)] mt-0.5">Pro Plan</p>
         </div>
-        <button className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-white transition-colors hover:bg-white/10">
+        <button onClick={() => onToast?.('Account management coming soon')} className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-white transition-colors hover:bg-white/10">
           <User className="h-4 w-4 text-slate-400" />
           Account Mgmt
         </button>
-        <button className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-white transition-colors hover:bg-white/10">
+        <button onClick={() => onToast?.('Subscription management coming soon')} className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-white transition-colors hover:bg-white/10">
           <CreditCard className="h-4 w-4 text-slate-400" />
           Subscription
         </button>
-        <button className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-white transition-colors hover:bg-white/10">
+        <button onClick={() => onToast?.('Settings page coming soon')} className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-white transition-colors hover:bg-white/10">
           <Settings className="h-4 w-4 text-slate-400" />
           Settings
         </button>
-        <button className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-[var(--text-muted)] transition-colors hover:text-white hover:bg-white/10">
+        <button onClick={() => onToast?.('Feedback form coming soon')} className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-[var(--text-muted)] transition-colors hover:text-white hover:bg-white/10">
           <MessageSquare className="h-4 w-4" />
           Feedback
         </button>
