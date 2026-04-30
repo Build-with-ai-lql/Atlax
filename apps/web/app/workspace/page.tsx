@@ -6,8 +6,10 @@ import { Send, Minimize2, Sparkles, Loader2, MoreHorizontal, LayoutList, FileCod
 import { getCurrentUser, registerUser, logoutUser, type LocalUser } from '@/lib/auth'
 import GoldenTopNav from './_components/GoldenTopNav'
 import {
+  addTagToItem,
   archiveItem,
   createDockItem,
+  getOrCreateTag,
   listDockItems,
   listMindNodes,
   listMindEdges,
@@ -299,6 +301,21 @@ export default function WorkspacePage() {
       refreshAll()
     } catch (e) {
       setError(e instanceof Error ? e.message : '重新打开失败')
+    }
+  }, [userId, refreshAll])
+
+  const handleAddTag = useCallback(async (itemId: number, tagName: string) => {
+    if (!userId) throw new Error('未登录，无法添加标签')
+    const trimmed = tagName.trim()
+    if (!trimmed) throw new Error('标签名不能为空')
+    try {
+      const updated = await addTagToItem(userId, itemId, trimmed)
+      if (!updated) throw new Error(`添加标签失败：Dock item #${itemId} 不存在`)
+      await getOrCreateTag(userId, trimmed)
+      refreshAll()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '添加标签失败')
+      throw e
     }
   }, [userId, refreshAll])
 
@@ -819,6 +836,7 @@ export default function WorkspacePage() {
               selectedItem={selectedItem}
               onToast={showToast}
               onSwitchToMind={handleSwitchToMind}
+              onAddTag={handleAddTag}
               graphChainForItem={(id: number) => workspaceMapping.getGraphChainForDockItem(id)}
               findMindNodeForItem={(id: number) => workspaceMapping.findMindNodeByDockItem(id)}
               initialProjectFilter={sharedProjectFilter}
@@ -907,7 +925,7 @@ function EditorOptionsMenu({ mode, onSetMode, onToast }: { mode: 'classic' | 'bl
   )
 }
 
-function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, onSuggest, onOpenEditor, onOpenRecorder, selectedItem, onToast, onSwitchToMind, graphChainForItem, findMindNodeForItem, initialProjectFilter, initialTagFilter, initialDockSearch, onProjectFilterChange, onTagFilterChange, onDockSearchChange, externalMockNodes }: {
+function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, onSuggest, onOpenEditor, onOpenRecorder, selectedItem, onToast, onSwitchToMind, onAddTag, graphChainForItem, findMindNodeForItem, initialProjectFilter, initialTagFilter, initialDockSearch, onProjectFilterChange, onTagFilterChange, onDockSearchChange, externalMockNodes }: {
   items: DockItem[]
   selectedItemId: number | null
   loading: boolean
@@ -921,6 +939,7 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
   selectedItem: DockItem | null
   onToast: (msg: string) => void
   onSwitchToMind: () => void
+  onAddTag: (id: number, tagName: string) => Promise<void>
   graphChainForItem: (id: number) => string[]
   findMindNodeForItem: (id: number) => StoredMindNode | null
   initialProjectFilter: string | null
@@ -939,6 +958,7 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [addTagInput, setAddTagInput] = useState('')
   const [showAddTag, setShowAddTag] = useState(false)
+  const [addingTag, setAddingTag] = useState(false)
   const [columnStack, setColumnStack] = useState<DockTreeNode[]>([])
   const [selectedColumnNode, setSelectedColumnNode] = useState<DockTreeNode | null>(null)
   const [mockTreeNodes, setMockTreeNodes] = useState<DockTreeNode[]>([])
@@ -1158,11 +1178,30 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
     }
   }
 
-  const handleAddTag = () => {
-    if (addTagInput.trim()) {
-      onToast(`Tag "#${addTagInput.trim()}" added (mock)`)
+  const handleAddTag = async () => {
+    const trimmed = addTagInput.trim()
+    if (!trimmed || !effectiveSelectedItem) return
+
+    const isDuplicate = effectiveSelectedItem.userTags?.some(
+      (t) => t.toLowerCase() === trimmed.toLowerCase()
+    )
+    if (isDuplicate) {
+      onToast(`Tag "#${trimmed}" already exists`)
       setAddTagInput('')
       setShowAddTag(false)
+      return
+    }
+
+    setAddingTag(true)
+    try {
+      await onAddTag(effectiveSelectedItem.id, trimmed)
+      onToast(`Tag "#${trimmed}" added`)
+      setAddTagInput('')
+      setShowAddTag(false)
+    } catch {
+      onToast('Failed to add tag')
+    } finally {
+      setAddingTag(false)
     }
   }
 
@@ -1380,9 +1419,9 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
                     )}
                     {showAddTag ? (
                       <div className="flex items-center gap-1">
-                        <input type="text" value={addTagInput} onChange={e => setAddTagInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleAddTag() }} placeholder="tag name" className="w-16 bg-black/40 border border-[var(--border-line)] rounded px-1.5 py-0.5 text-[10px] outline-none text-white" autoFocus />
-                        <button onClick={handleAddTag} className="text-[var(--accent)] text-[10px]">Add</button>
-                        <button onClick={() => { setShowAddTag(false); setAddTagInput('') }} className="text-[var(--text-muted)] text-[10px]">✕</button>
+                        <input type="text" value={addTagInput} onChange={e => setAddTagInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !addingTag) handleAddTag() }} placeholder="tag name" disabled={addingTag} className="w-16 bg-black/40 border border-[var(--border-line)] rounded px-1.5 py-0.5 text-[10px] outline-none text-white disabled:opacity-50" autoFocus />
+                        <button onClick={handleAddTag} disabled={addingTag || !addTagInput.trim()} className="text-[var(--accent)] text-[10px] disabled:opacity-50">{addingTag ? '...' : 'Add'}</button>
+                        <button onClick={() => { setShowAddTag(false); setAddTagInput('') }} disabled={addingTag} className="text-[var(--text-muted)] text-[10px] disabled:opacity-50">✕</button>
                       </div>
                     ) : (
                       <button onClick={() => setShowAddTag(true)} className="w-6 h-6 rounded-md bg-white/5 hover:bg-white/10 flex items-center justify-center text-[var(--text-muted)] hover:text-white transition-colors" title="Add Tag"><Plus size={12} /></button>

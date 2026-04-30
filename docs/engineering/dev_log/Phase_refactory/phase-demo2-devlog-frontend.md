@@ -9,6 +9,72 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Round 40 -->
+<!-- ============================================ -->
+
+## Phase Refactory Round 40 devlog -- Dock Add Tag 接入真实 API
+
+**时间戳**: 2026-05-01
+
+**任务起止时间**: 01:00 ~ 01:20
+
+**工时**: 20 分钟
+
+**任务目标**: 将 Dock Detail Panel 的 Add Tag 交互从 mock/Toast 级别反馈接入真实本地数据能力，使用户添加的标签能够写入当前记录（IndexedDB），并在刷新页面后仍然存在。
+
+**改动文件及行数**:
+- `apps/web/app/workspace/page.tsx` | M | +35 行（导入 addTagToItem/getOrCreateTag、新增 handleAddTag 回调含 null 检查与 throw、DockFinderView 新增 onAddTag prop、替换 mock handleAddTag 为真实 API 调用、添加 addingTag loading 状态、重复/空值/trim 校验、UI disabled 状态、失败时保留输入内容不关闭输入框）
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 |
+|------|---------|
+| DockFinderView 中 handleAddTag 为 mock 实现，仅 Toast 不写入数据 | 替换为调用 onAddTag prop → addTagToItem + getOrCreateTag → refreshAll 刷新 UI |
+| 重复 tag 会重复写入 | 在 handleAddTag 中前置 isDuplicate 检查（大小写不敏感），addTagToItem 内部也有 dedupeTagNames 兜底 |
+| 空字符串或纯空格会写入无效 tag | handleAddTag 中 trimmed 为空直接 return，addTagToItem 内部 normalizeTagName 也会过滤空值 |
+| 添加过程中用户可重复点击 | 新增 addingTag 状态，输入框和按钮添加 disabled 逻辑 |
+| **Review 修复**：父级 handleAddTag 吞掉错误，catch 后不 throw | catch 中 setError 后 re-throw e，让错误传播到子组件 |
+| **Review 修复**：addTagToItem 返回 null 时未视为失败 | `const updated = await addTagToItem(...)` → `if (!updated) throw new Error(...)` |
+| **Review 修复**：无 userId 时静默 return | 改为 `throw new Error('未登录，无法添加标签')` |
+| **Review 修复**：写入失败时清空输入框并关闭，显示成功 | 子级 catch 中只 toast 'Failed to add tag'，不清空输入、不关闭输入框；成功路径（try 内）才清空+关闭 |
+
+**自动验证结果**:
+| 检查项 | 结果 |
+|--------|------|
+| `git diff --check` | ✅ (exit 0) |
+| `git diff --cached --check` | ✅ (exit 0) |
+| `pnpm --dir apps/web typecheck` | ✅ (0 errors) |
+| `pnpm --dir apps/web lint` | ✅ (0 errors, 1 pre-existing warning: `no-img-element`) |
+
+**手工验证步骤说明**:
+1. 启动项目并打开 /workspace
+2. 进入 Dock 区域
+3. 打开任意 Dock item 的 Detail Panel（右侧面板）
+4. 点击 + 按钮添加 Tag
+5. 输入 "test-tag"，按 Enter 或点击 Add
+6. 标签应立即显示在当前 Dock item 的 TAGS 区域
+7. 刷新页面，再次打开同一个 Dock item，test-tag 仍然存在
+8. 再次添加 "test-tag"，应提示 "already exists" 且不重复写入
+9. 输入空字符串或纯空格，不应写入标签
+10. 模拟写入失败时：输入框保留内容，不关闭，toast 显示 "Failed to add tag"
+11. Home / Mind / Editor 主流程不应受影响
+
+**复用的 repository / service / IndexedDB API**:
+- `addTagToItem(userId, id, tagName)` — repository.ts:524，将 tag 写入 DockItem.userTags 并持久化到 IndexedDB dockItems 表
+- `getOrCreateTag(userId, name)` — repository.ts:581，确保 tag 存在于 IndexedDB tags 表（用于全局标签索引）
+- `normalizeTagName` / `dedupeTagNames` — @atlax/domain tag-service.ts，标签名规范化和去重
+
+**是否新增了 API**: 否。完全复用现有 repository 函数。
+
+**当前风险及影响范围**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| 无新增风险 | - | 仅替换 mock 为真实 API 调用，数据流与现有 archive/suggest/reopen 一致 |
+| Dock project/folder CRUD 为 mock-only，刷新丢失 | 中 | 需后端 schema + BFF API（Round 39 遗留） |
+| Mind node/edge 完整 CRUD 部分可用 | 低 | 需 delete/update API（Round 39 遗留） |
+
+---
+
+<!-- ============================================ -->
 <!-- 分割线：Round 39 -->
 <!-- ============================================ -->
 
