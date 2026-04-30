@@ -9,6 +9,99 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Round 44 -->
+<!-- ============================================ -->
+
+## Phase Refactory Round 44 devlog -- Floating Chat 从 Mock 收敛为本地 Assistant
+
+**时间戳**: 2026-05-01
+
+**任务起止时间**: 03:15 ~ 03:45
+
+**工时**: 30 分钟（含 review 修复）
+
+**任务目标**: 将 Floating Chat 从 mock reply / hardcoded AI response 收敛为本地 Assistant。保留 Floating Chat 入口和面板，移除所有伪 AI 自然语言 mock 回复，替换为基于本地数据、关键词规则、已有 tags、内容相似度的有限但真实的本地 Assistant 能力。
+
+**改动文件及行数**:
+- `apps/web/lib/local-assistant.ts` | A | +490 行（新增 - LocalAssistant service：意图识别 detectIntent、本地搜索 handleSearch、标签建议 handleTagSuggest、相关内容推荐 handleRelated、整理建议 handleOrganize、能力边界提示 OUT_OF_SCOPE_REPLY、processLocalAssistantQuery 入口函数）
+- `apps/web/app/workspace/_components/FloatingChatPanel.tsx` | M | +60/-50 行（移除 MOCK_REPLIES 字典和 DEFAULT_REPLY 兜底字符串、移除模拟延迟 setTimeout、移除 mock 功能按钮 Attach file / Model settings / Voice input、替换 handleSend/handlePromptClick 为 processLocalAssistantQuery 调用、新增 userId prop、更新欢迎界面标题和描述、替换快捷提示词为本地能力入口、更新输入区标签为 Local Assistant / 本地模式、Thinking... 改为 Searching...）
+- `apps/web/app/workspace/page.tsx` | M | +1 行（FloatingChatPanel 新增 userId={userId} prop 传入）
+- `apps/web/tests/local-assistant.test.ts` | A | +110 行（新增 - 13 个测试用例覆盖 detectIntent / extractSearchQuery / handleSearch / processLocalAssistantQuery）
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 |
+|------|---------|
+| MOCK_REPLIES 硬编码 4 条英文伪 AI 回复 + DEFAULT_REPLY 兜底 | 完全移除，替换为 processLocalAssistantQuery 调用 |
+| handleSend / handlePromptClick 使用 setTimeout 模拟 AI 延迟 | 替换为 async/await 调用 LocalAssistant，无模拟延迟 |
+| Mock 功能按钮（Attach file / Model settings / Voice input）仅 Toast | 移除这些按钮，替换为"本地模式"标签 |
+| repository.ts 导出类型名不一致（PersistedEntry vs StoredEntry） | 使用 repository.ts 实际导出的类型别名 DockItem / StoredEntry |
+| Map.entries() spread 在 TypeScript target < es2015 下报错 | 使用 Array.from(map.entries()) 替代 [...map.entries()] |
+| DockItem / StoredEntry 联合类型断言 TS2352 错误 | 使用 'sourceType' in recentItem 区分类型 + unknown 中间转换 |
+| recentTags.some(rt => ...) 隐式 any 类型 | 显式标注 (rt: string) |
+| handleTagSuggest / handleRelated 的 input 参数未使用 | 改为 _input 前缀 |
+| handleRelated 中 tags / entryTagRelations 解构后未使用 | 移除未使用的 Promise.all 项 |
+| **[Review 修复]** 本地搜索不匹配真实标签 | handleSearch 中分别计算 topicMatch / rawTextMatch / tagMatch，Dock item 匹配 item.userTags，Archived entry 匹配 entry.tags，matchedField 新增 'tag' 类型，文案显示"标签匹配" |
+| **[Review 修复]** Dock topic 匹配不可达 | 原逻辑 `matchText(query, item.rawText)` 先判断 rawText，若 rawText 命中则 topic 判断被短路。修复为分别计算三个 match 标志，任一命中即返回结果，优先级：topic > tag > rawText |
+| **[Review 修复]** 缺少单测 | 新增 local-assistant.test.ts，13 个测试用例覆盖 4 个场景：搜索 Dock userTag / 搜索 entry tag / 搜索 topic / out-of-scope |
+
+**自动验证结果**:
+| 检查项 | 结果 |
+|--------|------|
+| `git diff --check` | ✅ (exit 0) |
+| `git diff --cached --check` | ✅ (exit 0) |
+| `pnpm --dir apps/web typecheck` | ✅ (0 errors) |
+| `pnpm --dir apps/web lint` | ✅ (0 errors, 1 pre-existing warning: `no-img-element`) |
+| `pnpm --dir apps/web test -- local-assistant` | ✅ (13 tests passed, 299 total) |
+| `pnpm --dir apps/web build` | ✅ (9 pages generated, workspace 46.5 kB) |
+
+**手工验证步骤说明**:
+1. 启动项目并打开 /workspace
+2. 打开 Floating Chat（hover 右下角 + 点击）
+3. 输入"搜索 test"或本地已存在关键词 → 系统返回本地搜索结果或明确空状态，不能返回伪 AI 回答
+4. 创建/添加真实 tag 后，输入"搜索 <tag>" → 能返回对应本地内容，并显示"标签匹配"原因
+5. 输入"推荐标签" → 如果当前有内容，系统返回基于标题/内容/已有 tags 的标签建议；如果没有内容，系统明确提示需要先添加内容
+6. 输入"推荐相关内容" → 系统返回本地相关条目或明确空状态，并说明相关原因
+7. 输入"整理" → 系统返回结构化整理建议（归档/标签/项目）
+8. 输入"帮我写一篇文章"或其他超出范围的开放式 AI 请求 → 系统返回能力边界提示，不生成伪 AI 内容
+9. 刷新页面后 Floating Chat 仍可正常打开
+10. Floating Recorder Classic 仍然可用
+11. 控制台不应出现新增错误
+12. Home / Mind / Dock / Editor / Tabs 主流程不应受影响
+
+**复用的 repository / service / IndexedDB API**:
+- `listDockItems(userId)` — repository.ts:224，列出用户所有 Dock 条目
+- `listArchivedEntries(userId)` — repository.ts:247，列出所有已归档条目
+- `listTags(userId)` — repository.ts:556，列出用户所有标签
+- `listEntryTagRelations(userId)` — repository.ts:989，列出所有 Entry-Tag 关系
+- `listCollections(userId)` — repository.ts:943，列出用户所有集合
+- `RULES.tag` — suggestion-engine.ts:35，TAG_RULES 关键词匹配规则
+
+**是否新增 LocalAssistant service**: 是。
+- 文件：`apps/web/lib/local-assistant.ts`
+- 职责：意图识别 + 本地数据查询 + 结构化结果生成
+- 边界：不接入 LLM，不接入云端，不实现开放式自然语言问答，不实现长文本总结生成
+
+**支持的本地意图**:
+| 意图 | 触发关键词 | 数据来源 | 返回说明 |
+|------|-----------|---------|---------|
+| 本地搜索 | 搜索/查找/找/search/find | Dock items + Entries | 匹配字段（topic/rawText/tag/title/content）、来源标签（[Dock]/[文档]）、标签匹配显示"(标签匹配)" |
+| 标签建议 | 推荐标签/打标签/tag | Tags + EntryTagRelations + RULES.tag | 已有标签使用频次 + 规则推荐标签 |
+| 相关内容推荐 | 相关内容/related/相似 | Dock items + Entries | 标签命中 / 标题关键词命中 |
+| 整理建议 | 整理/organize/归类 | Dock items + Entries + Tags + Collections | 待归档数量 / 高频标签 / 缺标签文档 / 项目集合 |
+| 能力边界 | 其他任何输入 | 无 | 返回 4 项能力说明 + "高级 AI 问答能力将在后续版本开放" |
+
+**是否存在未解决风险**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| 意图识别为简单关键词匹配，可能误判 | 低 | 例如输入"tag this"可能触发 tag_suggest 而非 search，但不会返回伪 AI 回答 |
+| 搜索为纯文本包含匹配，无分词/倒排索引 | 低 | 当前数据量小，性能可接受；后续可升级为全文搜索 |
+| 相关内容推荐仅基于标签和标题关键词，无语义理解 | 低 | 符合当前"不接入 LLM"的边界约束 |
+| Chat 消息不持久化（刷新丢失） | 中 | 与 Round 21 以来一致，需后续 Chat session 持久化 |
+| Dock project/folder CRUD 为 mock-only，刷新丢失 | 中 | 需后端 schema + BFF API（Round 39 遗留） |
+
+---
+
+<!-- ============================================ -->
 <!-- 分割线：Round 43 -->
 <!-- ============================================ -->
 

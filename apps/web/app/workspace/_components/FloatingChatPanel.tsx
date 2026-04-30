@@ -9,16 +9,15 @@ import {
   ChevronsRight,
   Check,
   Bot,
-  MessageCircle,
-  Languages,
-  CheckCircle,
-  Plus,
-  SlidersHorizontal,
-  Mic,
+  Search,
+  Tag,
+  Link2,
+  FolderOpen,
+  User,
   ArrowUp,
   FileText,
-  User,
 } from 'lucide-react'
+import { processLocalAssistantQuery } from '@/lib/local-assistant'
 
 type ChatMode = 'floating' | 'sidebar'
 
@@ -28,21 +27,20 @@ interface ChatMessage {
   content: string
 }
 
-const MOCK_REPLIES: Record<string, string> = {
-  'Personalize your Atlax AI': 'I\'d love to help you personalize your experience! You can customize my response style, preferred domains, and how I organize your knowledge. What aspect would you like to adjust first?',
-  'Summarize knowledge graph': 'Based on your current knowledge graph, you have 3 active domains (Core Architecture, Personal Growth, Product Strategy) with 64 documents and 88 connections. The most connected domain is Core Architecture with 28 structural links. Would you like a deeper analysis?',
-  'Translate selected content': 'I can translate content between languages. Please select the text you want to translate, and tell me the target language. I support English, Chinese, Japanese, Korean, and more.',
-  'Create a task tracker': 'I\'ll create a task tracker for you. Here are some suggested tasks based on your recent activity:\n1. Review Graph Engine Physics document\n2. Update API Reference\n3. Complete MVP Scope Discussion\nWould you like to add these to your task list?',
-}
-
-const DEFAULT_REPLY = 'I understand your question. Let me think about this based on your knowledge graph... I can help you organize, connect, and explore your ideas. Could you tell me more about what you\'re looking for?'
-
 interface FloatingChatPanelProps {
   onToast: (msg: string) => void
   activeModule?: string
+  userId?: string
 }
 
-export default function FloatingChatPanel({ onToast, activeModule }: FloatingChatPanelProps) {
+const QUICK_PROMPTS = [
+  { label: '搜索内容', icon: Search, prompt: '搜索' },
+  { label: '推荐标签', icon: Tag, prompt: '推荐标签' },
+  { label: '相关内容', icon: Link2, prompt: '推荐相关内容' },
+  { label: '整理建议', icon: FolderOpen, prompt: '整理' },
+]
+
+export default function FloatingChatPanel({ onToast, activeModule, userId }: FloatingChatPanelProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [isButtonVisible, setIsButtonVisible] = useState(false)
   const [chatMode, setChatMode] = useState<ChatMode>('floating')
@@ -82,30 +80,47 @@ export default function FloatingChatPanel({ onToast, activeModule }: FloatingCha
     onToast('New chat session started')
   }
 
+  const sendToAssistant = async (text: string) => {
+    const response = await processLocalAssistantQuery(userId || '', text)
+    return response.content
+  }
+
   const handleSend = async () => {
     if (!chatInput.trim() || isSending) return
     const userMsg: ChatMessage = { id: `msg-${Date.now()}`, role: 'user', content: chatInput.trim() }
     setMessages(prev => [...prev, userMsg])
+    const inputText = chatInput.trim()
     setChatInput('')
     setIsSending(true)
 
-    await new Promise(r => setTimeout(r, 600 + Math.random() * 800))
-
-    const reply = MOCK_REPLIES[chatInput.trim()] || DEFAULT_REPLY
-    const assistantMsg: ChatMessage = { id: `msg-${Date.now()}-a`, role: 'assistant', content: reply }
-    setMessages(prev => [...prev, assistantMsg])
-    setIsSending(false)
-  }
-
-  const handlePromptClick = (promptText: string) => {
-    const userMsg: ChatMessage = { id: `msg-${Date.now()}`, role: 'user', content: promptText }
-    setMessages(prev => [...prev, userMsg])
-
-    setTimeout(async () => {
-      const reply = MOCK_REPLIES[promptText] || DEFAULT_REPLY
+    try {
+      const reply = await sendToAssistant(inputText)
       const assistantMsg: ChatMessage = { id: `msg-${Date.now()}-a`, role: 'assistant', content: reply }
       setMessages(prev => [...prev, assistantMsg])
-    }, 500 + Math.random() * 500)
+    } catch {
+      const errorMsg: ChatMessage = { id: `msg-${Date.now()}-a`, role: 'assistant', content: '处理请求时发生错误，请稍后重试。' }
+      setMessages(prev => [...prev, errorMsg])
+    } finally {
+      setIsSending(false)
+    }
+  }
+
+  const handlePromptClick = async (promptText: string) => {
+    if (isSending) return
+    const userMsg: ChatMessage = { id: `msg-${Date.now()}`, role: 'user', content: promptText }
+    setMessages(prev => [...prev, userMsg])
+    setIsSending(true)
+
+    try {
+      const reply = await sendToAssistant(promptText)
+      const assistantMsg: ChatMessage = { id: `msg-${Date.now()}-a`, role: 'assistant', content: reply }
+      setMessages(prev => [...prev, assistantMsg])
+    } catch {
+      const errorMsg: ChatMessage = { id: `msg-${Date.now()}-a`, role: 'assistant', content: '处理请求时发生错误，请稍后重试。' }
+      setMessages(prev => [...prev, errorMsg])
+    } finally {
+      setIsSending(false)
+    }
   }
 
   const panelClassName = isOpen
@@ -147,7 +162,7 @@ export default function FloatingChatPanel({ onToast, activeModule }: FloatingCha
           isButtonVisible || isOpen ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-4 pointer-events-none'
         }`}
         style={triggerStyle}
-        title="Open AI Chat"
+        title="Open Assistant"
         onMouseEnter={() => setIsButtonVisible(true)}
         onMouseLeave={(e) => {
           if (!isOpen && triggerRef.current && !triggerRef.current.contains(e.relatedTarget as Node)) {
@@ -166,7 +181,7 @@ export default function FloatingChatPanel({ onToast, activeModule }: FloatingCha
             title="Start a new chat"
             onClick={handleNewChat}
           >
-            New AI chat
+            New chat
           </button>
           <div className="flex items-center gap-1 relative">
             <button
@@ -211,22 +226,20 @@ export default function FloatingChatPanel({ onToast, activeModule }: FloatingCha
               <div className="w-12 h-12 rounded-full bg-white/10 border border-[var(--border-line)] flex items-center justify-center mb-4">
                 <Bot size={24} className="text-[var(--node-doc)]" />
               </div>
-              <h2 className="text-xl font-bold text-white mb-2">Atlax AI Assistant</h2>
-              <p className="text-sm text-[var(--text-muted)] mb-6">Here are a few things I can do, or ask me anything!</p>
+              <h2 className="text-xl font-bold text-white mb-2">Atlax Assistant</h2>
+              <p className="text-sm text-[var(--text-muted)] mb-6">本地助手，支持搜索、标签建议、相关内容推荐和整理建议。</p>
 
               <div className="space-y-1 mb-8">
-                <button onClick={() => handlePromptClick('Personalize your Atlax AI')} className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-white/5 hover:text-white rounded-lg flex items-center gap-3 transition-colors">
-                  <span className="text-lg">🦆</span> Personalize your Atlax AI
-                </button>
-                <button onClick={() => handlePromptClick('Summarize knowledge graph')} className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-white/5 hover:text-white rounded-lg flex items-center gap-3 transition-colors">
-                  <MessageCircle size={16} className="text-[var(--text-muted)]" /> Summarize knowledge graph
-                </button>
-                <button onClick={() => handlePromptClick('Translate selected content')} className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-white/5 hover:text-white rounded-lg flex items-center gap-3 transition-colors">
-                  <Languages size={16} className="text-[var(--text-muted)]" /> Translate selected content
-                </button>
-                <button onClick={() => handlePromptClick('Create a task tracker')} className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-white/5 hover:text-white rounded-lg flex items-center gap-3 transition-colors">
-                  <CheckCircle size={16} className="text-[var(--text-muted)]" /> Create a task tracker
-                </button>
+                {QUICK_PROMPTS.map(({ label, icon: Icon, prompt }) => (
+                  <button
+                    key={prompt}
+                    onClick={() => handlePromptClick(prompt)}
+                    disabled={isSending}
+                    className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-white/5 hover:text-white rounded-lg flex items-center gap-3 transition-colors disabled:opacity-50"
+                  >
+                    <Icon size={16} className="text-[var(--text-muted)]" /> {label}
+                  </button>
+                ))}
               </div>
             </>
           ) : (
@@ -258,7 +271,7 @@ export default function FloatingChatPanel({ onToast, activeModule }: FloatingCha
                     <Bot size={14} className="text-[var(--node-doc)]" />
                   </div>
                   <div className="bg-white/5 border border-[var(--border-line)] rounded-xl px-3 py-2 text-sm text-[var(--text-muted)]">
-                    Thinking...
+                    Searching...
                   </div>
                 </div>
               )}
@@ -271,25 +284,22 @@ export default function FloatingChatPanel({ onToast, activeModule }: FloatingCha
           <div className="bg-white/5 border border-[var(--border-line)] rounded-xl p-2 flex flex-col gap-2 transition-colors focus-within:border-[var(--accent)] focus-within:bg-black/40 shadow-inner">
             <div className="flex items-center gap-2 px-2 pt-1">
               <div className="bg-white/10 px-2 py-0.5 rounded flex items-center gap-1.5 text-[10px] text-gray-300 border border-[var(--border-line)]">
-                <FileText size={12} /> Current Context
+                <FileText size={12} /> Local Assistant
               </div>
             </div>
             <textarea
               value={chatInput}
               onChange={e => setChatInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && !e.shiftKey) { e.preventDefault(); handleSend() } }}
-              placeholder="Do anything with AI..."
+              placeholder="搜索、推荐标签、相关内容、整理..."
               className="w-full bg-transparent border-none outline-none text-sm text-white placeholder-gray-500 resize-none px-2 min-h-[30px] max-h-[120px]"
               rows={1}
             />
             <div className="flex items-center justify-between px-1">
               <div className="flex items-center gap-1">
-                <button onClick={() => onToast('Attach file (mock)')} className="p-1 text-[var(--text-muted)] hover:text-white rounded transition-colors"><Plus size={16} /></button>
-                <button onClick={() => onToast('Model settings (mock)')} className="p-1 text-[var(--text-muted)] hover:text-white rounded transition-colors"><SlidersHorizontal size={16} /></button>
+                <span className="text-[10px] text-[var(--text-muted)] px-1">本地模式</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-[var(--text-muted)] pr-1">Auto</span>
-                <button onClick={() => onToast('Voice input (mock)')} className="p-1 text-[var(--text-muted)] hover:text-white rounded transition-colors"><Mic size={16} /></button>
                 <button
                   onClick={handleSend}
                   disabled={!chatInput.trim() || isSending}

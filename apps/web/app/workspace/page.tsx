@@ -993,6 +993,7 @@ export default function WorkspacePage() {
         <FloatingChatPanel
           onToast={showToast}
           activeModule={activeModule}
+          userId={userId}
         />
 
         <QuickNote
