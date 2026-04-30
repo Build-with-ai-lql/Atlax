@@ -9,6 +9,89 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Round 43 -->
+<!-- ============================================ -->
+
+## Phase Refactory Round 43 devlog -- Editor Delete 接入真实实现
+
+**时间戳**: 2026-05-01
+
+**任务起止时间**: 02:40 ~ 03:00
+
+**工时**: 20 分钟
+
+**任务目标**: 将 Editor Delete 交互从 Toast 占位接入真实本地数据能力，实现软删除：点击 Delete 后弹出确认对话框，确认后将当前记录标记为 archived 状态，关闭当前 editor tab 并回到默认 workspace，已删除记录不再出现在正常 Dock / Editor 列表中。
+
+**改动文件及行数**:
+- `packages/domain/src/state-machine.ts` | M | +2 行（pending 和 ignored 状态新增 archived 合法转换，允许任意活跃状态直接软删除）
+- `packages/domain/tests/state-machine.test.ts` | M | +3 行（新增 pending→archived 和 ignored→archived 合法转换断言，移除 pending→archived 非法转换断言）
+- `apps/web/app/workspace/page.tsx` | M | +45 行（showDeleteConfirm 状态、handleDeleteRequest 回调、handleDeleteConfirm 回调含 archiveItem 返回值检查 + editingItemId 先置 null 防 autosave 竞态 + null 返回时恢复 editor 状态、删除后 handleCloseTab 关闭 tab 并跳回默认 workspace、EditorOptionsMenu 新增 onDelete prop、确认对话框 UI 含 Cancel/Delete 按钮、DockFinderView 默认过滤 archived 项目、dockTreeViewModel 输入排除 archived 项目）
+- `apps/web/lib/repository.ts` | M | +9 行（updateDockItemText 新增 archived 状态保护：已归档项目仅更新 rawText/topic 不重置 status 为 pending，防止 autosave 将已删除记录写回正常状态）
+- `apps/web/tests/repository.test.ts` | M | +2 行（blocks invalid transitions 测试更新：原断言 pending→archived 返回 null 不再成立，改为测试 archived→archived 返回 null）
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 |
+|------|---------|
+| Delete 按钮仅 toast "Delete coming soon"，无真实数据操作 | 接入 archiveItem API，将记录标记为 archived 状态实现软删除 |
+| pending / ignored 状态无法直接转到 archived（状态机限制） | 扩展状态机 VALID_TRANSITIONS：pending 新增 'archived'、ignored 新增 'archived' |
+| 无确认机制，用户可能误删 | 新增确认对话框 UI（fixed overlay + glass panel），Cancel/Delete 双按钮 |
+| 删除后 editor 仍停留在已删除记录的可编辑状态 | handleDeleteConfirm 先 setEditingItemId(null) 禁用 autosave，再 archiveItem，再 handleCloseTab 关闭 tab |
+| autosave 可能在删除后将已归档记录的 status 重置为 pending（buildDockItemReset 副作用） | updateDockItemText 新增 archived 状态保护分支：已归档项目仅更新 rawText/topic，不触发 SuggestionResetPolicy |
+| Dock 列表默认显示所有状态项目（含 archived） | DockFinderView 过滤逻辑从 `items` 改为 `items.filter(i => i.status !== 'archived')`，dockTreeViewModel 同步排除 |
+| handleDeleteConfirm 引用 handleCloseTab 但定义在其之前导致 TDZ | 将 handleDeleteConfirm 移至 handleCloseTab 定义之后 |
+| **Review 修复**：handleDeleteConfirm 未检查 archiveItem 返回值 | 新增 `const result = await archiveItem(...)` + `if (!result)` 分支：恢复 editingItemId、不关闭 tab、显示 "Delete failed: item not found or cannot be deleted" |
+| **Review 修复**：状态机变更未配套测试 | 更新 state-machine.test.ts：新增 pending→archived 和 ignored→archived 合法转换断言，移除 pending→archived 非法转换断言 |
+| **Review 修复**：repository.test.ts "blocks invalid transitions" 断言失败 | 原 `pending→archived` 返回 null 不再成立，改为测试 `archived→archived` 返回 null（先 suggest→archive，再 archive 返回 null） |
+
+**自动验证结果**:
+| 检查项 | 结果 |
+|--------|------|
+| `git diff --check` | ✅ (exit 0) |
+| `git diff --cached --check` | ✅ (exit 0) |
+| `pnpm --dir apps/web typecheck` | ✅ (0 errors) |
+| `pnpm --dir apps/web lint` | ✅ (0 errors, 1 pre-existing warning: `no-img-element`) |
+| `pnpm --dir apps/web build` | ✅ (9 pages generated, workspace 44.3 kB) |
+| `pnpm --filter @atlax/domain test -- state-machine` | ✅ (4 tests passed, 含 pending→archived 和 ignored→archived 新断言) |
+| `pnpm --dir apps/web test -- repository.test.ts` | ✅ (77 tests passed, 含更新后的 blocks invalid transitions) |
+| `pnpm --dir apps/web test -- archive-reopen.test.ts` | ✅ (19 tests passed) |
+| `pnpm --dir apps/web test -- workspace-tabs.test.ts` | ✅ (24 tests passed) |
+
+**手工验证步骤说明**:
+1. 启动项目并打开 /workspace
+2. 打开任意 Editor / Note / Dock item 编辑入口
+3. 点击 Editor 右上角 "..." 菜单中的 Delete
+4. 系统出现确认对话框（"Delete this item?"），而不是立即删除
+5. 点击 Cancel，确认对话框关闭，记录仍然存在，内容不变
+6. 再次点击 Delete 并确认
+7. 当前 editor tab 被关闭，跳回默认 workspace 状态
+8. 该记录不再出现在正常 Dock 列表中
+9. 刷新页面后，该记录仍然不出现在正常列表中
+10. 已删除记录不应被 Editor autosave 重新写回正常状态
+11. 控制台不应出现新增错误
+12. Home / Mind / Dock / Tabs / Editor 主流程不应受影响
+
+**复用的 repository / service / IndexedDB API**:
+- `archiveItem(userId, id)` — repository.ts:329，将 DockItem 状态转为 archived 并创建/更新 Entry 记录，完全复用现有归档流程
+- `handleCloseTab(tabId)` — page.tsx:620，关闭 tab 并切换到下一个活跃 tab，复用现有 tab 关闭逻辑
+- `refreshAll()` — page.tsx:358，刷新 Dock items 和 Mind 数据，复用现有数据刷新逻辑
+
+**使用的软删除字段或状态**: 复用现有 `EntryStatus.archived` 状态。DockItem 的 `status` 字段从当前活跃状态（pending/suggested/ignored/reopened）转为 `archived`，同时 `archiveItem` 在 entries 表中创建/更新对应 Entry 记录。
+
+**是否新增了字段**: 否。完全复用现有 `archived` 状态和 `archiveItem` 流程。
+
+**删除后当前 tab / editor 状态如何处理**: 删除确认后，`handleDeleteConfirm` 先将 `editingItemId` 置为 null（禁用 autosave），然后调用 `archiveItem` 标记为 archived。如果 `archiveItem` 返回 null（item 不存在或状态转换不合法），立即恢复 `editingItemId`，不关闭 tab，不提示 "Item deleted"，显示 "Delete failed: item not found or cannot be deleted"。如果 `archiveItem` 成功返回，调用 `refreshAll` 刷新数据，调用 `handleCloseTab` 关闭当前 editor tab。`handleCloseTab` 会自动选择下一个活跃 tab（优先同类型 editor tab，否则跳回 home），确保用户不会停留在已删除记录的可编辑状态。
+
+**是否存在未解决风险**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| 已归档项目仍可通过 Dock 状态过滤器 "archived" 查看 | 低 | 符合软删除设计意图，用户可通过过滤查看已删除项目 |
+| 已归档项目的 Entry 记录仍存在于 entries 表 | 低 | 符合数据保留策略，为后续 Restore 功能预留 |
+| 确认对话框为英文 | 低 | 当前 Golden UI 全局英文风格一致，后续可国际化 |
+| Dock project/folder CRUD 为 mock-only，刷新丢失 | 中 | 需后端 schema + BFF API（Round 39 遗留） |
+
+---
+
+<!-- ============================================ -->
 <!-- 分割线：Round 42 -->
 <!-- ============================================ -->
 

@@ -140,6 +140,8 @@ describe('repository', () => {
 
     it('blocks invalid transitions', async () => {
       const id = await createDockItem(USER_A, '内容')
+      await suggestItem(USER_A, id)
+      await archiveItem(USER_A, id)
       expect(await archiveItem(USER_A, id)).toBeNull()
     })
 

@@ -1,10 +1,10 @@
 import type { EntryStatus } from './types'
 
 export const VALID_TRANSITIONS: Record<EntryStatus, EntryStatus[]> = {
-  pending: ['suggested', 'ignored'],
+  pending: ['suggested', 'ignored', 'archived'],
   suggested: ['suggested', 'archived', 'ignored'],
   archived: ['reopened'],
-  ignored: ['pending'],
+  ignored: ['pending', 'archived'],
   reopened: ['suggested', 'ignored', 'archived'],
 }
 

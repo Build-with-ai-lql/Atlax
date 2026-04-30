@@ -445,6 +445,15 @@ export async function updateDockItemText(
   const item = await getDockItemForUser(userId, id)
   if (!item) return null
 
+  if (item.status === 'archived') {
+    const updateData: Partial<DockItemRecord> = { rawText }
+    if (topic !== undefined) {
+      updateData.topic = topic
+    }
+    await dockItemsTable.update(id, updateData)
+    return getPersistedDockItem(id)
+  }
+
   const resetFields = buildDockItemReset({ dockItemId: id, newText: rawText })
   const updateData: Partial<DockItemRecord> = { ...resetFields }
   if (topic !== undefined) {

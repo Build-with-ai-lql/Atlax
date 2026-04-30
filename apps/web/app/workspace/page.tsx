@@ -118,6 +118,7 @@ export default function WorkspacePage() {
   const [sharedDockSearch, setSharedDockSearch] = useState('')
   const [mockFolderNodes, setMockFolderNodes] = useState<DockTreeNode[]>([])
   const mockFolderIdCounter = useRef(-1000)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   const workspaceMapping = useMemo(() => {
     const labelToDockItem = new Map<string, DockItem>()
@@ -427,6 +428,14 @@ export default function WorkspacePage() {
     }
   }, [userId, refreshAll])
 
+  const handleDeleteRequest = useCallback(() => {
+    if (editingItemId == null || editingItemId < 0) {
+      showToast('Draft cannot be deleted from here')
+      return
+    }
+    setShowDeleteConfirm(true)
+  }, [editingItemId, showToast])
+
   const handleReopen = useCallback(async (itemId: number) => {
     if (!userId) return
     try {
@@ -682,6 +691,29 @@ export default function WorkspacePage() {
       return next
     })
   }, [activeTabId, editingItemId, items, drafts, tabs, userId])
+
+  const handleDeleteConfirm = useCallback(async () => {
+    setShowDeleteConfirm(false)
+    if (!userId || editingItemId == null || editingItemId < 0) return
+    const itemIdToDelete = editingItemId
+    setEditingItemId(null)
+    try {
+      const result = await archiveItem(userId, itemIdToDelete)
+      if (!result) {
+        setEditingItemId(itemIdToDelete)
+        showToast('Delete failed: item not found or cannot be deleted')
+        return
+      }
+      refreshAll()
+      const tabId = `tab-editor-${itemIdToDelete}`
+      handleCloseTab(tabId)
+      showToast('Item deleted')
+    } catch (e) {
+      setEditingItemId(itemIdToDelete)
+      setError(e instanceof Error ? e.message : '删除失败')
+      showToast('Delete failed')
+    }
+  }, [userId, editingItemId, refreshAll, handleCloseTab, showToast])
 
   const handleNewTab = useCallback(() => {
     handleNewNote()
@@ -985,6 +1017,7 @@ export default function WorkspacePage() {
                   mode={editorMode}
                   onSetMode={handleSetEditorMode}
                   onToast={showToast}
+                  onDelete={handleDeleteRequest}
                 />
               </div>
               <EditorTabView
@@ -1111,6 +1144,30 @@ export default function WorkspacePage() {
           </div>
         )}
 
+        {showDeleteConfirm && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowDeleteConfirm(false)} />
+            <div className="relative z-10 w-full max-w-sm mx-4 bg-[#161616]/95 backdrop-blur-xl border border-white/[0.06] rounded-2xl p-6 shadow-2xl">
+              <h3 className="text-base font-medium text-white mb-2">Delete this item?</h3>
+              <p className="text-sm text-slate-400 mb-6">This item will be moved to archived status. You can find it later by filtering archived items.</p>
+              <div className="flex items-center justify-end gap-3">
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="px-4 py-2 text-sm text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteConfirm}
+                  className="px-4 py-2 text-sm text-red-400 bg-red-500/10 hover:bg-red-500/20 rounded-lg transition-colors"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <FloatingRecorder
           recorderState={recorderState}
           setRecorderState={setRecorderState}
@@ -1125,7 +1182,7 @@ export default function WorkspacePage() {
   )
 }
 
-function EditorOptionsMenu({ mode, onSetMode, onToast }: { mode: 'classic' | 'block'; onSetMode: (mode: 'classic' | 'block') => void; onToast?: (msg: string) => void }) {
+function EditorOptionsMenu({ mode, onSetMode, onToast, onDelete }: { mode: 'classic' | 'block'; onSetMode: (mode: 'classic' | 'block') => void; onToast?: (msg: string) => void; onDelete?: () => void }) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -1168,7 +1225,7 @@ function EditorOptionsMenu({ mode, onSetMode, onToast }: { mode: 'classic' | 'bl
               <Download size={14} /> Export as PDF
             </button>
             <div className="my-1 border-t border-white/[0.06]" />
-            <button onClick={() => { onToast?.('Delete coming soon'); setOpen(false) }} className="w-full text-left px-2 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors">
+            <button onClick={() => { onDelete?.(); setOpen(false) }} className="w-full text-left px-2 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-white/5 rounded-lg flex items-center gap-2 transition-colors">
               <Trash2 size={14} /> Delete
             </button>
           </div>
@@ -1218,7 +1275,7 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
   const mockIdCounter = useRef(-1)
   const moreRef = useRef<HTMLDivElement>(null)
 
-  const dockTreeViewModel = useMemo(() => toDockTreeViewModel(items), [items])
+  const dockTreeViewModel = useMemo(() => toDockTreeViewModel(items.filter(i => i.status !== 'archived')), [items])
 
   // TODO(backend-boundary): Dock hierarchy create is mock-only. No backend persistence.
   // Real project/folder CRUD needs backend schema + BFF API.
@@ -1367,7 +1424,7 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
   const counts: Record<EntryStatus, number> = { pending: 0, suggested: 0, archived: 0, ignored: 0, reopened: 0 }
   items.forEach(i => { counts[i.status] = (counts[i.status] || 0) + 1 })
 
-  let filteredItems = filterStatus ? items.filter(i => i.status === filterStatus) : items
+  let filteredItems = filterStatus ? items.filter(i => i.status === filterStatus) : items.filter(i => i.status !== 'archived')
   if (selectedProject) {
     const projectRoot = mergedRoots.find(r => r.name === selectedProject)
     if (projectRoot) {
