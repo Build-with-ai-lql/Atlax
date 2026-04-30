@@ -1,7 +1,9 @@
 'use client'
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { PenTool, Bold, Italic, Strikethrough, Link, Code, Image as ImageIcon, List, ListOrdered, BookOpen, PanelRight, X, Link2, Plus, GripVertical, Heading1, Heading2, Heading3, Quote, Type, FileCode2, CheckSquare } from 'lucide-react'
+import { PenTool, Bold, Italic, Strikethrough, Link, Code, Image as ImageIcon, List, ListOrdered, BookOpen, PanelRight, X, Link2, Plus, GripVertical, Heading1, Heading2, Heading3, Quote, Type, FileCode2, CheckSquare, Loader2, Check, AlertCircle } from 'lucide-react'
+
+import type { SaveStatus } from './useAutosave'
 
 interface EditorTabViewProps {
   editingItemId: number | null
@@ -12,6 +14,7 @@ interface EditorTabViewProps {
   onSave: () => void
   mode: 'classic' | 'block'
   isDraft: boolean
+  saveStatus: SaveStatus
   onToast?: (msg: string) => void
 }
 
@@ -44,6 +47,7 @@ export default function EditorTabView({
   onSave,
   mode,
   isDraft,
+  saveStatus,
   onToast,
 }: EditorTabViewProps) {
   const [dirty, setDirty] = useState(false)
@@ -246,6 +250,24 @@ export default function EditorTabView({
 
   const canSave = isDraft ? (editorTitle.trim() || editorContent.trim()) : dirty
 
+  const saveStatusLabel = () => {
+    switch (saveStatus) {
+      case 'saving': return 'Saving...'
+      case 'saved': return 'Saved'
+      case 'failed': return 'Save failed'
+      default: return dirty ? '未保存' : ''
+    }
+  }
+
+  const saveStatusIcon = () => {
+    switch (saveStatus) {
+      case 'saving': return <Loader2 size={12} className="animate-spin text-slate-400" />
+      case 'saved': return <Check size={12} className="text-emerald-400" />
+      case 'failed': return <AlertCircle size={12} className="text-red-400" />
+      default: return null
+    }
+  }
+
   const contentLines = editorContent.split('\n')
   const blockRows = contentLines.map((line, idx) => {
     let className = 'blk-text'
@@ -293,7 +315,10 @@ export default function EditorTabView({
               {canSave && (
                 <div className="flex items-center gap-3 pt-6 border-t border-[var(--border-line)] mt-8">
                   <button onClick={handleSave} className="px-4 py-1.5 bg-[var(--accent)]/15 text-[var(--accent)] rounded-lg text-xs font-medium hover:bg-[var(--accent)]/25 transition-colors">保存</button>
-                  <span className="text-[11px] text-slate-600">未保存</span>
+                  <span className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                    {saveStatusIcon()}
+                    {saveStatusLabel()}
+                  </span>
                 </div>
               )}
             </div>
@@ -364,7 +389,10 @@ export default function EditorTabView({
               {canSave && (
                 <div className="flex items-center gap-3 pt-6 border-t border-[var(--border-line)] mt-8">
                   <button onClick={handleSave} className="px-4 py-1.5 bg-[var(--accent)]/15 text-[var(--accent)] rounded-lg text-xs font-medium hover:bg-[var(--accent)]/25 transition-colors">保存</button>
-                  <span className="text-[11px] text-slate-600">未保存</span>
+                  <span className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                    {saveStatusIcon()}
+                    {saveStatusLabel()}
+                  </span>
                 </div>
               )}
             </div>

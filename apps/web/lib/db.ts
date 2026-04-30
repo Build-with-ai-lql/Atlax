@@ -289,6 +289,20 @@ export interface PersistedRecentDocument extends RecentDocumentRecord {
   id: string
 }
 
+export interface EditorDraftRecord {
+  id?: number
+  userId: string
+  draftKey: number
+  title: string
+  content: string
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface PersistedEditorDraft extends EditorDraftRecord {
+  id: number
+}
+
 const FALLBACK_USER_ID = '_legacy'
 
 export function runV8Upgrade(tx: {
@@ -336,6 +350,7 @@ const db = new Dexie('AtlaxDB') as Dexie & {
   workspaceSessions: EntityTable<WorkspaceSessionRecord, 'id'>
   workspaceOpenTabs: EntityTable<WorkspaceOpenTabRecord, 'id'>
   recentDocuments: EntityTable<RecentDocumentRecord, 'id'>
+  editorDrafts: EntityTable<EditorDraftRecord, 'id'>
 }
 
 db.version(1).stores({
@@ -485,6 +500,25 @@ db.version(15).stores({
   recentDocuments: 'id, userId, documentId, [userId+documentId], lastOpenedAt, openCount, createdAt, updatedAt',
 })
 
+db.version(16).stores({
+  dockItems: '++id, userId, rawText, topic, sourceType, status, createdAt',
+  tags: 'id, userId, name, [userId+name]',
+  entries: '++id, userId, sourceDockItemId, type, archivedAt',
+  chatSessions: '++id, userId, status, pinned, dockItemId, createdAt, updatedAt',
+  widgets: '++id, userId, widgetType, active, createdAt, updatedAt',
+  collections: 'id, userId, collectionType, parentId, createdAt, updatedAt',
+  entryTagRelations: 'id, userId, entryId, tagId, [userId+entryId], [userId+tagId], createdAt',
+  entryRelations: 'id, userId, sourceEntryId, targetEntryId, relationType, [userId+sourceEntryId], [userId+targetEntryId], createdAt',
+  knowledgeEvents: 'id, userId, eventType, targetType, createdAt',
+  temporalActivities: 'id, userId, type, occurredAt, dayKey, weekKey, monthKey, [userId+dayKey], [userId+monthKey], createdAt',
+  mindNodes: 'id, userId, nodeType, state, label, [userId+nodeType], [userId+state], createdAt, updatedAt',
+  mindEdges: 'id, userId, sourceNodeId, targetNodeId, edgeType, [userId+sourceNodeId], [userId+targetNodeId], [userId+edgeType], createdAt, updatedAt',
+  workspaceSessions: 'id, userId, createdAt, updatedAt',
+  workspaceOpenTabs: 'id, userId, sessionId, tabType, documentId, isPinned, isActive, sortOrder, [userId+sessionId], [userId+tabType], [userId+documentId], openedAt, updatedAt',
+  recentDocuments: 'id, userId, documentId, [userId+documentId], lastOpenedAt, openCount, createdAt, updatedAt',
+  editorDrafts: '++id, userId, draftKey, [userId+draftKey], updatedAt',
+})
+
 export { db }
 export const dockItemsTable = db.table('dockItems')
 export const capturesTable = dockItemsTable
@@ -503,3 +537,4 @@ export const mindEdgesTable = db.table('mindEdges')
 export const workspaceSessionsTable = db.table('workspaceSessions')
 export const workspaceOpenTabsTable = db.table('workspaceOpenTabs')
 export const recentDocumentsTable = db.table('recentDocuments')
+export const editorDraftsTable = db.table('editorDrafts')

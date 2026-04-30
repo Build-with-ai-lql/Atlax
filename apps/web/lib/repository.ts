@@ -75,6 +75,7 @@ import {
   widgetsTable,
   workspaceOpenTabsTable,
   workspaceSessionsTable,
+  editorDraftsTable,
   type ChatSessionRecord,
   type CollectionRecord,
   type EntryRecord,
@@ -88,6 +89,7 @@ import {
   type TemporalActivityRecord,
   type WorkspaceOpenTabRecord,
   type WorkspaceSessionRecord,
+  type EditorDraftRecord,
   type PersistedDockItem,
   type PersistedEntry,
   type PersistedDocument,
@@ -104,6 +106,7 @@ import {
   type PersistedWidget,
   type PersistedWorkspaceOpenTab,
   type PersistedWorkspaceSession,
+  type PersistedEditorDraft,
   type TagRecord,
   type WidgetRecord,
 } from './db'
@@ -1659,4 +1662,73 @@ export async function recordRecentDocumentOpen(input: {
   }
   await recentDocumentsTable.put(record)
   return toPersistedRecentDocument(await recentDocumentsTable.get(id)) as PersistedRecentDocument
+}
+
+function toPersistedEditorDraft(draft: EditorDraftRecord | undefined): PersistedEditorDraft | null {
+  if (!draft || typeof draft.id !== 'number') return null
+  return { ...draft, id: draft.id }
+}
+
+export async function saveEditorDraft(
+  userId: string,
+  draftKey: number,
+  title: string,
+  content: string,
+): Promise<PersistedEditorDraft | null> {
+  const now = new Date()
+  const existing = await editorDraftsTable
+    .where('[userId+draftKey]')
+    .equals([userId, draftKey])
+    .first()
+
+  if (existing) {
+    await editorDraftsTable.update(existing.id, {
+      title,
+      content,
+      updatedAt: now,
+    })
+    return toPersistedEditorDraft(await editorDraftsTable.get(existing.id))
+  }
+
+  const id = await editorDraftsTable.add({
+    userId,
+    draftKey,
+    title,
+    content,
+    createdAt: now,
+    updatedAt: now,
+  })
+  return toPersistedEditorDraft(await editorDraftsTable.get(id as number))
+}
+
+export async function loadEditorDraft(
+  userId: string,
+  draftKey: number,
+): Promise<PersistedEditorDraft | null> {
+  const draft = await editorDraftsTable
+    .where('[userId+draftKey]')
+    .equals([userId, draftKey])
+    .first()
+  return toPersistedEditorDraft(draft)
+}
+
+export async function loadAllEditorDrafts(userId: string): Promise<PersistedEditorDraft[]> {
+  const drafts = await editorDraftsTable
+    .where('userId')
+    .equals(userId)
+    .sortBy('updatedAt')
+  return drafts.flatMap((d) => {
+    const p = toPersistedEditorDraft(d)
+    return p ? [p] : []
+  })
+}
+
+export async function deleteEditorDraft(userId: string, draftKey: number): Promise<boolean> {
+  const draft = await editorDraftsTable
+    .where('[userId+draftKey]')
+    .equals([userId, draftKey])
+    .first()
+  if (!draft || draft.userId !== userId) return false
+  await editorDraftsTable.delete(draft.id)
+  return true
 }

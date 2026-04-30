@@ -9,10 +9,12 @@ import {
   addTagToItem,
   archiveItem,
   createDockItem,
+  deleteEditorDraft,
   getOrCreateTag,
   listDockItems,
   listMindNodes,
   listMindEdges,
+  loadAllEditorDrafts,
   openWorkspaceTab,
   closeWorkspaceTab,
   activateWorkspaceTab,
@@ -36,6 +38,7 @@ import { recordEvent, type AppMode } from '@/lib/events'
 import WorkspaceTabs, { type Tab } from './features/shared/WorkspaceTabs'
 import HomeView from './features/home/HomeView'
 import EditorTabView from './features/editor/EditorTabView'
+import { useAutosave } from './features/editor/useAutosave'
 import MindCanvasStage from './features/mind/MindCanvasStage'
 import { makeWorkspaceTabId, type MindEdgeType } from '@atlax/domain'
 import { toDockTreeViewModel, type DockTreeNode } from './features/dock/dockTreeAdapter'
@@ -100,6 +103,9 @@ export default function WorkspacePage() {
 
   const draftCounterRef = React.useRef(0)
   const [drafts, setDrafts] = useState<Record<number, { title: string; content: string }>>({})
+  const [draftsRestored, setDraftsRestored] = useState(false)
+
+  const flushSaveRef = useRef<() => Promise<void>>(() => Promise.resolve())
 
   const [registerName, setRegisterName] = useState('')
 
@@ -306,6 +312,49 @@ export default function WorkspacePage() {
     }
   }, [tabsRestored, items, tabs, activeTabId, editingItemId])
 
+  useEffect(() => {
+    if (!userId || draftsRestored) return
+    let cancelled = false
+    loadAllEditorDrafts(userId)
+      .then(persistedDrafts => {
+        if (cancelled) return
+        if (persistedDrafts.length === 0) {
+          setDraftsRestored(true)
+          return
+        }
+        const restoredDrafts: Record<number, { title: string; content: string }> = {}
+        const newTabs: Tab[] = []
+        let minDraftKey = -1
+        persistedDrafts.forEach(d => {
+          restoredDrafts[d.draftKey] = { title: d.title, content: d.content }
+          if (d.draftKey < minDraftKey) minDraftKey = d.draftKey
+          const tabId = `tab-editor-draft-${d.draftKey}`
+          newTabs.push({
+            id: tabId,
+            type: 'editor',
+            title: d.title || 'Untitled',
+            documentId: d.draftKey,
+            isPinned: false,
+          })
+        })
+        draftCounterRef.current = minDraftKey - 1
+        setDrafts(prev => ({ ...prev, ...restoredDrafts }))
+        setTabs(prev => {
+          const existingDraftTabIds = new Set(
+            prev.filter(t => t.documentId != null && t.documentId < 0).map(t => t.id)
+          )
+          const tabsToAdd = newTabs.filter(t => !existingDraftTabIds.has(t.id))
+          return [...prev, ...tabsToAdd]
+        })
+        setDraftsRestored(true)
+      })
+      .catch(err => {
+        console.error('[EditorDrafts] Failed to restore drafts:', err)
+        setDraftsRestored(true)
+      })
+    return () => { cancelled = true }
+  }, [userId, draftsRestored])
+
   const refreshAll = useCallback(() => {
     loadData()
     setMindRefreshKey((k) => k + 1)
@@ -501,6 +550,9 @@ export default function WorkspacePage() {
           delete next[editingItemId]
           return next
         })
+        deleteEditorDraft(userId, editingItemId).catch(err =>
+          console.error('[Autosave] Failed to delete saved draft from IndexedDB:', err)
+        )
         openWorkspaceTab({
           userId,
           tabType: 'editor',
@@ -531,6 +583,9 @@ export default function WorkspacePage() {
   }, [editingItemId, userId, drafts, editorContent, refreshAll, createSourceNodeWithRoot])
 
   const handleActivateTab = useCallback((tabId: string) => {
+    if (activeTabId !== tabId && activeTabId.startsWith('tab-editor-') && editingItemId != null) {
+      flushSaveRef.current()
+    }
     setActiveTabId(tabId)
     const tab = tabs.find(t => t.id === tabId)
     if (tab) {
@@ -560,9 +615,12 @@ export default function WorkspacePage() {
         }
       }
     }
-  }, [tabs, items, drafts, userId])
+  }, [tabs, items, drafts, userId, activeTabId, editingItemId])
 
   const handleCloseTab = useCallback((tabId: string) => {
+    if (tabId === activeTabId && activeTabId.startsWith('tab-editor-') && editingItemId != null) {
+      flushSaveRef.current()
+    }
     const closingTab = tabs.find(t => t.id === tabId)
     const isDraft = closingTab?.documentId != null && closingTab.documentId < 0
     if (userId && closingTab && !isDraft) {
@@ -580,6 +638,11 @@ export default function WorkspacePage() {
           delete d[closingDocId]
           return d
         })
+        if (userId) {
+          deleteEditorDraft(userId, closingDocId).catch(err =>
+            console.error('[Autosave] Failed to delete closed draft from IndexedDB:', err)
+          )
+        }
       }
       if (activeTabId === tabId) {
         const newActive = next[Math.min(idx, next.length - 1)]?.id || 'tab-home'
@@ -618,7 +681,7 @@ export default function WorkspacePage() {
       }
       return next
     })
-  }, [activeTabId, items, drafts, tabs, userId])
+  }, [activeTabId, editingItemId, items, drafts, tabs, userId])
 
   const handleNewTab = useCallback(() => {
     handleNewNote()
@@ -635,6 +698,9 @@ export default function WorkspacePage() {
   }, [tabs, userId])
 
   const handleModuleChange = useCallback((mod: ActiveModule) => {
+    if (activeModule === 'editor' && editingItemId != null) {
+      flushSaveRef.current()
+    }
     setActiveModule(mod)
     if (mod !== 'editor') {
       setEditorNavExpanded(false)
@@ -681,7 +747,7 @@ export default function WorkspacePage() {
       }
     }
     setEditingItemId(null)
-  }, [tabs, activeTabId, handleActivateTab, handleNewNote, userId])
+  }, [tabs, activeTabId, activeModule, editingItemId, handleActivateTab, handleNewNote, userId])
 
   const handleSetEditorMode = useCallback((mode: 'classic' | 'block') => {
     setEditorMode(mode)
@@ -702,6 +768,37 @@ export default function WorkspacePage() {
   const handleSwitchToMind = useCallback(() => {
     handleModuleChange('mind')
   }, [handleModuleChange])
+
+  const _isEditorActive = activeTabId.startsWith('tab-editor-') && editingItemId != null
+  const _activeEditorTab = tabs.find(t => t.id === activeTabId)
+  const _isActiveDraft = _activeEditorTab?.documentId != null && _activeEditorTab.documentId < 0
+
+  const { saveStatus, flushSave } = useAutosave({
+    userId,
+    editingItemId,
+    editorTitle,
+    editorContent,
+    isDraft: _isActiveDraft,
+    enabled: _isEditorActive && draftsRestored,
+  })
+  flushSaveRef.current = flushSave
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      flushSaveRef.current()
+    }
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushSaveRef.current()
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [])
 
   if (!authChecked) {
     return (
@@ -909,6 +1006,7 @@ export default function WorkspacePage() {
                 onSave={handleSaveEditor}
                 mode={editorMode}
                 isDraft={isActiveDraft}
+                saveStatus={saveStatus}
                 onToast={showToast}
               />
             </div>

@@ -9,6 +9,96 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Round 42 -->
+<!-- ============================================ -->
+
+## Phase Refactory Round 42 devlog -- Editor 草稿自动保存
+
+**时间戳**: 2026-05-01
+
+**任务起止时间**: 02:00 ~ 02:30
+
+**工时**: 30 分钟
+
+**任务目标**: 为 Editor 接入最小可用的草稿自动保存能力，使用户编辑中的内容能够写入本地持久化层，并在刷新页面或重新打开时恢复。
+
+**改动文件及行数**:
+- `apps/web/lib/db.ts` | M | +35 行（EditorDraftRecord / PersistedEditorDraft 接口、editorDrafts 表定义 v16、editorDraftsTable 导出）
+- `apps/web/lib/repository.ts` | M | +72 行（saveEditorDraft / loadEditorDraft / loadAllEditorDrafts / deleteEditorDraft 四个 CRUD 函数、toPersistedEditorDraft 辅助函数、editorDraftsTable 导入）
+- `apps/web/app/workspace/features/editor/useAutosave.ts` | A | +117 行（新增 - useAutosave hook：debounce 1000ms、SaveStatus 类型、latestRef 避免 stale closure、performSaveWithValues 提取、flushSave 立即保存、内容变更检测、草稿/已有文档双路径保存、保存失败 fallback）
+- `apps/web/app/workspace/page.tsx` | M | +90 行（导入 useAutosave / deleteEditorDraft / loadAllEditorDrafts、flushSaveRef 桥接、draftsRestored 状态、草稿恢复 useEffect、handleActivateTab 切换前 flush、handleCloseTab 关闭前 flush、handleModuleChange 切模块前 flush、handleSaveEditor 保存后清理 IndexedDB 草稿、handleCloseTab 关闭草稿清理 IndexedDB、useAutosave hook 调用、flushSaveRef.current 赋值、beforeunload / visibilitychange 事件 flush、saveStatus 传递给 EditorTabView）
+- `apps/web/app/workspace/features/editor/EditorTabView.tsx` | M | +34 行（saveStatus prop、SaveStatus 类型导入、Loader2/Check/AlertCircle 图标导入、saveStatusLabel / saveStatusIcon 函数、两处"未保存"替换为保存状态反馈）
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 |
+|------|---------|
+| useAutosave 在条件返回之后调用，违反 React Hooks 规则 | 将 hook 调用移至 early return 之前，使用独立变量 `_isEditorActive` / `_activeEditorTab` / `_isActiveDraft` 计算 |
+| SaveStatus 类型导入后未在 page.tsx 中直接使用导致 lint error | 移除 page.tsx 中的 type SaveStatus 导入，仅在 EditorTabView 中导入 |
+| 项目中无 debounce 工具函数 | 在 useAutosave hook 内部使用 useRef + setTimeout 实现内联 debounce |
+| **Review 修复**：用户输入后立刻切换 tab / 关闭 tab / 切模块 / 刷新，debounce 中尚未写入的最后输入会丢失 | useAutosave 暴露 `flushSave()`，取消 debounce 计时器并立即保存当前内容；page.tsx 在 handleActivateTab / handleCloseTab / handleModuleChange 前调用 flush |
+| **Review 修复**：flushSave 存在 stale closure 风险，可能保存旧 render 的值 | useAutosave 使用 `latestRef` 追踪最新 userId / editingItemId / editorTitle / editorContent / isDraft / enabled，flushSave 和 debounce callback 都从 latestRef.current 读取 |
+| **Review 修复**：flushSave 定义在 handleActivateTab 之后，直接引用导致 TDZ | page.tsx 使用 `flushSaveRef = useRef<() => Promise<void>>()` 桥接，回调中调用 `flushSaveRef.current()`，useAutosave 返回后赋值 `flushSaveRef.current = flushSave` |
+| **Review 修复**：页面刷新/关闭前 debounce 内容丢失 | 添加 `beforeunload` 和 `visibilitychange` 事件监听，在页面卸载或切到后台时调用 flushSaveRef.current() |
+
+**自动验证结果**:
+| 检查项 | 结果 |
+|--------|------|
+| `git diff --check` | ✅ (exit 0) |
+| `git diff --cached --check` | ✅ (exit 0) |
+| `pnpm --dir apps/web typecheck` | ✅ (0 errors) |
+| `pnpm --dir apps/web lint` | ✅ (0 errors, 1 pre-existing warning: `no-img-element`) |
+
+**手工验证步骤说明**:
+1. 启动项目并打开 /workspace
+2. 打开任意 Editor / Note / Dock item 编辑入口
+3. 输入一段新内容，例如："draft autosave test"
+4. 等待自动保存完成（1 秒 debounce 后，状态显示 "Saved"）
+5. 刷新页面
+6. 重新打开同一条内容 → "draft autosave test" 仍然存在
+7. **编辑已有文档，输入后不等 1 秒立刻切到另一个 editor tab，再切回，内容仍在**
+8. **编辑 draft，输入后不等 1 秒立刻切 tab，再切回，内容仍在**
+9. **输入后刷新，已完成 debounce 的内容可恢复；beforeunload flush 会尝试保存 debounce 中的内容**
+10. **模拟保存失败时显示 "Save failed" 红色图标且内容保留在内存**
+11. 连续快速输入时不应导致明显卡顿
+12. 控制台不应出现新增错误
+13. Home / Mind / Dock / Tabs 主流程不应受影响
+
+**复用的 repository / service / IndexedDB API**:
+- `updateDockItemText(userId, id, rawText, topic?)` — repository.ts，已有文档自动保存时复用此函数更新 rawText 和 topic
+- `saveEditorDraft(userId, draftKey, title, content)` — repository.ts 新增，草稿自动保存时写入 editorDrafts 表
+- `loadAllEditorDrafts(userId)` — repository.ts 新增，页面加载时恢复所有草稿
+- `deleteEditorDraft(userId, draftKey)` — repository.ts 新增，草稿保存/关闭时清理
+- Dexie `editorDrafts` 表 — db.ts v16 新增，复用现有 Dexie IndexedDB 封装
+
+**debounce 策略**: 用户输入内容后，等待 1000ms 无新输入再触发保存。每次新输入重置计时器。切换 tab / 关闭 tab / 切模块 / 页面卸载时通过 `flushSave()` 立即保存 debounce 中的 pending 内容，不依赖"等 1 秒后再切换"。
+
+**保存状态反馈如何实现**: EditorTabView 接收 `saveStatus` prop（idle / saving / saved / failed），在保存按钮旁显示状态图标和文字：
+- `saving`: 旋转 Loader2 图标 + "Saving..." 文字（灰色）
+- `saved`: 绿色 Check 图标 + "Saved" 文字
+- `failed`: 红色 AlertCircle 图标 + "Save failed" 文字
+- `idle` + dirty: 原有 "未保存" 文字
+
+**是否存在 fallback 逻辑**: 是。
+1. editingItemId 为 null 时 autosave 不触发，不导致白屏或报错
+2. 草稿恢复失败时 setDraftsRestored(true) 确保 UI 不卡住
+3. 保存失败时保留内存内容，显示 "Save failed" 错误反馈
+4. deleteEditorDraft 失败时仅 console.error，不影响主流程
+5. 草稿恢复时如果已有同 ID 的 draft tab，不重复添加
+6. flushSave 是 async，切 tab UI 先更新，但 flushSave 从 latestRef 读取当前值确保保存正确内容
+7. beforeunload / visibilitychange 中 flush 为 fire-and-forget，不阻塞页面关闭
+
+**当前风险及影响范围**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| 已有文档 autosave 使用 updateDockItemText 会触发 EditSavePolicy 重置 suggestions/status | 低 | 与手动保存行为一致，编辑中重置建议是合理的 |
+| DB 版本从 v15 升级到 v16，用户首次访问会触发 IndexedDB 升级 | 低 | Dexie 自动处理，新表无数据迁移 |
+| 草稿恢复后 draftCounterRef 从最小 draftKey-1 开始，避免 ID 冲突 | 低 | 已处理 |
+| beforeunload 中 flush 为 fire-and-forget，极端情况浏览器可能在 IndexedDB 写入完成前关闭页面 | 低 | visibilitychange hidden 时也会 flush，双保险；且 debounce 仅 1 秒，大部分内容已在之前保存 |
+| Dock project/folder CRUD 为 mock-only，刷新丢失 | 中 | 需后端 schema + BFF API（Round 39 遗留） |
+
+---
+
+<!-- ============================================ -->
 <!-- 分割线：Round 41 -->
 <!-- ============================================ -->
 
