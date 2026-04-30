@@ -1017,28 +1017,32 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
     }
     indexTree(roots)
     const allMockNodes = [...mockTreeNodes, ...externalMockNodes]
-    allMockNodes.forEach(mockNode => {
-      if (mockNode.type === 'project') {
-        roots.push({ ...mockNode, children: mockNode.children.map(deepCloneNode) })
+    const projectMocks = allMockNodes.filter(n => n.type === 'project')
+    const folderMocks = allMockNodes.filter(n => n.type !== 'project')
+    projectMocks.forEach(mockNode => {
+      const cloned: DockTreeNode = { ...mockNode, children: mockNode.children.map(deepCloneNode) }
+      roots.push(cloned)
+      nodeById.set(cloned.id, cloned)
+      indexTree(cloned.children)
+    })
+    folderMocks.forEach(mockNode => {
+      const parentId = mockNode.metadata?.parentId as number | null | undefined
+      const parentProject = mockNode.metadata?.parentProject as string | undefined
+      let parent: DockTreeNode | undefined
+      if (parentId != null) {
+        parent = nodeById.get(parentId)
+      }
+      if (!parent && parentProject) {
+        parent = roots.find(r => r.name === parentProject)
+      }
+      if (parent) {
+        const childNode: DockTreeNode = { ...mockNode, parentId: parent.id, children: mockNode.children.map(deepCloneNode) }
+        parent.children.push(childNode)
+        nodeById.set(childNode.id, childNode)
       } else {
-        const parentId = mockNode.metadata?.parentId as number | null | undefined
-        const parentProject = mockNode.metadata?.parentProject as string | undefined
-        let parent: DockTreeNode | undefined
-        if (parentId != null) {
-          parent = nodeById.get(parentId)
-        }
-        if (!parent && parentProject) {
-          parent = roots.find(r => r.name === parentProject)
-        }
-        if (parent) {
-          const childNode: DockTreeNode = { ...mockNode, parentId: parent.id, children: mockNode.children.map(deepCloneNode) }
-          parent.children.push(childNode)
-          nodeById.set(childNode.id, childNode)
-        } else {
-          const orphanNode: DockTreeNode = { ...mockNode, type: 'project', children: mockNode.children.map(deepCloneNode), metadata: { ...mockNode.metadata, orphan: true } }
-          roots.push(orphanNode)
-          nodeById.set(orphanNode.id, orphanNode)
-        }
+        const orphanNode: DockTreeNode = { ...mockNode, type: 'project', children: mockNode.children.map(deepCloneNode), metadata: { ...mockNode.metadata, orphan: true } }
+        roots.push(orphanNode)
+        nodeById.set(orphanNode.id, orphanNode)
       }
     })
     return roots
@@ -1271,7 +1275,6 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
                 onSelectItem={onSelectItem}
                 selectedItemId={selectedItemId}
                 itemContent={itemContent}
-                onToast={onToast}
               />
             </div>
           )}
@@ -1433,7 +1436,7 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
   )
 }
 
-function ColumnListView({ columnStack, setColumnStack, selectedColumnNode, setSelectedColumnNode, filteredRoots, loading, error, filteredItems, onSelectItem, selectedItemId: _selectedItemId, itemContent: _itemContent, onToast }: {
+function ColumnListView({ columnStack, setColumnStack, selectedColumnNode, setSelectedColumnNode, filteredRoots, loading, error, filteredItems, onSelectItem, selectedItemId: _selectedItemId, itemContent: _itemContent }: {
   columnStack: DockTreeNode[]
   setColumnStack: React.Dispatch<React.SetStateAction<DockTreeNode[]>>
   selectedColumnNode: DockTreeNode | null
@@ -1445,7 +1448,6 @@ function ColumnListView({ columnStack, setColumnStack, selectedColumnNode, setSe
   onSelectItem: (id: number | null) => void
   selectedItemId: number | null
   itemContent: (item: DockItem, isActive: boolean) => React.ReactNode
-  onToast: (msg: string) => void
 }) {
   const breadcrumbs = columnStack.map((node, idx) => ({
     label: node.name,
@@ -1455,10 +1457,9 @@ function ColumnListView({ columnStack, setColumnStack, selectedColumnNode, setSe
 
   const handleNodeClick = (node: DockTreeNode) => {
     if (node.type === 'project' || node.type === 'folder') {
+      setSelectedColumnNode(node)
       if (node.children.length > 0) {
         setColumnStack(prev => [...prev, node])
-      } else {
-        onToast(`Folder "${node.name}" is empty`)
       }
     } else {
       if (node.documentId != null) {

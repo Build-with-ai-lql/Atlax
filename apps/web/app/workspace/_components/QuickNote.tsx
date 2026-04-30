@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useRef, useCallback, useEffect } from 'react'
-import { Edit3, X, Minus, ChevronLeft } from 'lucide-react'
+import { Edit3, X, Minus, ChevronLeft, Loader2 } from 'lucide-react'
 
 type NoteState = 'HIDDEN' | 'OPEN' | 'MINIMIZED'
 
@@ -13,6 +13,7 @@ interface QuickNoteProps {
 export default function QuickNote({ onToast, onSave }: QuickNoteProps) {
   const [noteState, setNoteState] = useState<NoteState>('HIDDEN')
   const [noteText, setNoteText] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const headerRef = useRef<HTMLDivElement>(null)
@@ -48,6 +49,7 @@ export default function QuickNote({ onToast, onSave }: QuickNoteProps) {
   }, [])
 
   const handleCloseClick = useCallback(async () => {
+    if (saving) return
     const text = noteText.trim()
     if (!text) {
       setNoteText('')
@@ -62,18 +64,20 @@ export default function QuickNote({ onToast, onSave }: QuickNoteProps) {
     const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`
     const title = `${timestamp}_idea_01`
 
-    onToast(`已落库至 Quick idea: ${title}`)
-    setNoteText('')
-    setNoteState('HIDDEN')
-    inlineStyleRef.current = {}
-    forceRender(c => c + 1)
-
+    setSaving(true)
     try {
       await onSave(text, title)
+      onToast(`已落库至 Quick idea: ${title}`)
+      setNoteText('')
+      setNoteState('HIDDEN')
+      inlineStyleRef.current = {}
+      forceRender(c => c + 1)
     } catch {
       onToast('Quick Note 保存失败，请重试')
+    } finally {
+      setSaving(false)
     }
-  }, [noteText, onToast, onSave])
+  }, [noteText, saving, onToast, onSave])
 
   const handleDrawerClick = useCallback(() => {
     setNoteState('OPEN')
@@ -207,9 +211,10 @@ export default function QuickNote({ onToast, onSave }: QuickNoteProps) {
             {/* Red - Close */}
             <button
               onClick={handleCloseClick}
-              className="w-3 h-3 rounded-full bg-[#ff5f57] hover:brightness-110 flex items-center justify-center transition-all"
+              disabled={saving}
+              className={`w-3 h-3 rounded-full bg-[#ff5f57] hover:brightness-110 flex items-center justify-center transition-all ${saving ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              <X size={7} className="text-black/0 group-hover/btn:text-black/80 transition-colors" />
+              {saving ? <Loader2 size={7} className="text-black/80 animate-spin" /> : <X size={7} className="text-black/0 group-hover/btn:text-black/80 transition-colors" />}
             </button>
             {/* Yellow - Minimize */}
             <button
