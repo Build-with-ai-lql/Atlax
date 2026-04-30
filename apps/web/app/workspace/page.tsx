@@ -13,6 +13,12 @@ import {
   listDockItems,
   listMindNodes,
   listMindEdges,
+  openWorkspaceTab,
+  closeWorkspaceTab,
+  activateWorkspaceTab,
+  pinWorkspaceTab,
+  restoreWorkspaceTabs,
+  recordRecentDocumentOpen,
   reopenItem,
   suggestItem,
   updateDockItemText,
@@ -21,6 +27,7 @@ import {
   type DockItem,
   type StoredMindNode,
   type StoredMindEdge,
+  type StoredWorkspaceOpenTab,
 } from '@/lib/repository'
 import { db } from '@/lib/db'
 import type { EntryStatus } from '@/lib/types'
@@ -30,13 +37,31 @@ import WorkspaceTabs, { type Tab } from './features/shared/WorkspaceTabs'
 import HomeView from './features/home/HomeView'
 import EditorTabView from './features/editor/EditorTabView'
 import MindCanvasStage from './features/mind/MindCanvasStage'
-import type { MindEdgeType } from '@atlax/domain'
+import { makeWorkspaceTabId, type MindEdgeType } from '@atlax/domain'
 import { toDockTreeViewModel, type DockTreeNode } from './features/dock/dockTreeAdapter'
 import GlobalSidebar from './_components/GlobalSidebar'
 import FloatingChatPanel from './_components/FloatingChatPanel'
 import QuickNote from './_components/QuickNote'
 
 type ActiveModule = 'home' | 'mind' | 'dock' | 'editor'
+
+const PERSISTED_TAB_TYPES = new Set(['home', 'mind', 'dock', 'editor'])
+
+function fromPersistedTab(p: StoredWorkspaceOpenTab): Tab | null {
+  if (!PERSISTED_TAB_TYPES.has(p.tabType)) return null
+  if (p.documentId != null && p.documentId < 0) return null
+  const tabType = p.tabType as Tab['type']
+  const frontendId = tabType === 'editor' && p.documentId != null
+    ? `tab-editor-${p.documentId}`
+    : `tab-${tabType}`
+  return {
+    id: frontendId,
+    type: tabType,
+    title: p.title,
+    documentId: p.documentId ?? undefined,
+    isPinned: p.isPinned,
+  }
+}
 
 const STATUS_LABELS: Record<EntryStatus, { label: string; color: string; bg: string }> = {
   pending: { label: '待处理', color: 'text-yellow-600 dark:text-yellow-400', bg: 'bg-yellow-50 dark:bg-yellow-500/10 border-yellow-200 dark:border-yellow-500/20' },
@@ -60,6 +85,7 @@ export default function WorkspacePage() {
     { id: 'tab-home', type: 'home', title: 'Home', isPinned: true },
   ])
   const [activeTabId, setActiveTabId] = useState<string>('tab-home')
+  const [tabsRestored, setTabsRestored] = useState(false)
 
   const [recorderState, setRecorderState] = useState<'closed' | 'classic' | 'chat'>('closed')
   const [inputMode, setInputMode] = useState<AppMode>('chat')
@@ -222,6 +248,64 @@ export default function WorkspacePage() {
     }
   }, [userId, loadData, loadMindData, mindRefreshKey])
 
+  useEffect(() => {
+    if (!userId || tabsRestored) return
+    let cancelled = false
+    restoreWorkspaceTabs(userId)
+      .then(persistedTabs => {
+        if (cancelled) return
+        const restoredTabs = persistedTabs
+          .map(fromPersistedTab)
+          .filter((t): t is Tab => t !== null)
+        if (restoredTabs.length > 0) {
+          const hasHomeTab = restoredTabs.some(t => t.type === 'home')
+          if (!hasHomeTab) {
+            restoredTabs.unshift({ id: 'tab-home', type: 'home', title: 'Home', isPinned: true })
+          }
+          const activePersisted = persistedTabs.find(t => t.isActive)
+          setTabs(restoredTabs)
+          if (activePersisted) {
+            const frontendTab = fromPersistedTab(activePersisted)
+            if (frontendTab) {
+              setActiveTabId(frontendTab.id)
+              if (frontendTab.type === 'home') setActiveModule('home')
+              else if (frontendTab.type === 'mind') setActiveModule('mind')
+              else if (frontendTab.type === 'dock') setActiveModule('dock')
+              else if (frontendTab.type === 'editor') {
+                setActiveModule('editor')
+                if (frontendTab.documentId && frontendTab.documentId > 0) {
+                  setEditingItemId(frontendTab.documentId)
+                }
+              }
+            } else {
+              setActiveTabId(restoredTabs[0].id)
+            }
+          } else {
+            setActiveTabId(restoredTabs[0].id)
+          }
+        }
+        setTabsRestored(true)
+      })
+      .catch(err => {
+        console.error('[WorkspaceTabs] Failed to restore tabs, using defaults:', err)
+        setTabsRestored(true)
+      })
+    return () => { cancelled = true }
+  }, [userId, tabsRestored])
+
+  useEffect(() => {
+    if (!tabsRestored || items.length === 0) return
+    const activeTab = tabs.find(t => t.id === activeTabId)
+    if (!activeTab || activeTab.type !== 'editor' || !activeTab.documentId || activeTab.documentId < 0) return
+    if (editingItemId === activeTab.documentId) return
+    const item = items.find(i => i.id === activeTab.documentId)
+    if (item) {
+      setEditingItemId(item.id)
+      setEditorTitle(item.topic || item.rawText.slice(0, 50))
+      setEditorContent(item.rawText)
+    }
+  }, [tabsRestored, items, tabs, activeTabId, editingItemId])
+
   const refreshAll = useCallback(() => {
     loadData()
     setMindRefreshKey((k) => k + 1)
@@ -326,6 +410,11 @@ export default function WorkspacePage() {
     const existing = tabs.find(t => t.id === tabId)
     if (existing) {
       setActiveTabId(tabId)
+      if (userId) {
+        activateWorkspaceTab(userId, makeWorkspaceTabId(userId, 'editor', itemId)).catch(err =>
+          console.error('[WorkspaceTabs] Failed to persist activate tab:', err)
+        )
+      }
     } else {
       const newTab: Tab = {
         id: tabId,
@@ -336,12 +425,30 @@ export default function WorkspacePage() {
       }
       setTabs(prev => [...prev, newTab])
       setActiveTabId(tabId)
+      if (userId) {
+        openWorkspaceTab({
+          userId,
+          tabType: 'editor',
+          title: item.topic || item.rawText.slice(0, 30),
+          path: `/workspace/editor/${itemId}`,
+          documentId: itemId,
+        }).catch(err =>
+          console.error('[WorkspaceTabs] Failed to persist open tab:', err)
+        )
+        recordRecentDocumentOpen({
+          userId,
+          documentId: itemId,
+          title: item.topic || item.rawText.slice(0, 30),
+        }).catch(err =>
+          console.error('[WorkspaceTabs] Failed to record recent document:', err)
+        )
+      }
     }
     setEditingItemId(itemId)
     setEditorTitle(item.topic || item.rawText.slice(0, 50))
     setEditorContent(item.rawText)
     setActiveModule('editor')
-  }, [items, tabs])
+  }, [items, tabs, userId])
 
   const createDraftTab = useCallback(() => {
     draftCounterRef.current -= 1
@@ -394,6 +501,22 @@ export default function WorkspacePage() {
           delete next[editingItemId]
           return next
         })
+        openWorkspaceTab({
+          userId,
+          tabType: 'editor',
+          title: title.slice(0, 30),
+          path: `/workspace/editor/${newId}`,
+          documentId: newId,
+        }).catch(err =>
+          console.error('[WorkspaceTabs] Failed to persist saved draft tab:', err)
+        )
+        recordRecentDocumentOpen({
+          userId,
+          documentId: newId,
+          title: title.slice(0, 30),
+        }).catch(err =>
+          console.error('[WorkspaceTabs] Failed to record recent document:', err)
+        )
       } catch (e) {
         setError(e instanceof Error ? e.message : '保存失败')
       }
@@ -411,6 +534,11 @@ export default function WorkspacePage() {
     setActiveTabId(tabId)
     const tab = tabs.find(t => t.id === tabId)
     if (tab) {
+      if (userId && !(tab.documentId != null && tab.documentId < 0)) {
+        activateWorkspaceTab(userId, makeWorkspaceTabId(userId, tab.type, tab.documentId)).catch(err =>
+          console.error('[WorkspaceTabs] Failed to persist activate tab:', err)
+        )
+      }
       if (tab.type === 'home') setActiveModule('home')
       else if (tab.type === 'mind') setActiveModule('mind')
       else if (tab.type === 'dock') setActiveModule('dock')
@@ -432,12 +560,18 @@ export default function WorkspacePage() {
         }
       }
     }
-  }, [tabs, items, drafts])
+  }, [tabs, items, drafts, userId])
 
   const handleCloseTab = useCallback((tabId: string) => {
+    const closingTab = tabs.find(t => t.id === tabId)
+    const isDraft = closingTab?.documentId != null && closingTab.documentId < 0
+    if (userId && closingTab && !isDraft) {
+      closeWorkspaceTab(userId, makeWorkspaceTabId(userId, closingTab.type, closingTab.documentId)).catch(err =>
+        console.error('[WorkspaceTabs] Failed to persist close tab:', err)
+      )
+    }
     setTabs(prev => {
       const idx = prev.findIndex(t => t.id === tabId)
-      const closingTab = prev.find(t => t.id === tabId)
       const next = prev.filter(t => t.id !== tabId)
       const closingDocId = closingTab?.documentId
       if (closingDocId && closingDocId < 0) {
@@ -484,7 +618,7 @@ export default function WorkspacePage() {
       }
       return next
     })
-  }, [activeTabId, items, drafts])
+  }, [activeTabId, items, drafts, tabs, userId])
 
   const handleNewTab = useCallback(() => {
     handleNewNote()
@@ -492,7 +626,13 @@ export default function WorkspacePage() {
 
   const handlePinTab = useCallback((tabId: string) => {
     setTabs(prev => prev.map(t => t.id === tabId ? { ...t, isPinned: !t.isPinned } : t))
-  }, [])
+    const tab = tabs.find(t => t.id === tabId)
+    if (userId && tab && !(tab.documentId != null && tab.documentId < 0)) {
+      pinWorkspaceTab(userId, makeWorkspaceTabId(userId, tab.type, tab.documentId)).catch(err =>
+        console.error('[WorkspaceTabs] Failed to persist pin tab:', err)
+      )
+    }
+  }, [tabs, userId])
 
   const handleModuleChange = useCallback((mod: ActiveModule) => {
     setActiveModule(mod)
@@ -520,13 +660,28 @@ export default function WorkspacePage() {
     const existing = tabs.find(t => t.id === tabId)
     if (existing) {
       setActiveTabId(tabId)
+      if (userId) {
+        activateWorkspaceTab(userId, makeWorkspaceTabId(userId, mod)).catch(err =>
+          console.error('[WorkspaceTabs] Failed to persist activate tab:', err)
+        )
+      }
     } else {
       const newTab: Tab = { id: tabId, type: mod, title: mod.charAt(0).toUpperCase() + mod.slice(1), isPinned: false }
       setTabs(prev => [...prev, newTab])
       setActiveTabId(tabId)
+      if (userId) {
+        openWorkspaceTab({
+          userId,
+          tabType: mod,
+          title: mod.charAt(0).toUpperCase() + mod.slice(1),
+          path: `/workspace/${mod}`,
+        }).catch(err =>
+          console.error('[WorkspaceTabs] Failed to persist open tab:', err)
+        )
+      }
     }
     setEditingItemId(null)
-  }, [tabs, activeTabId, handleActivateTab, handleNewNote])
+  }, [tabs, activeTabId, handleActivateTab, handleNewNote, userId])
 
   const handleSetEditorMode = useCallback((mode: 'classic' | 'block') => {
     setEditorMode(mode)

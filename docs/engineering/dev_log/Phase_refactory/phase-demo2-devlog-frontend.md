@@ -9,6 +9,82 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Round 41 -->
+<!-- ============================================ -->
+
+## Phase Refactory Round 41 devlog -- Workspace Tabs 持久化接入
+
+**时间戳**: 2026-05-01
+
+**任务起止时间**: 01:20 ~ 01:50
+
+**工时**: 30 分钟
+
+**任务目标**: 将 Workspace Tabs 接入现有本地持久化能力（Dexie IndexedDB），使用户打开的 tabs、active tab 在刷新页面后能够恢复。
+
+**改动文件及行数**:
+- `apps/web/app/workspace/page.tsx` | M | +95 行（导入持久化函数和类型、fromPersistedTab 辅助函数、tabsRestored 状态、Tab 恢复 useEffect、编辑器内容同步 useEffect、openEditorTab 持久化、handleActivateTab 持久化、handleCloseTab 持久化、handlePinTab 持久化、handleModuleChange 持久化、handleSaveEditor 草稿保存后持久化）
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 |
+|------|---------|
+| 前端 Tab ID（`tab-home`/`tab-editor-123`）与持久化 Tab ID（`user_wt_home`/`user_wt_editor_123`）格式不同 | 添加 `fromPersistedTab` 转换函数和 `makeWorkspaceTabId` 映射，双向转换 |
+| 草稿 tab（documentId < 0）不应持久化 | 所有持久化调用前检查 `documentId < 0` 跳过 |
+| 恢复 editor tab 时 dock items 可能未加载 | 添加编辑器内容同步 useEffect，在 items 加载后自动填充 editor 内容 |
+| 恢复的 tabs 中可能没有 home tab | 恢复时检查并自动补充 home tab 作为 fallback |
+| 持久化失败不应导致白屏 | 所有持久化调用使用 `.catch()` 静默处理错误，恢复失败时保留默认状态 |
+
+**自动验证结果**:
+| 检查项 | 结果 |
+|--------|------|
+| `git diff --check` | ✅ (exit 0) |
+| `git diff --cached --check` | ✅ (exit 0) |
+| `pnpm --dir apps/web typecheck` | ✅ (0 errors) |
+| `pnpm --dir apps/web lint` | ✅ (0 errors, 1 pre-existing warning: `no-img-element`) |
+
+**手工验证步骤说明**:
+1. 启动项目并打开 /workspace
+2. 打开至少 2 个不同 tab（例如 Dock item / Editor item / Mind view）
+3. 切换到第二个 tab
+4. 刷新页面
+5. 页面恢复刷新前打开的 tabs
+6. active tab 恢复为刷新前选中的第二个 tab
+7. 关闭其中一个 tab
+8. 再次刷新页面
+9. 被关闭的 tab 不应重新出现
+10. 如果清空本地 tabs 或首次进入，页面应正常显示默认 workspace 状态
+11. 控制台不应出现新增错误
+12. Home / Mind / Dock / Editor 主流程不应受影响
+
+**复用的 repository / service / IndexedDB API**:
+- `openWorkspaceTab(input)` — repository.ts，打开 tab 并写入 IndexedDB workspaceOpenTabs 表
+- `closeWorkspaceTab(userId, tabId)` — repository.ts，关闭 tab 并从 IndexedDB 移除
+- `activateWorkspaceTab(userId, tabId)` — repository.ts，激活 tab 并更新 isActive 标记
+- `pinWorkspaceTab(userId, tabId, pinned?)` — repository.ts，固定/取消固定 tab
+- `restoreWorkspaceTabs(userId)` — repository.ts，恢复用户所有打开的 tab
+- `recordRecentDocumentOpen(input)` — repository.ts，记录最近打开的文档
+- `makeWorkspaceTabId(userId, tabType, documentId?)` — @atlax/domain，生成持久化 tab ID
+- `StoredWorkspaceOpenTab` — repository.ts/db.ts，持久化 tab 记录类型
+
+**是否新增了 API**: 否。完全复用现有 repository 函数和 domain 类型。
+
+**是否存在 fallback 逻辑**: 是。
+1. 持久化恢复失败时保留默认状态（home tab），`catch` 中 `setTabsRestored(true)` 确保 UI 不卡住
+2. 恢复的 tabs 为空时保留默认 `useState` 初始值（home tab）
+3. 恢复的 tabs 不含 home tab 时自动补充
+4. 持久化写入失败时仅 `console.error`，不影响 UI 操作
+5. 草稿 tab 不持久化，关闭后自然消失
+
+**当前风险及影响范围**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| 恢复的 editor tab 对应的 dock item 可能已被删除 | 低 | editor 会显示空内容，用户可关闭 tab |
+| 持久化调用为 fire-and-forget，极端情况下内存态与 DB 态可能短暂不一致 | 低 | 不影响 UI 交互，下次刷新会以 DB 为准 |
+| Dock project/folder CRUD 为 mock-only，刷新丢失 | 中 | 需后端 schema + BFF API（Round 39 遗留） |
+
+---
+
+<!-- ============================================ -->
 <!-- 分割线：Round 40 -->
 <!-- ============================================ -->
 
