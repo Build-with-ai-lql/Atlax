@@ -1,2629 +1,1600 @@
-# Atlax MindDock 结构化系统重构设计文档
+# Atlax MindDock 结构化系统设计文档
+
+版本：v1.0 Intelligence Spine
+阶段：后端第一阶段开发前结构设计
+核心范围：知识智能主干（Atlax Intelligence Spine）驱动下的四层对象模型与闭环系统
+状态标记：[CURRENT-FE + MVP-BE] 前端已有 IndexedDB，后端需落地 / [MVP-BE] 纯后端新建 / [NEXT] 第二阶段增强 / [RESERVED] 未来预留
+
+---
+
+## 1. 文档定位
+
+### 1.1 本文档是什么
 
-版本：v0.4 Nebula Tree
-阶段：Demo 重构阶段
-核心范围：结构化知识系统 + Markdown / Block 编辑体验
-当前主线模块：Home（入口页） / Mind（星云树） / Dock（知识库管理） + Editor（工作页） + WorkspaceTabs（工作区标签）
-明确剪枝：取消 Entry 模块；Review、小组件、Chat、订阅能力先做结构预留，不进入本阶段主交付。
+本文档是 Atlax MindDock 后端第一阶段开发前的**结构设计说明书**。它定义：
 
----
-
-## 1. 本轮重构结论
-
-本轮 Demo 不再继续堆功能，而是重新建立产品骨架。
-
-Atlax MindDock 的产品灵魂不是“笔记列表”，不是“数据库表格”，也不是“聊天框”，而是：
-
-> 用户把碎片想法投入系统，系统将它们自动转化为可编辑、可追踪、可连接、可回看的知识星体，并在 Mind 中形成一张有秩序、有美感、有生命感的星云树。
-
-因此，产品结构必须围绕三个主导航 + 工作区标签系统重新收束：
-
-| 模块            | 定位           | 核心职责                                                |
-| ------------- | ------------ | --------------------------------------------------- |
-| **Home**       | 入口页（默认首页）    | 提供欢迎语、快捷入口（Latest Documents、Upload、Notebook）、最近文档、侧边项目/区域/归档入口 |
-| **Mind**       | 星云树知识视图      | 负责知识结构展示、节点关联、自动落库反馈、关系探索                         |
-| **Dock**       | 知识库管理区       | 负责所有文档、节点、项目、标签、来源的管理视图                           |
-| **Editor**     | 编辑器工作页（行为层） | 负责 Markdown / Block Markdown 编辑、实时预览、内容沉淀，以 Workspace Tabs 标签页形式打开   |
-| **WorkspaceTabs** | 工作区标签系统      | 负责管理多个打开的页面标签（包括 Editor、文档、项目等），支持打开、关闭、激活、恢复、置顶     |
-
-取消原来的 `Entry` 独立模块。
-原因：Entry 会制造产品心智分裂，让用户不知道内容到底在哪里。后续所有归档内容都应由 Dock 管理，由 Mind 可视化，由 Editor 编辑，由 Home 引导。
-
-最终用户心智应该是：
-
-> 我在 Home 开始工作，在 Editor 写东西，在 Mind 看星云树结构，在 Dock 管理知识库。
-
----
-
-## 2. 当前 UI 交互设计中的功能点清单
-
-当前 UI 已经确立了一个正确方向：不是传统左侧导航 + 中间列表 + 右侧详情，而是顶部 Dock 栏 + 中央沉浸式工作区。
-
-### 2.1 顶部主导航
-
-当前主导航只有三个核心入口：
-
-| 菜单     | 页面状态      | 产品含义               |
-| ------ | --------- | ------------------ |
-| Home   | 切换到入口页    | 登录后默认首页，提供欢迎语和快捷入口 |
-| Mind   | 切换到星云树页   | 查看星云树知识网络结构        |
-| Dock   | 切换到知识库管理页 | 管理全部文档和结构化数据       |
-
-**工作区标签系统（WorkspaceTabs）：**
-
-第二行显示已打开的页面标签 + 加号按钮（参考 IDE 标签形态）。
-
-- Editor 以标签页形式出现，不在一级导航
-- 支持多文档并行打开
-- 当前激活标签高亮
-- 标签可关闭
-- 标签后面必须有 "+" 按钮
-- 点击 "+" 弹出轻量菜单（新建文档、新建项目、设置等）
-
-设计要求：
-
-1. 第一行 TopNav 是唯一主导航。
-2. 第二行 WorkspaceTabs 管理工作区打开的页面。
-3. 不再使用复杂左侧 Sidebar 承载主功能。
-4. 其他非主线功能只能以浮动工具、弹窗、抽屉形式出现。
-5. 用户进入产品后默认打开 Home（不是 Mind）。
-6. Home 不是仪表盘，而是简洁的入口引导页。
-7. Mind 是产品主舞台和核心视觉。
-
----
-
-### 2.2 Mind 星云树（Nebula Tree）视图
-
-当前 Mind 视图已经具备以下交互雏形：
-
-| 交互      | 当前含义                                  | 后端数据接入                                    |
-| ------- | ------------------------------------- | ----------------------------------------- |
-| 节点展示    | 展示知识节点、主题节点、核心节点                      | `mind_nodes`                              |
-| 连线展示    | 展示节点之间的关联关系                           | `mind_edges`                              |
-| 节点大小差异  | 表示节点层级、重要性、连接度                        | `node_weight / degree / importance_score` |
-| 节点颜色差异  | 表示节点类型或状态                             | `node_type / graph_state / cluster_id`    |
-| 点击节点    | 打开节点详情                                | `GET /api/mind/nodes/{id}`                |
-| 拖动节点    | 调整临时布局或建立关系                           | `PATCH /api/mind/nodes/{id}/layout`       |
-| 视图缩放    | 查看全局或局部知识结构                           | 前端布局状态，不直接改业务数据                           |
-| 星辰输入框   | 快速输入碎片内容并生成新节点                        | `POST /api/captures`                      |
-| 右侧浮动工具栏 | 预留 Review / Chat / Calendar / Widgets | `tools_panel_state` 本地状态 + 后续功能 API       |
-
-Mind 的核心不是"显示所有数据"，而是显示"结构化结果"。
-所有进入系统的内容，无论来自 Editor、Dock 导入、Mind 输入框、Home 快捷入口，最终都必须进入统一的结构化流程，再决定它在星云树中的位置。
-
----
-
-### 2.3 星辰输入框
-
-星辰输入框是 Mind 的关键交互之一。
-
-它不是普通输入框，而是 Atlax 的“结构化入口”。
-
-用户在 Mind 视图中输入一句话，例如：
-
-> 下周产品评审会议，需要准备 Q2 路线图和用户反馈数据
-
-系统行为不应该只是保存一条文本，而应该经过以下流程：
-
-1. 创建 Capture 原始记录。
-2. 生成一个临时星辰节点。
-3. 判断是否属于已有项目、主题、标签、时间线。
-4. 如果匹配度高，自动落到对应星群。
-5. 如果匹配度中等，落入待确认轨道。
-6. 如果匹配度低，作为漂浮星辰保留在 Mind 外围。
-7. 用户可拖动该星辰到某个节点或星群，确认归属关系。
-
-这个交互是 MindDock 的核心差异化点。
-用户不需要先选择文件夹，不需要先选标签，不需要打开复杂表单，而是“扔进去，系统先接住”。
-
----
-
-### 2.4 Dock 知识库管理区
-
-Dock 不再是 Entry 的替代品，也不是普通列表页。
-Dock 的定位应该是：
-
-> Mind 的结构化后台，Editor 的内容仓库，用户知识库的 Finder。
-
-Dock 管理的不是“文件”，而是所有已经进入系统的数据对象，包括：
-
-1. 文档。
-2. 星辰碎片。
-3. 项目。
-4. 主题。
-5. 标签。
-6. 来源。
-7. 关系。
-8. 待确认归档项。
-9. 外部导入内容。
-10. 已归档内容。
-
-Dock 至少需要支持三种视图：
-
-| 视图                 | 借鉴对象                      | 用途               |
-| ------------------ | ------------------------- | ---------------- |
-| List View          | 数据库列表                     | 批量管理、筛选、排序       |
-| Card View          | Notion Gallery / Apple 卡片 | 快速浏览内容摘要         |
-| Finder Column View | macOS Finder 分栏           | 按路径、项目、主题、来源逐级浏览 |
-
-Dock 和 Mind 必须双向打通：
-
-| 操作               | 结果             |
-| ---------------- | -------------- |
-| 在 Dock 选择文档      | Mind 高亮对应节点    |
-| 在 Dock 选择项目      | Mind 聚焦对应星群    |
-| 在 Mind 点击节点      | Dock 同步定位到该文档  |
-| 在 Mind 拖动建立关系    | Dock 中关系字段同步更新 |
-| 在 Dock 修改标签 / 项目 | Mind 重新计算边和星群  |
-| 在 Dock 批量导入      | Mind 分批生成星辰和星群 |
-
----
-
-### 2.5 Editor 编辑区（工作行为层）
-
-**重要定位变更：Editor 不再作为一级导航模块，而是工作行为层。**
-
-Editor 是内容生产区，以 Workspace Tabs 标签页形式打开。
-当前阶段必须明确：Atlax 的编辑器不能只是一个大 textarea。
-
-**Editor 打开规则：**
-- Editor 不在顶部一级导航中显示
-- Editor 以 Workspace Tabs 标签页形式出现
-- 所有文档编辑操作统一跳转至 `/editor/:id`
-- 触发来源：Home 点击最近文档、Dock 点击文档、Mind 点击节点对应文档、搜索结果点击文档、Cmd+N 新建文档
-- 禁止：弹窗编辑器、Drawer 编辑器、小窗口编辑器、页面内嵌编辑器
-
-Editor 需要支持两种模式：
-
-| 模式               | 借鉴对象     | 核心体验                         |
-| ---------------- | -------- | ---------------------------- |
-| Classic Markdown | Obsidian | 原生 Markdown、源码编辑、实时预览        |
-| Block Markdown   | Notion   | 块级编辑、拖动块、Slash Command、属性化内容 |
-
-两种模式必须使用同一个底层内容模型，不能做成两个互不兼容的编辑器。
-
-推荐原则：
-
-1. 底层以 Block JSON 作为编辑结构。
-2. Markdown 作为长期资产和导出格式。
-3. Plain Text 作为搜索和结构化算法输入。
-4. Frontmatter / Properties 作为结构化元数据。
-5. 编辑器保存时自动触发结构化流程。
-6. 文档更新后 Mind 中对应节点状态同步更新。
-
----
-
-### 2.6 浮动工具栏
-
-Review、小组件、Chat、Calendar 不应该在当前阶段作为主导航出现。
-它们应该作为右侧浮动工具栏的扩展能力存在。
+- 数据对象是什么，彼此关系如何
+- 状态如何变化，谁触发变化
+- 模块如何协作，数据如何在模块间流动
+- 后端第一阶段应该先建哪些表和接口
 
-原因：
+### 1.2 本文档不是什么
+
+| 不是 | 原因 |
+| --- | --- |
+| UI 说明书 | 视觉规范、组件树、CSS 变量由前端设计文档负责 |
+| 算法公式文档 | TF-IDF、向量相似度、图聚类算法的细节由算法文档负责 |
+| 未来幻想清单 | 所有能力必须标注 [CURRENT-FE + MVP-BE] / [MVP-BE] / [NEXT] / [RESERVED] |
+| API 详细规范 | 只定义契约骨架，完整 OpenAPI spec 由接口文档负责 |
 
-1. 当前产品核心还没有稳，不能继续摊大饼。
-2. 浮动工具可以保留未来扩展感。
-3. 不会破坏 Editor / Mind / Dock 的主结构。
-4. 也符合 Cerebro AI 这类产品的极简主界面思路。
+### 1.3 状态标记约定
 
-本阶段浮动工具栏只做入口样式和状态预留，不做完整功能。
+全文统一使用以下标记：
 
-建议保留四个入口：
+| 标记 | 含义 | 判断标准 |
+| --- | --- | --- |
+| [CURRENT-FE + MVP-BE] | 前端已有 IndexedDB/UI，后端 MVP 必须落地 | 可在 apps/web 中找到对应代码 + 后端需建表/API |
+| [MVP-BE] | 纯后端新建，前端尚无持久化对应 | 后端 MVP 阶段从零建表 |
+| [NEXT] | 第二阶段增强 | MVP 稳定后再建 |
+| [RESERVED] | 未来预留 | 只定义表结构和 API 骨架，不做实现 |
 
-| 工具       | 当前阶段 | 后续能力              |
-| -------- | ---- | ----------------- |
-| Chat     | 入口预留 | 知识库问答、节点解释、输出辅助   |
-| Review   | 入口预留 | 周报、健康检查、停滞提醒      |
-| Calendar | 入口预留 | 时间回看、Time Machine |
-| Widgets  | 入口预留 | 小组件系统             |
-
----
-
-## 3. 产品核心对象模型
-
-Atlax 的数据结构不能按“文件夹 + 文件”来设计，也不能只按“图节点 + 边”来设计。
-
-它应该使用三层模型：
-
-```text
-Content Layer      内容层：文档、块、附件、来源、Markdown
-Structure Layer    结构层：节点、边、星群、标签、项目、时间线
-View Layer         视图层：Mind、Dock、Editor、Calendar、Review
-```
-
-### 3.1 内容层 Content Layer
-
-内容层负责保存真实内容。
-
-核心对象：
-
-| 对象         | 含义               |
-| ---------- | ---------------- |
-| Document   | 一篇完整文档           |
-| Block      | 文档中的块            |
-| Asset      | 图片、附件、音频、视频封面等资源 |
-| Capture    | 临时输入或碎片记录        |
-| SourceItem | 外部来源数据           |
-| ImportJob  | 导入任务             |
-| Version    | 文档版本历史           |
-
-内容层必须稳定、可导出、可迁移。
-
----
-
-### 3.2 结构层 Structure Layer
-
-结构层负责把内容变成知识网络。
-
-核心对象：
-
-| 对象             | 含义        |
-| -------------- | --------- |
-| MindNode       | 星云树中的节点   |
-| MindEdge       | 节点之间的关系   |
-| Cluster        | 星群 / 主题团簇 |
-| Project        | 项目        |
-| Tag            | 标签        |
-| Topic          | 主题        |
-| TimelineAnchor | 时间锚点      |
-| GraphLayout    | 前端布局缓存    |
-| GraphSignal    | 算法信号      |
-| UserAction     | 用户修正行为    |
-
-结构层是 Atlax 最重要的资产层。
-它决定产品是不是“智能知识系统”，还是只是“换皮笔记软件”。
-
----
-
-### 3.3 视图层 View Layer
-
-视图层不直接创造业务数据，只负责用不同方式呈现结构。
-
-| 视图                      | 数据来源                                                 |
-| ----------------------- | ---------------------------------------------------- |
-| **Home**（入口页）           | `recent_documents + user_info + projects + areas`    |
-| Mind（星云树 Nebula Tree）     | `mind_nodes + mind_edges + clusters + graph_layouts` |
-| Dock List               | `documents + mind_nodes + projects + tags`           |
-| Dock Card               | `documents + summary + source + cluster`             |
-| Dock Finder             | `projects / topics / sources / dates + documents`    |
-| **Editor**（工作页，标签形式）   | `documents + blocks + properties`                    |
-| Calendar / Time Machine | `documents + events + timeline_anchors`              |
-| Review                  | `graph_signals + documents + user_actions`           |
-
-**Home 入口页说明：**
-- Home 是登录后的默认首页
-- 提供欢迎语、3 个中央入口卡片（Latest Documents、Upload、Notebook）
-- 左侧弱化侧边栏（Projects、Areas、Archive、New Folder），可自动隐藏
-- 显示最近文档列表
-- 保持 MindDock 当前深色设计语言
-- 入口卡片悬浮时触发聚焦特效（其他模块变暗 + 光效）
-
-**Workspace Tabs 工作区标签说明：**
-- 类似 IDE 的标签系统形态
-- 管理多个打开的页面（Editor、文档、项目等）
-- 支持打开、关闭、激活、恢复、置顶操作
-- 标签状态持久化至后端 workspace_sessions / workspace_open_tables
-- 应用重启后可恢复上次标签状态
-
----
-
-## 4. 节点类型设计
-
-Mind 中不能所有节点都长得一样。
-如果所有节点都只是圆点 + 线，视觉一定会乱，而且没有产品层次。
-
-### 4.1 节点类型
-
-| 类型   | 英文       | 含义                            | 视觉表现         |
-| ---- | -------- | ----------------------------- | ------------ |
-| 根节点  | root     | 当前用户 / 当前知识宇宙                 | 默认隐藏或作为中心引力源 |
-| 领域节点 | domain   | 长期领域，如产品、技术、生活                | 大型星核，低频移动    |
-| 项目节点 | project  | 具体项目，如 Atlax Phase 3          | 明亮星核，有轨道     |
-| 主题节点 | topic    | 某类反复出现的主题                     | 中型节点，形成星群中心  |
-| 文档节点 | document | 已归档文档                         | 普通星体         |
-| 碎片节点 | fragment | 未完全结构化内容                      | 小星点          |
-| 来源节点 | source   | 微信、小红书、B站、Notion、Obsidian 等来源 | 带来源徽记        |
-| 标签节点 | tag      | 标签概念                          | 小型辅助节点       |
-| 问题节点 | question | 系统反问用户的问题                     | 有脉冲效果        |
-| 洞察节点 | insight  | 系统生成的洞察                       | 高亮但不喧宾夺主     |
-| 时间节点 | time     | 日期、周、月、阶段                     | 细线环形节点       |
-
----
-
-### 4.2 节点状态
-
-| 状态  | 英文         | 含义             | 视觉表现     |
-| --- | ---------- | -------------- | -------- |
-| 漂浮  | drifting   | 尚未确定归属         | 外围微光星尘   |
-| 待确认 | suggested  | 系统已推荐归属，等待用户确认 | 柔和闪烁边框   |
-| 已锚定 | anchored   | 已进入稳定结构        | 清晰节点     |
-| 已归档 | archived   | 已确认长期保存        | 稳定亮度     |
-| 冷却  | dormant    | 长期未访问          | 亮度降低     |
-| 活跃  | active     | 最近编辑、访问或关联增强   | 节点轻微呼吸   |
-| 冲突  | conflicted | 多个归属冲突         | 节点出现分裂光环 |
-| 孤立  | isolated   | 缺少有效关系         | 周围无线或弱线  |
-
 ---
 
-### 4.3 节点大小规则
+## 2. 产品结构总览
 
-节点大小不能随便写死，必须有含义。
+### 2.1 核心概念：Atlax Intelligence Spine（知识智能主干）
 
-推荐计算：
+Atlax Intelligence Spine 不是一项功能，而是产品的主链路骨架：
 
-```text
-node_size =
-base_size
-+ degree_score * 0.25
-+ recent_activity_score * 0.2
-+ document_weight_score * 0.2
-+ user_pin_score * 0.2
-+ cluster_center_score * 0.15
 ```
-
-解释：
-
-| 因子                    | 含义             |
-| --------------------- | -------------- |
-| degree_score          | 节点连接数量         |
-| recent_activity_score | 最近是否被编辑、访问、链接  |
-| document_weight_score | 文档长度、引用次数、任务数量 |
-| user_pin_score        | 用户是否手动置顶       |
-| cluster_center_score  | 是否是星群中心        |
-
-限制：
-
-```text
-fragment: 4 - 8 px
-document: 8 - 18 px
-topic: 18 - 32 px
-project: 32 - 52 px
-domain: 52 - 72 px
+输入 → 接住 → 标准化 → 内容入库 → 结构化 → 推荐 → 用户修正 → 反馈记录 → 下次更准
 ```
-
-不要让节点过大，否则会变成儿童玩具感。
-大节点只应该代表真正重要的结构中心。
-
----
-
-## 5. 连线设计
-
-当前 Mind 视图最大的问题之一是连线容易显得粗糙、杂乱、廉价。
-连线必须重新设计为“信息层级”，而不是简单画线。
-
-### 5.1 连线类型
 
-| 类型   | 英文           | 含义              | 视觉     |
-| ---- | ------------ | --------------- | ------ |
-| 父子关系 | parent_child | 项目 - 文档、主题 - 文档 | 稳定细线   |
-| 语义相似 | semantic     | 内容相似            | 极细半透明线 |
-| 引用关系 | reference    | 文档内链接、块引用       | 明亮细线   |
-| 来源关系 | source       | 来自同一平台或导入批次     | 虚线或弱线  |
-| 时间关系 | temporal     | 同一天、同一周、同一阶段    | 弧线     |
-| 用户确认 | confirmed    | 用户手动建立          | 更稳定、更亮 |
-| 系统建议 | suggested    | 算法推荐            | 虚线、低透明 |
-| 冲突关系 | conflict     | 系统不确定或多重归属冲突    | 暖色弱线   |
+它是贯穿 Home、Mind、Dock、Editor、WorkspaceTabs 所有模块的**数据生命线**。任何内容进入系统后，无论是 Mind 星辰输入框的一句话、Editor 保存的一篇文档、还是 Dock 批量导入的文件，都必须沿着这条主干流动，不存在旁路。
 
----
+### 2.2 产品结构图
 
-### 5.2 连线强度规则
-
-```text
-edge_strength =
-relation_weight * 0.35
-+ confidence * 0.25
-+ user_confirmed_weight * 0.25
-+ recent_interaction_weight * 0.15
 ```
-
-视觉映射：
-
-| 强度         | 视觉                 |
-| ---------- | ------------------ |
-| 0.0 - 0.3  | 几乎不可见，只在 hover 时显示 |
-| 0.3 - 0.55 | 弱线，低透明             |
-| 0.55 - 0.8 | 常规细线               |
-| 0.8 - 1.0  | 稳定主线               |
-
-连线宽度建议：
-
-```text
-weak: 0.4px - 0.7px
-normal: 0.8px - 1.2px
-strong: 1.3px - 1.8px
+                    ┌──────────────────────────────────────┐
+                    │        Atlax Intelligence Spine       │
+                    │         知识智能主干 / 本地智能骨架        │
+                    └──────────────────────────────────────┘
+                                      │
+        ┌─────────────────────────────┼─────────────────────────────┐
+        │                             │                             │
+        ▼                             ▼                             ▼
+   ┌──────────┐               ┌──────────────┐              ┌──────────┐
+   │  Home    │               │  Mind Star   │              │  Import  │
+   │  入口页   │               │  Input/Editor │              │  批量导入  │
+   └────┬─────┘               └──────┬───────┘              └────┬─────┘
+        │                            │                           │
+        └────────────────────────────┼───────────────────────────┘
+                                     │
+                                     ▼
+                            ┌─────────────────┐
+                            │     Capture     │  ← 原始输入层
+                            │   原始内容捕获     │
+                            └────────┬────────┘
+                                     │
+                                     ▼
+                     ┌───────────────────────────────┐
+                     │  Document / Block / Source    │  ← 内容层 Content Layer
+                     │  长期内容资产                    │
+                     └───────────────┬───────────────┘
+                                     │
+                                     ▼
+                     ┌───────────────────────────────┐
+                     │  MindNode / MindEdge / Cluster│  ← 结构层 Structure Layer
+                     │  结构化知识投影                  │
+                     └───────────────┬───────────────┘
+                                     │
+              ┌──────────────────────┼──────────────────────┐
+              │                      │                      │
+              ▼                      ▼                      ▼
+        ┌──────────┐          ┌──────────┐          ┌──────────────┐
+        │   Dock   │◄────────►│   Mind   │◄────────►│   Editor     │
+        │ 知识库管理 │ 双向联动  │ 星云树视图 │ 保存触发  │  工作行为层   │
+        └──────────┘          └──────────┘          └──────────────┘
+              │                      │                      │
+              └──────────────────────┼──────────────────────┘
+                                     │
+                                     ▼
+                     ┌───────────────────────────────┐
+                     │  Recommendation / UserEvent   │  ← 智能层 Intelligence Layer
+                     │  Review 预留                    │
+                     └───────────────────────────────┘
 ```
-
-不要大面积使用 2px 以上的线。
-一旦线太粗，星云树会立刻变成廉价流程图。
-
----
-
-### 5.3 连线显示策略
-
-为了避免 Cerebro Brain 那种高级感被破坏，Mind 视图必须做 LOD 分层显示。
-
-LOD = Level of Detail。
-
-| 缩放级别 | 显示内容               |
-| ---- | ------------------ |
-| 全局远景 | 只显示大节点、星群轮廓、主干连线   |
-| 中景   | 显示项目、主题、部分文档、确认连线  |
-| 近景   | 显示具体文档、小节点、弱关系     |
-| 聚焦节点 | 显示该节点一跳、二跳关系，隐藏无关线 |
 
-规则：
+### 2.3 产品原则
 
-1. 默认不展示所有线。
-2. 鼠标 hover 节点时显示邻接边。
-3. 点击节点后显示一跳强关系和二跳弱关系。
-4. 拖动节点时只显示可连接候选节点。
-5. 星群内部线条默认隐藏，只显示星群边界和核心节点。
-6. 用户需要探索时再展开细节。
+Atlax 不是"一堆页面 + 一个编辑器 + 一个图谱"，而是：
 
-Mind 的美感不是靠“显示更多”，而是靠“隐藏得更聪明”。
+> 编辑产生内容 → 内容进入结构 → 结构形成星云 → 星云反过来帮助用户管理和思考
 
----
-
-## 6. 星云树视觉升级方案
-
-当前节点和连线看起来粗糙，本质原因不是动效问题，而是视觉层级不够。
-
-星云树需要从“节点图”升级为“空间中的知识星系”。
-
-### 6.1 视觉关键词
-
-| 关键词  | 设计要求                  |
-| ---- | --------------------- |
-| 深邃   | 背景不能纯黑，要有低亮度渐变、空间雾感   |
-| 精致   | 节点不能只是纯色圆，要有内核、光晕、边缘  |
-| 克制   | 颜色数量少，避免花哨            |
-| 有秩序  | 星群分布有结构，不是随机散开        |
-| 有生命感 | 节点轻微呼吸、线条轻微流动         |
-| 专业   | 不出现过度卡通化图标，不使用大面积高饱和色 |
-| 空间感  | 节点有 z-depth、视差、远近层级   |
-
----
+核心原则：
 
-### 6.2 推荐配色
-
-基础色：
-
-```text
-background-deep: #02040A
-background-mid:  #070A12
-panel:           rgba(18, 22, 30, 0.72)
-border:          rgba(255, 255, 255, 0.08)
-text-primary:    #F4F7FB
-text-secondary:  #9BA6B8
-text-muted:      #5F6B7D
-```
-
-星云色：
-
-```text
-atlax-blue:      #4F7DFF
-nebula-cyan:     #10D5FF
-nebula-teal:     #18E0B5
-nebula-violet:   #7B61FF
-nebula-amber:    #F4B860
-danger-soft:     #FF6B81
-```
-
-使用规则：
+1. **Home** 是默认入口页 [CURRENT-FE + MVP-BE]，用户从这里开始工作。
+2. **Mind** 是星云树知识视图，是核心视觉舞台 [CURRENT-FE + MVP-BE]，只展示结构化结果，不展示全部数据。
+3. **Dock** 是知识库管理区，是 Mind 的结构化后台 [CURRENT-FE + MVP-BE]。
+4. **Editor** 是工作行为层，通过 WorkspaceTabs 打开，不作为一级导航 [CURRENT-FE + MVP-BE]。
+5. **WorkspaceTabs** 是工作区标签系统，负责打开、关闭、激活、恢复、置顶 [CURRENT-FE + MVP-BE]。
+6. 取消 Entry 模块，避免产品心智分裂 [CURRENT-FE：前端已无独立 Entry 页面]。
+7. Review / Chat / Calendar / Widgets 当前只做入口或结构预留 [CURRENT-FE：浮动工具入口 + RESERVED：后端表结构]，不进入本阶段主交付。
+8. Editor 保存必须触发结构化流程 [MVP-BE]。
+9. Dock 和 Mind 必须双向联动 [MVP-BE]。
+10. Mind 不展示全部数据，只展示结构化结果 [CURRENT-FE：前端概念，MVP-BE：后端保证]。
 
-1. 紫色只用于高层级节点或用户确认的重要节点。
-2. 青色用于项目 / 主题中心。
-3. 绿色用于普通文档和已归档节点。
-4. 灰蓝色用于冷却、弱关系、历史内容。
-5. 红色不要常用，只用于冲突或异常。
-6. 所有颜色必须带透明度，不使用纯色块。
-
 ---
-
-### 6.3 节点视觉构成
 
-每个节点由四层组成：
+## 3. 产品主闭环
 
-```text
-1. Core       内核：真实节点大小
-2. Glow       光晕：表示活跃度 / 重要性
-3. Ring       环：表示状态
-4. Label      标签：根据缩放和 hover 决定是否显示
-```
+以下 5 条闭环是后端第一阶段必须打通的完整链路。每条闭环都是一个不可拆分的原子交付单元。
 
-#### 普通文档节点
+### 3.1 快速输入闭环 [MVP-BE]
 
-```text
-core: 6 - 12px
-glow: 8 - 20px，透明度 0.12 - 0.24
-ring: 默认不显示
-label: hover 或近景显示
 ```
-
-#### 项目节点
-
-```text
-core: 18 - 28px
-glow: 36 - 70px
-ring: 显示一圈淡色轨道
-label: 中景显示
+Mind Star Input（星辰输入框）
+  → POST /api/captures → 写入 captures 表，status=raw
+  → normalize → 生成 Document（status=captured）
+  → classify + extract → 生成 MindNode（state=drifting/suggested）
+  → Landing Suggestion → 前端展示推荐落点
+  → User Feedback（接受/拒绝/拖动）→ POST /api/recommendations/{id}/feedback
+  → 写入 recommendation_events
 ```
-
-#### 领域节点
 
-```text
-core: 32 - 48px
-glow: 80 - 140px
-ring: 双层轨道
-label: 远景也显示
-```
+**触发者**：用户在 Mind 星辰输入框输入内容并提交
 
-#### 待确认节点
+**涉及表**：captures → documents → mind_nodes → recommendation_events
 
-```text
-core: 5 - 10px
-glow: 呼吸闪烁
-ring: 虚线环
-label: 不默认显示
-```
+**同步变化**：Mind 画布出现新节点（漂浮或建议状态），Dock 列表出现新条目
 
-#### 漂浮星辰
+### 3.2 编辑闭环 [MVP-BE]
 
-```text
-core: 2 - 5px
-glow: 微弱
-position: 星云外围
-motion: 缓慢漂浮
 ```
-
----
-
-### 6.4 星群视觉
-
-星群不是文件夹，不应该画成框。
-
-星群应该是淡淡的“星云雾区”。
-
-每个 cluster 使用：
-
-```text
-nebula_hull:
-  type: radial-gradient / canvas blur region
-  opacity: 0.04 - 0.12
-  color: cluster_theme_color
-  shape: irregular blob
+Editor Manual Save（Cmd+S / 显式 Save 按钮）
+  → PUT /api/documents/{id}
+  → Extract Plain Text（从 Markdown / Block JSON）
+  → Update Document（更新 plain_text、content_hash、updated_at）
+  → Update MindNode（更新 summary、activity_score、updated_at）
+  → Recompute Relations（触发 edge 重算）
+  → Refresh Dock List + Mind Canvas
 ```
-
-规则：
-
-1. 星群中心是 topic / project 节点。
-2. 星群内部文档围绕中心分布。
-3. 星群之间保持一定距离。
-4. 星群之间只显示少量强关系。
-5. 星群边界非常淡，不要像卡片边框。
-6. 鼠标进入星群后，边界略微增强。
-7. 点击星群后进入 Focus Mode。
-
----
-
-### 6.5 Focus Mode
 
-当用户点击一个项目节点或主题节点时，进入局部聚焦。
+**触发者**：用户在 Editor 中手动保存文档（Cmd+S / 显式 Save）
 
-Focus Mode 行为：
+**涉及表**：documents → mind_nodes → mind_edges
 
-1. 当前节点移动到视觉中心。
-2. 一跳节点清晰显示。
-3. 二跳节点半透明显示。
-4. 无关星群降低透明度。
-5. 右侧弹出节点详情浮层。
-6. Dock 如果打开，应同步定位到对应项目或文档。
-7. Esc 退出 Focus Mode。
+**同步变化**：Mind 中对应节点摘要和活跃度更新，Dock 中更新时间刷新
 
-这样可以解决“全局美观”和“局部可用”之间的冲突。
+**保存分层说明**：
+- **自动保存**（idle debounce / 关闭标签 / 切换文档）：仅保存文档内容、草稿状态、`content_hash`，不触发完整结构化重算。
+- **手动保存**（Cmd+S / 显式 Save）：触发完整编辑闭环，包括 plain_text 提取、MindNode 更新、Edge 重算。
+- **轻量结构化检查**（idle debounce / 关闭标签 / 切换文档时可选触发）：只做基本的 content_hash 比对和 node 存在性校验，不执行昂贵的 edge recompute。
 
----
-
-## 7. Mind 布局算法设计
-
-Mind 不能使用纯随机布局。
-随机布局会导致每次打开都不同，用户无法建立空间记忆。
-
-推荐使用：
-
-```text
-稳定布局 + 增量布局 + 局部力导向
-```
-
-D3 force simulation 可以作为第一阶段布局引擎，适合处理节点、连接、碰撞、中心力等基础关系；后续如果数据量变大，可考虑用 Sigma.js / Graphology 这类面向图结构和 WebGL 渲染的方案承接大规模渲染。D3 force 官方提供 forceLink、forceManyBody、forceCollide 等力模型能力；Sigma.js 官方定位是面向图网络的 WebGL 渲染库。
-
-### 7.1 布局层级
+### 3.3 管理闭环 [MVP-BE]
 
-```text
-Root Gravity       用户根引力，默认不可见
-Domain Ring        领域环
-Project Belt       项目带
-Topic Cluster      主题星群
-Document Orbit     文档轨道
-Fragment Dust      碎片星尘
 ```
-
-### 7.2 坐标系统
-
-每个节点需要保存布局缓存：
-
-```json
-{
-  "node_id": "node_xxx",
-  "layout_scope": "global",
-  "x": 120.4,
-  "y": -80.2,
-  "z": 0.38,
-  "vx": 0,
-  "vy": 0,
-  "pinned": false,
-  "last_layout_at": "2026-04-26T20:10:00Z"
-}
-```
-
-字段说明：
-
-| 字段             | 含义                       |
-| -------------- | ------------------------ |
-| x / y          | 画布坐标                     |
-| z              | 视觉深度                     |
-| vx / vy        | 动画速度缓存                   |
-| pinned         | 用户是否手动固定位置               |
-| layout_scope   | global / cluster / focus |
-| last_layout_at | 上次布局更新时间                 |
-
----
-
-### 7.3 稳定布局规则
-
-1. 已确认节点的位置尽量稳定。
-2. 新节点只能局部影响布局，不能重排整个宇宙。
-3. 用户手动拖动过的节点默认 pinned。
-4. 同一项目 / 主题内的新文档进入该星群边缘。
-5. 未确认节点进入外围漂浮区。
-6. 批量导入时先生成临时星群，不立即打散到全局。
-7. 每次布局变更都记录 `graph_events`，支持撤销。
-
----
-
-### 7.4 新节点落点算法
-
-新内容进入系统后，计算候选位置：
-
-```text
-candidate_cluster = top matched cluster
-candidate_parent = top matched project/topic node
-position =
-  if confidence >= 0.78:
-      parent orbit position
-  else if confidence >= 0.55:
-      suggested orbit position
-  else:
-      drifting dust area
+Dock 修改标签/项目/归档状态
+  → PUT /api/documents/{id}（properties 更新）
+  → 写入 document_tags（标签关系变更）
+  → 更新 documents.primary_project_id（项目归属变更）
+  → Update Structure Layer（节点归属变化）
+  → Mind Recompute Nodes/Edges/Clusters（重算星群归属和连线）
+  → Refresh Mind Canvas
 ```
-
-落点具体规则：
 
-| 置信度         | 行为            |
-| ----------- | ------------- |
-| >= 0.78     | 自动锚定到星群       |
-| 0.55 - 0.78 | 作为建议节点，等待用户确认 |
-| < 0.55      | 漂浮在外层，作为未归档星辰 |
+**触发者**：用户在 Dock 中修改文档属性
 
-不要为了显得“智能”而强行归类。
-错归类比不归类更伤用户信任。
+**涉及表**：documents → document_tags → mind_nodes → mind_edges → clusters → tags
 
----
-
-## 8. 自动落库系统设计
-
-自动落库是 Atlax 的核心能力。
-这里必须严肃设计，不能做成“根据关键词随便打个标签”。
-
-### 8.1 自动落库输入来源
-
-| 来源          | 示例                    | 接入方式                             |
-| ----------- | --------------------- | -------------------------------- |
-| Mind 星辰输入   | 一句话想法                 | `POST /api/captures`             |
-| Editor 文档保存 | Markdown / Block 文档   | `POST /api/documents`            |
-| Dock 手动创建   | 新建项目 / 文档             | `POST /api/dock/items`           |
-| Obsidian 导入 | Markdown 文件夹          | Import Adapter                   |
-| Notion 导入   | Markdown / HTML / CSV | Import Adapter                   |
-| 微信          | 文章链接、收藏、手动复制内容        | Web Clip / Manual Import         |
-| 小红书         | 分享链接、截图、手动摘录          | Link / OCR Later                 |
-| 抖音          | 视频链接、标题、描述、字幕摘要       | Link Metadata / Transcript Later |
-| B站          | 视频链接、标题、简介、字幕         | Link Metadata / Transcript       |
-| 网页          | URL / Readability 内容  | Web Clipper                      |
-| PDF / 图片    | 文件导入                  | Parser / OCR Later               |
-
-注意：
-中国大陆信息流平台接入必须先采用“用户主动导入 / 分享 / 复制 / 上传”的方式，不做绕过平台权限或反爬策略的采集。
+**同步变化**：Mind 中节点位置、星群归属、连线强度和类型同步变化
 
----
+### 3.4 工作区闭环 [CURRENT-FE + MVP-BE]
 
-### 8.2 自动落库主流程
-
-```text
-Input
-  ↓
-Capture / Import Item
-  ↓
-Normalize 标准化
-  ↓
-Extract 信息抽取
-  ↓
-Classify 分类
-  ↓
-Link 关系生成
-  ↓
-Cluster 星群归属
-  ↓
-Layout 视觉落点
-  ↓
-Persist 入库
-  ↓
-Feedback 前端反馈
 ```
-
----
-
-### 8.3 标准化 Normalize
-
-不同来源的数据格式完全不同，所以必须先转换成 Atlax Universal Document。
-
-统一格式：
-
-```json
-{
-  "aud_version": "1.0",
-  "source": {
-    "source_type": "wechat | xiaohongshu | douyin | bilibili | obsidian | notion | manual | web",
-    "source_url": "",
-    "source_title": "",
-    "source_author": "",
-    "captured_at": "",
-    "raw_id": "",
-    "import_job_id": ""
-  },
-  "content": {
-    "title": "",
-    "markdown": "",
-    "plain_text": "",
-    "blocks": [],
-    "assets": []
-  },
-  "metadata": {
-    "created_at": "",
-    "updated_at": "",
-    "language": "zh-CN",
-    "tags": [],
-    "properties": {},
-    "frontmatter": {}
-  },
-  "relations": {
-    "outgoing_links": [],
-    "backlinks_hint": [],
-    "embedded_assets": []
-  }
-}
+WorkspaceTabs 打开/关闭/激活/置顶
+  → 写入 workspace_open_tabs（upsert）
+  → 更新 workspace_sessions（active_tab_id, last_activity_at）
+  → 持久化至后端
+  → 刷新后 restoreWorkspaceTabs 恢复全部标签状态
 ```
-
-所有导入源必须先转成 AUD，再进入后续流程。
-不能让每个导入源直接写业务表，否则系统后期一定会崩。
-
----
-
-### 8.4 信息抽取 Extract
-
-MVP 不依赖 LLM，也要能工作。
-
-抽取字段：
-
-| 字段       | 方法                         |
-| -------- | -------------------------- |
-| 标题       | 原始标题 / 首行 / H1             |
-| 摘要       | 前 N 字 / 标题组合               |
-| 关键词      | TF-IDF / 词频 / 标题权重         |
-| 时间       | created_at / 文中日期 / 导入时间   |
-| 项目候选     | 已有项目名匹配                    |
-| 标签候选     | 标签词典匹配                     |
-| 来源       | source_type                |
-| 人名 / 产品名 | 简单实体识别                     |
-| 链接       | Markdown link / URL        |
-| 任务       | checkbox / “待办”“需要”“下周”等模式 |
-| 状态       | 未归档 / 待确认 / 已归档            |
-
-中文场景下，算法必须考虑中文分词。
-可先使用轻量分词策略：
-
-1. 标点切分。
-2. 标题词权重提升。
-3. 已有项目名 / 标签名优先匹配。
-4. 用户历史高频词优先。
-5. 2-6 字短语抽取。
-6. 英文、数字、版本号保持原样。
 
----
+**触发者**：用户操作 WorkspaceTabs（打开文档、关闭标签、切换标签、置顶）
 
-### 8.5 分类 Classify
+**涉及表**：workspace_sessions → workspace_open_tabs
 
-分类不是简单 tag。
-分类要决定这个内容应该进入哪个知识位置。
+**同步变化**：无跨模块同步，仅 WorkspaceTabs 自身状态持久化
 
-候选归属：
+### 3.5 反馈闭环 [MVP-BE 数据预留]
 
-```text
-Project
-Topic
-Domain
-Source
-Time
-Tag
 ```
-
-推荐评分：
-
-```text
-landing_score =
-title_match_score * 0.25
-+ keyword_match_score * 0.2
-+ content_similarity_score * 0.2
-+ user_history_score * 0.15
-+ source_context_score * 0.1
-+ time_context_score * 0.1
+用户接受/拒绝/修改推荐
+  → POST /api/recommendations/{id}/feedback
+  → 写入 recommendation_events（event_type=accepted/rejected/modified/ignored）
+  → 写入 user_behavior_events（如需记录操作上下文）
+  → 后续算法学习（NEXT：更新 preference_profiles、调整 confidence 权重）
 ```
 
-说明：
+**触发者**：用户在 Mind 或 Dock 中对推荐落点做出反馈
 
-| 分数                       | 含义              |
-| ------------------------ | --------------- |
-| title_match_score        | 标题是否命中已有项目 / 主题 |
-| keyword_match_score      | 关键词是否重合         |
-| content_similarity_score | 内容相似度           |
-| user_history_score       | 用户过去是否经常这样归档    |
-| source_context_score     | 来源是否与某类内容稳定相关   |
-| time_context_score       | 是否属于近期活跃项目      |
+**涉及表**：recommendation_events → user_behavior_events → [NEXT] preference_profiles
 
----
-
-### 8.6 关系生成 Link
-
-自动落库的重点不是“放进文件夹”，而是建立关系。
-
-关系候选来源：
-
-| 来源          | 关系类型           |
-| ----------- | -------------- |
-| Markdown 链接 | reference      |
-| 相同项目        | parent_child   |
-| 相同标签        | tag_related    |
-| 内容相似        | semantic       |
-| 同一来源        | source_related |
-| 同一时间段       | temporal       |
-| 用户手动拖动      | user_confirmed |
-| 系统推荐        | suggested      |
-
-关系评分：
-
-```text
-edge_confidence =
-explicit_link_score * 0.3
-+ semantic_score * 0.25
-+ shared_project_score * 0.2
-+ shared_tag_score * 0.1
-+ time_score * 0.05
-+ user_behavior_score * 0.1
-```
-
-规则：
+**同步变化**：MVP 阶段仅记录事件，不做实时权重调整；NEXT 阶段回馈算法
 
-1. 用户手动建立的关系优先级最高。
-2. Markdown 明确链接优先级高于语义相似。
-3. 系统推荐关系默认不等于用户确认关系。
-4. 低置信度关系不能强行展示成强线。
-5. 每条系统关系必须保存 evidence，方便用户理解为什么关联。
-
 ---
-
-### 8.7 自动落库防翻车机制
-
-自动落库最怕两件事：
-
-1. 系统乱归类。
-2. 用户不知道系统为什么这么归类。
 
-因此必须设计防翻车机制。
+## 4. 四层对象模型
 
-#### 机制一：三段式归档
-
-| 置信度 | 状态   | 用户感受      |
-| --- | ---- | --------- |
-| 高   | 自动锚定 | 系统直接放好    |
-| 中   | 建议归档 | 系统推荐，用户确认 |
-| 低   | 漂浮星辰 | 系统先接住，不乱动 |
-
-#### 机制二：所有自动行为可撤销
-
-每次自动落库写入：
-
-```json
-{
-  "event_type": "auto_landing",
-  "target_id": "doc_xxx",
-  "before": {},
-  "after": {},
-  "reason": [],
-  "created_at": ""
-}
-```
-
-用户可以 Undo：
-
-```http
-POST /api/graph-events/{event_id}/rollback
-```
+从原来的 Content / Structure / View 三层升级为四层，**新增 Intelligence Layer**。它是自动落库、推荐、Review、Nudge 的数据基础，但本文档只定义对象和关系，不展开算法细节。
 
-#### 机制三：用户修正会反哺规则
-
-如果用户把 A 从“技术”拖到“产品”，系统记录：
-
-```json
-{
-  "action": "move_node",
-  "from_cluster": "技术",
-  "to_cluster": "产品",
-  "content_keywords": ["路线图", "用户反馈", "需求"],
-  "confirmed": true
-}
-```
+### 4.1 Content Layer 内容层 [CURRENT-FE + MVP-BE]
 
-后续类似内容提高“产品”归属权重。
+内容层负责保存真实内容，是长期资产层。必须稳定、可导出、可迁移。
 
-#### 机制四：批量导入不立即全量入图
+| 对象 | 状态 | 含义 |
+| --- | --- | --- |
+| Document | [CURRENT-FE + MVP-BE] | 一篇完整文档，长期内容资产。不等于 Entry。 |
+| Block | [CURRENT-FE + MVP-BE] | 文档中的块（段落、标题、列表、代码等） |
+| Asset | [MVP-BE] | 图片、附件、音频、视频封面等二进制资源 |
+| Capture | [CURRENT-FE + MVP-BE] | 临时输入或碎片记录，不等于 dockItem |
+| SourceItem | [MVP-BE] | 外部来源数据（微信文章、B站视频等原始引用） |
+| ImportJob | [NEXT] | 批量导入任务 |
+| ImportItem | [NEXT] | 导入任务中的单条记录 |
+| Version | [NEXT] | 文档版本历史 |
 
-批量导入时：
+**关键区别**：
 
-1. 先进入 Import Staging。
-2. 解析和标准化。
-3. 去重。
-4. 分批生成临时星群。
-5. 显示导入预览。
-6. 用户确认后再正式锚定。
-7. 大批量数据分批布局，不一次性重排整个 Mind。
+- `Document !== Entry`：Entry 是历史概念，正在废弃。Document 是长期内容资产，包含 markdown / plain_text / block_json 三种格式。
+- `Capture !== DockItem`：Capture 是原始输入记录。DockItem 如果存在，只能是视图/管理投影，不应成为核心资产模型。
 
-#### 机制五：系统推荐必须有解释
+### 4.2 Structure Layer 结构层 [CURRENT-FE + MVP-BE]
 
-每个建议归档都要提供原因：
+结构层负责把内容变成知识网络，是 Atlax 最重要的资产层。
 
-```text
-推荐归入「Atlax Phase 3」
-原因：
-- 标题命中 “Phase 3”
-- 内容包含 “结构化 / 星云树 / Dock”
-- 与 12 篇已有文档相似
-- 最近 7 天该项目活跃
-```
+| 对象 | 状态 | 含义 |
+| --- | --- | --- |
+| MindNode | [CURRENT-FE + MVP-BE] | 星云树中的节点，是内容的结构投影 |
+| MindEdge | [CURRENT-FE + MVP-BE] | 节点之间的关系 |
+| Cluster | [CURRENT-FE + MVP-BE] | 星群/主题团簇 |
+| Project | [CURRENT-FE + MVP-BE] | 项目，对应前端 Collection（collectionType=project） |
+| Topic | [CURRENT-FE + MVP-BE] | 主题 |
+| Tag | [CURRENT-FE + MVP-BE] | 标签 |
+| TimelineAnchor | [NEXT] | 时间锚点（日期、周、月等时间维度聚合） |
+| GraphLayout | [CURRENT-FE + MVP-BE] | 节点布局缓存（x, y, z, pinned） |
 
----
+**关键设计**：
 
-## 9. 批量导入结构化设计
-
-批量导入是后续增长的关键。
-如果用户从 Obsidian / Notion / 微信收藏 / B站学习资料导入大量内容，系统不能卡死，也不能把 Mind 搞成垃圾场。
-
-### 9.1 导入流程
-
-```text
-Create Import Job
-  ↓
-Scan Files / Links
-  ↓
-Parse Source
-  ↓
-Convert to AUD
-  ↓
-Deduplicate
-  ↓
-Extract Metadata
-  ↓
-Generate Candidate Clusters
-  ↓
-Preview
-  ↓
-Confirm
-  ↓
-Batch Persist
-  ↓
-Incremental Layout
-```
+- MindNode 不是独立创建的对象，而是内容的结构投影。**文档类型节点默认 1 Document ↔ 1 MindNode**。Project / Topic / Tag / Source / Cluster Center 类型节点可以没有 Document。一个聚合节点可以关联多个 Documents（通过 `mind_node_documents` 关联表）。
+- MindEdge 的多条边可能连接同一对节点（不同 relation_type），不允许重复边但允许同节点对多条不同类型边。
 
----
+### 4.3 Intelligence Layer 智能层 [新增，MVP-BE]
 
-### 9.2 ImportJob 表
-
-```sql
-CREATE TABLE import_jobs (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  workspace_id TEXT NOT NULL,
-  source_type TEXT NOT NULL,
-  status TEXT NOT NULL,
-  total_count INTEGER DEFAULT 0,
-  parsed_count INTEGER DEFAULT 0,
-  imported_count INTEGER DEFAULT 0,
-  failed_count INTEGER DEFAULT 0,
-  options_json TEXT,
-  error_log TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-```
+**这是本次重构新增的层**。它是自动落库反馈、推荐优化、用户偏好学习的持久化基础。
 
----
+| 对象 | 状态 | 含义 |
+| --- | --- | --- |
+| UserBehaviorEvent | [MVP-BE] | 用户操作行为事件（拖动节点、修改归属、手动连线等） |
+| Recommendation | [MVP-BE] | 推荐对象（落点、连线、星群等），含状态与置信度 |
+| RecommendationEvent | [MVP-BE] | 推荐事件日志（生成、展示、接受、拒绝、修改、忽略） |
+| FeatureSnapshot | [NEXT] | 内容特征快照（用于训练和回溯对比） |
+| PreferenceProfile | [NEXT] | 用户偏好画像（分类权重、标签偏好、时间偏好等） |
+| RhythmProfile | [NEXT] | 用户使用节律画像（活跃时段、输入频率、回顾周期） |
+| GraphSignal | [RESERVED] | 图谱健康信号（孤立节点、停滞项目、重复主题等） |
+| AlgorithmCache | [RESERVED] | 算法中间结果缓存（向量、聚类中间态等） |
 
-### 9.3 ImportItem 表
-
-```sql
-CREATE TABLE import_items (
-  id TEXT PRIMARY KEY,
-  import_job_id TEXT NOT NULL,
-  source_type TEXT NOT NULL,
-  raw_path TEXT,
-  raw_url TEXT,
-  raw_title TEXT,
-  raw_content_hash TEXT,
-  aud_json TEXT,
-  status TEXT NOT NULL,
-  matched_document_id TEXT,
-  error_message TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-```
+**MVP 必须实现**：`recommendations` 和 `recommendation_events`、`user_behavior_events` 三张表，作为反馈闭环的数据基础。即使 MVP 阶段不接算法，也必须记录这些事件，避免后续补数据。
 
----
+### 4.4 View Layer 视图层 [CURRENT-FE]
 
-### 9.4 去重规则
-
-```text
-dedupe_score =
-content_hash_match * 0.5
-+ title_similarity * 0.2
-+ source_url_match * 0.2
-+ created_time_similarity * 0.1
-```
+视图层不直接创造业务数据，只负责用不同方式呈现结构和内容。
 
-| 分数        | 行为          |
-| --------- | ----------- |
-| >= 0.9    | 判定重复，不重复导入  |
-| 0.7 - 0.9 | 标记可能重复，用户确认 |
-| < 0.7     | 正常导入        |
+| 视图 | 状态 | 数据来源 |
+| --- | --- | --- |
+| Home（入口页） | [CURRENT-FE + MVP-BE] | recent_documents + user_info + projects |
+| Mind（星云树） | [CURRENT-FE + MVP-BE] | mind_nodes + mind_edges + clusters + graph_layouts |
+| Dock List | [CURRENT-FE + MVP-BE] | documents + mind_nodes + projects + tags + document_tags |
+| Dock Card | [CURRENT-FE + MVP-BE] | documents + summary + source + cluster + tags |
+| Dock Finder | [NEXT] | projects / topics / sources / dates + documents |
+| Editor（标签形式） | [CURRENT-FE + MVP-BE] | documents + blocks + properties |
+| Floating Tools | [CURRENT-FE] | 入口预留，各工具后续独立接入 |
 
 ---
-
-### 9.5 Obsidian 导入
-
-支持内容：
 
-| Obsidian 内容 | Atlax 映射                      |
-| ----------- | ----------------------------- |
-| Markdown 文件 | Document                      |
-| 文件夹         | Project / Topic / Source Path |
-| Frontmatter | Document Properties           |
-| `[[双链]]`    | MindEdge reference            |
-| Tag         | Tag Node                      |
-| 图片附件        | Asset                         |
-| Canvas      | 后续支持，先作为 Asset / Document     |
-| Daily Notes | Time Anchor                   |
+## 5. 核心对象生命周期
 
-Obsidian 的双向链接、出链、反链、图谱是其核心知识管理能力之一，Atlax 在导入时必须优先保留这些明确关系，而不是只导入纯文本。
+每个生命周期说明：谁触发、写入哪些表、哪些模块会同步变化。
 
----
+### 5.1 Capture 生命周期 [MVP-BE]
 
-### 9.6 Notion 导入
-
-支持内容：
-
-| Notion 内容         | Atlax 映射               |
-| ----------------- | ---------------------- |
-| Page              | Document               |
-| Block             | Block                  |
-| Database          | Collection / Dock View |
-| Database Property | Document Property      |
-| Relation          | MindEdge               |
-| Tag / Select      | Tag Node               |
-| Sub-page          | Parent-child Edge      |
-| Attachment        | Asset                  |
-| Exported Markdown | Document Markdown      |
-| Exported CSV      | Collection Data        |
-
-Notion 导入时不能完全照搬数据库结构。
-必须转换为 Atlax 的统一结构：
-
-```text
-Notion Database
-  ↓
-Atlax Collection
-  ↓
-Documents + Properties + Mind Nodes
 ```
-
----
-
-### 9.7 中国大陆信息流导入
-
-Atlax 不能只服务“写 Markdown 的人”。
-必须支持真实中文互联网内容流。
-
-#### 微信
-
-| 内容     | 接入方式              |
-| ------ | ----------------- |
-| 公众号文章  | URL / 手动分享 / 网页剪藏 |
-| 微信聊天片段 | 用户复制粘贴            |
-| 收藏内容   | 后续通过手动导入          |
-| 图片     | OCR 后续支持          |
-
-#### 小红书
-
-| 内容           | 接入方式              |
-| ------------ | ----------------- |
-| 笔记链接         | URL Metadata      |
-| 标题 / 正文 / 标签 | 用户分享或手动粘贴         |
-| 图片           | Asset / OCR Later |
-| 评论           | 暂不支持              |
-
-#### 抖音
-
-| 内容           | 接入方式         |
-| ------------ | ------------ |
-| 视频链接         | URL Metadata |
-| 标题 / 作者 / 描述 | Metadata     |
-| 字幕           | 后续支持         |
-| 视频本体         | 不保存，保存引用     |
-
-#### B站
-
-| 内容             | 接入方式                      |
-| -------------- | ------------------------- |
-| 视频链接           | URL Metadata              |
-| 标题 / UP 主 / 简介 | Metadata                  |
-| 字幕             | 后续支持                      |
-| 分 P / 合集       | Collection / Source Group |
-| 学习笔记           | Document                  |
-
-设计原则：
-
-1. 优先保存“用户主动输入或导入”的内容。
-2. 不承诺全平台自动抓取。
-3. 不绕过平台权限。
-4. 保存链接、标题、摘要、用户笔记、来源信息。
-5. 把外部内容变成 Atlax 中的 Source Node + Document Node。
-
----
-
-## 10. 后端数据结构设计
-
-推荐本阶段使用本地优先数据库。
-
-本地 Demo 可使用：
-
-```text
-SQLite + FTS5 + JSON 字段
+raw → normalized → suggested → anchored / rejected / manual_adjusted → archived
 ```
-
-后续云端可迁移到：
 
-```text
-PostgreSQL + pgvector + object storage
-```
+**状态转换规则**：
+- 用户接受推荐落点后：suggested → anchored
+- 用户拒绝推荐落点后：suggested → rejected
+- 用户手动调整落点后：suggested 或 anchored → manual_adjusted
+- 用户主动归档或长期低活跃：anchored / manual_adjusted → archived
 
----
+> **注意**：`ignored` 只能作为 recommendation 的事件状态（recommendation_events.event_type=ignored），不作为 captures.status。`archived` 是 Capture 的终态之一，不等于 anchored。
 
-### 10.1 users
-
-```sql
-CREATE TABLE users (
-  id TEXT PRIMARY KEY,
-  display_name TEXT NOT NULL,
-  email TEXT,
-  avatar_url TEXT,
-  locale TEXT DEFAULT 'zh-CN',
-  timezone TEXT DEFAULT 'Asia/Shanghai',
-  plan TEXT DEFAULT 'free',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-```
+| 状态 | 触发者 | 写入表 | 同步变化 |
+| --- | --- | --- | --- |
+| raw | 用户输入（星辰输入框/粘贴/导入） | captures（status=raw） | Mind：无（尚未投影） |
+| normalized | 系统标准化流程 | captures（analysis_json 填充） | 无 |
+| suggested | 系统分类+落点计算 | captures（status=suggested），mind_nodes（state=drifting/suggested），documents（status=captured） | Mind：新节点出现在建议位置；Dock：新条目出现 |
+| anchored | 用户确认落点 或 高置信度自动锚定 | captures（status=anchored），mind_nodes（state=anchored），recommendation_events | Mind：节点进入稳定位置；Dock：状态更新 |
+| rejected | 用户拒绝推荐落点 | captures（status=rejected），recommendation_events | Mind：节点回到漂浮区 |
+| manual_adjusted | 用户手动拖动到新位置 | captures（status=manual_adjusted），mind_nodes（更新 parent_node_id/cluster_id），user_behavior_events | Mind：节点移动到新位置；Dock：项目/标签同步更新 |
+| archived | 长期未编辑/用户主动归档 | captures（status=archived），mind_nodes（state=archived） | Mind：节点亮度降低；Dock：归档分区 |
 
----
+### 5.2 Document 生命周期 [MVP-BE]
 
-### 10.2 workspaces
-
-```sql
-CREATE TABLE workspaces (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  name TEXT NOT NULL,
-  mode TEXT DEFAULT 'local',
-  root_node_id TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
 ```
-
----
-
-### 10.3 documents
-
-```sql
-CREATE TABLE documents (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  workspace_id TEXT NOT NULL,
-  title TEXT NOT NULL,
-  slug TEXT,
-  document_type TEXT NOT NULL,
-  status TEXT NOT NULL,
-  markdown TEXT,
-  plain_text TEXT,
-  block_json TEXT,
-  properties_json TEXT,
-  source_type TEXT DEFAULT 'manual',
-  source_url TEXT,
-  source_ref_id TEXT,
-  word_count INTEGER DEFAULT 0,
-  reading_time INTEGER DEFAULT 0,
-  content_hash TEXT,
-  archived_at TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  last_opened_at TEXT
-);
+draft → captured → suggested → active → archived → deleted
 ```
 
-字段说明：
-
-| 字段              | 含义                                                |
-| --------------- | ------------------------------------------------- |
-| markdown        | 长期资产格式                                            |
-| plain_text      | 搜索和算法输入                                           |
-| block_json      | 编辑器结构                                             |
-| properties_json | 属性、状态、标签、项目                                       |
-| source_type     | 内容来源                                              |
-| content_hash    | 去重                                                |
-| status          | draft / captured / suggested / archived / deleted |
+| 状态 | 触发者 | 写入表 | 同步变化 |
+| --- | --- | --- | --- |
+| draft | Editor 自动保存草稿 | documents（status=draft），editor_drafts（前端 IndexedDB） | 无 |
+| captured | Capture 标准化后生成 | documents（status=captured），关联 captures.generated_document_id | Dock：新文档可见 |
+| suggested | 系统分类完成，等待确认 | documents（status=suggested） | Mind：对应节点 state=suggested |
+| active | 用户确认或编辑保存 | documents（status=active） | Mind：节点 state=active；Dock：文档可编辑 |
+| archived | 用户归档 | documents（status=archived，archived_at 填充） | Mind：节点 state=archived；Dock：移入归档区 |
+| deleted | 用户删除 | documents（软删除或标记 status=deleted），mind_nodes（级联处理），mind_edges（级联删除） | Mind：节点移除或标记孤立；Dock：条目消失 |
 
----
+**关键约束**：删除 Document 时，对应 MindNode 不能直接物理删除，应先检查是否还有其他 Document 关联该 Node（如多个文档属于同一主题节点），避免破坏性孤儿节点。
 
-### 10.4 document_blocks
-
-```sql
-CREATE TABLE document_blocks (
-  id TEXT PRIMARY KEY,
-  document_id TEXT NOT NULL,
-  parent_block_id TEXT,
-  block_type TEXT NOT NULL,
-  sort_order INTEGER NOT NULL,
-  markdown TEXT,
-  text TEXT,
-  attrs_json TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-```
+### 5.3 MindNode 生命周期 [CURRENT-FE + MVP-BE]
 
-Block 类型：
-
-```text
-paragraph
-heading
-bullet_list
-ordered_list
-todo
-quote
-code
-table
-image
-file
-callout
-divider
-embed
-math
-bookmark
-toggle
-block_reference
 ```
-
----
-
-### 10.5 assets
-
-```sql
-CREATE TABLE assets (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  workspace_id TEXT NOT NULL,
-  document_id TEXT,
-  asset_type TEXT NOT NULL,
-  filename TEXT,
-  mime_type TEXT,
-  size_bytes INTEGER,
-  local_path TEXT,
-  remote_url TEXT,
-  hash TEXT,
-  metadata_json TEXT,
-  created_at TEXT NOT NULL
-);
+drifting → suggested → anchored → active → dormant / isolated / archived
 ```
-
----
 
-### 10.6 mind_nodes
-
-```sql
-CREATE TABLE mind_nodes (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  workspace_id TEXT NOT NULL,
-  document_id TEXT,
-  node_type TEXT NOT NULL,
-  graph_state TEXT NOT NULL,
-  title TEXT NOT NULL,
-  subtitle TEXT,
-  summary TEXT,
-  color_key TEXT,
-  icon_key TEXT,
-  weight REAL DEFAULT 1,
-  importance_score REAL DEFAULT 0,
-  activity_score REAL DEFAULT 0,
-  confidence_score REAL DEFAULT 0,
-  cluster_id TEXT,
-  parent_node_id TEXT,
-  source_type TEXT,
-  metadata_json TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  last_visited_at TEXT
-);
-```
+| 状态 | 触发者 | 写入表 | 同步变化 |
+| --- | --- | --- | --- |
+| drifting | Capture 生成新节点，低置信度 | mind_nodes（state=drifting） | Mind：外围漂浮星尘 |
+| suggested | 系统推荐落点，中等置信度 | mind_nodes（state=suggested，填充 cluster_id 候选） | Mind：节点显示建议连线 |
+| anchored | 用户确认或高置信自动锚定 | mind_nodes（state=anchored，填充 parent_node_id/cluster_id） | Mind：节点进入稳定星群位置 |
+| active | 最近被编辑、访问或关联增强 | mind_nodes（state=active，更新 activity_score） | Mind：节点视觉呼吸效果 |
+| dormant | 长期未访问（如 30 天） | mind_nodes（state=dormant） | Mind：节点亮度降低 |
+| isolated | 关联的 Document 被删除且无其他关联 | mind_nodes（state=isolated） | Mind：周围无线或仅有弱线 |
+| archived | 用户归档该节点对应的所有内容 | mind_nodes（state=archived） | Mind：节点移至星云边缘 |
 
----
+### 5.4 MindEdge 生命周期 [CURRENT-FE + MVP-BE]
 
-### 10.7 mind_edges
-
-```sql
-CREATE TABLE mind_edges (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  workspace_id TEXT NOT NULL,
-  source_node_id TEXT NOT NULL,
-  target_node_id TEXT NOT NULL,
-  relation_type TEXT NOT NULL,
-  direction TEXT DEFAULT 'undirected',
-  confidence REAL DEFAULT 0,
-  strength REAL DEFAULT 0,
-  status TEXT NOT NULL,
-  evidence_json TEXT,
-  created_by TEXT DEFAULT 'system',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
 ```
-
-relation_type：
-
-```text
-parent_child
-reference
-backlink
-semantic
-tag_related
-project_related
-source_related
-temporal
-manual
-suggested
-conflict
+suggested → confirmed / rejected / hidden
 ```
-
-status：
 
-```text
-suggested
-confirmed
-rejected
-hidden
-```
+| 状态 | 触发者 | 写入表 | 同步变化 |
+| --- | --- | --- | --- |
+| suggested | 系统关系生成（内容相似、同项目、同标签等） | mind_edges（status=suggested，created_by=system） | Mind：虚线弱连线 |
+| confirmed | 用户确认 或 系统高置信自动确认 或 用户手动创建 | mind_edges（status=confirmed，created_by=user/system） | Mind：实线稳定连线；Dock：关系字段更新 |
+| rejected | 用户拒绝系统建议连线 | mind_edges（status=rejected） | Mind：连线消失 |
+| hidden | 用户手动隐藏某条线 | mind_edges（status=hidden） | Mind：连线不显示但数据保留 |
 
----
+### 5.5 Recommendation 生命周期 [MVP-BE]
 
-### 10.8 clusters
-
-```sql
-CREATE TABLE clusters (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  workspace_id TEXT NOT NULL,
-  cluster_type TEXT NOT NULL,
-  title TEXT NOT NULL,
-  summary TEXT,
-  center_node_id TEXT,
-  color_key TEXT,
-  confidence REAL DEFAULT 0,
-  node_count INTEGER DEFAULT 0,
-  metadata_json TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
 ```
-
-cluster_type：
-
-```text
-domain
-project
-topic
-source
-time
-import_batch
-temporary
+generated → shown → accepted / rejected / modified / ignored → learned / cooled_down
 ```
-
----
 
-### 10.9 graph_layouts
-
-```sql
-CREATE TABLE graph_layouts (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  workspace_id TEXT NOT NULL,
-  node_id TEXT NOT NULL,
-  layout_scope TEXT NOT NULL,
-  x REAL NOT NULL,
-  y REAL NOT NULL,
-  z REAL DEFAULT 0,
-  vx REAL DEFAULT 0,
-  vy REAL DEFAULT 0,
-  pinned INTEGER DEFAULT 0,
-  metadata_json TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-```
+**字段语义**：
+- `subject_type` / `subject_id`：被推荐处理的对象，例如 `capture`/`document`/`node`
+- `candidate_type` / `candidate_id`：推荐候选目标，例如 `project`/`tag`/`cluster`/`node`/`document`
+- `recommendation_type`：推荐类型，枚举为 `landing`/`link`/`tag`/`project`/`cluster`/`review`/`nudge`
 
----
+**Top-K 候选推荐**：同一 subject 可以生成多个 candidate。用户接受一个后，其他同类候选进入 `ignored` 或 `cooled_down`。
 
-### 10.10 captures
-
-```sql
-CREATE TABLE captures (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  workspace_id TEXT NOT NULL,
-  raw_text TEXT NOT NULL,
-  capture_type TEXT NOT NULL,
-  status TEXT NOT NULL,
-  source_type TEXT DEFAULT 'mind_input',
-  generated_document_id TEXT,
-  generated_node_id TEXT,
-  analysis_json TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-```
+| 状态 | 触发者 | 写入表 | 同步变化 |
+| --- | --- | --- | --- |
+| generated | 系统分析后生成推荐 | recommendations（status=generated）→ recommendation_events（event_type=generated） | 无 |
+| shown | 前端展示推荐给用户 | recommendations（status=shown）→ recommendation_events（event_type=shown） | Mind/Dock：推荐 UI 展示 |
+| accepted | 用户接受推荐 | recommendations（status=accepted）→ recommendation_events（event_type=accepted），mind_nodes（更新 state），user_behavior_events | Mind：节点落定；Dock：状态更新 |
+| rejected | 用户拒绝推荐 | recommendations（status=rejected）→ recommendation_events（event_type=rejected），user_behavior_events | Mind：节点回退漂浮 |
+| modified | 用户修改推荐后接受 | recommendations（status=modified）→ recommendation_events（event_type=modified），user_behavior_events | Mind：节点落到修改后的位置 |
+| ignored | 推荐展示后用户未操作超时 或 同类其他候选被接受 | recommendations（status=ignored）→ recommendation_events（event_type=ignored） | 无即时变化 |
+| learned | NEXT：被算法学习吸收 | [NEXT] preference_profiles | 后续推荐权重调整 |
+| cooled_down | 同类推荐冷却期 | recommendations（status=cooled_down）→ recommendation_events（event_type=cooled_down） | 短期内不再推同类建议 |
 
-capture_type：
-
-```text
-quick_text
-mind_star
-chat_message
-clipboard
-web_clip
-voice
-image
-```
+**MVP 关键约束**：必须从第一个 Capture 开始记录推荐事件。`recommendations` 表维护推荐对象的当前状态，`recommendation_events` 表作为不可变事件日志。状态变更时同步写入两表。
 
 ---
 
-### 10.11 graph_events
-
-```sql
-CREATE TABLE graph_events (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  workspace_id TEXT NOT NULL,
-  event_type TEXT NOT NULL,
-  target_type TEXT NOT NULL,
-  target_id TEXT NOT NULL,
-  before_json TEXT,
-  after_json TEXT,
-  reason_json TEXT,
-  reversible INTEGER DEFAULT 1,
-  created_at TEXT NOT NULL
-);
-```
+## 6. 数据表设计
 
-用途：
+每张表按以下格式定义：
 
-1. 记录自动落库。
-2. 记录用户拖拽。
-3. 记录自动连线。
-4. 支持撤销。
-5. 训练用户偏好。
+- **表名**
+- **状态**：[CURRENT-FE + MVP-BE] / [MVP-BE] / [NEXT] / [RESERVED]
+- **用途**：一句话说明表的作用
+- **核心字段**：关键字段和类型
+- **服务闭环**：该表参与哪些闭环
+- **迁移建议**：当前前端 IndexedDB 已有结构如何迁移到后端表
 
 ---
 
-### 10.12 graph_signals
-
-```sql
-CREATE TABLE graph_signals (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  workspace_id TEXT NOT NULL,
-  signal_type TEXT NOT NULL,
-  target_node_id TEXT,
-  target_document_id TEXT,
-  severity TEXT,
-  title TEXT NOT NULL,
-  description TEXT,
-  data_json TEXT,
-  status TEXT DEFAULT 'active',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-```
+### 6.1 users
 
-后续 Review 使用。
-
-signal_type：
-
-```text
-orphan_node
-stale_document
-missing_link
-repeated_topic
-project_stalled
-weekly_summary
-question_prompt
-```
+- **状态**：[MVP-BE]
+- **用途**：用户账户基础信息
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7，Atlax App User ID，可本地预生成）
+  - `auth_provider` TEXT nullable（supabase/oauth/apple/google）
+  - `auth_user_id` TEXT nullable UNIQUE（Supabase Auth UID 等第三方认证 ID）
+  - `display_name` TEXT NOT NULL
+  - `email` TEXT
+  - `avatar_url` TEXT
+  - `locale` TEXT DEFAULT 'zh-CN'
+  - `timezone` TEXT DEFAULT 'Asia/Shanghai'
+  - `plan` TEXT DEFAULT 'free'
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：所有闭环（用户身份基础）
+- **迁移建议**：[CURRENT-FE] 前端 localStorage + IndexedDB 中隐式存在 userId（硬编码 `_legacy` 或 Supabase auth uid）。**关键设计**：`users.id` 为 Atlax 本地业务主键，不直接使用第三方 Auth UID。MVP 可将 Supabase Auth UID 写入 `auth_user_id`，通过 `auth_provider='supabase'` 标识。`auth_user_id` 设置 UNIQUE 约束以保证一对一映射。
 
----
+### 6.2 workspaces
 
-## 11. API 设计
+- **状态**：[MVP-BE]
+- **用途**：用户工作空间，一个用户可有多个 workspace
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `user_id` TEXT NOT NULL FK→users
+  - `name` TEXT NOT NULL
+  - `mode` TEXT DEFAULT 'local'（local/cloud）
+  - `root_node_id` TEXT FK→mind_nodes（该 workspace 的根知识节点）
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：所有闭环（数据隔离）
+- **迁移建议**：[CURRENT-FE] 前端未显式建模 workspace。MVP 阶段每用户默认创建一个 workspace。
 
-### 11.1 Capture
+### 6.3 workspace_sessions
 
-```http
-POST /api/captures
-```
-
-请求：
-
-```json
-{
-  "raw_text": "下周产品评审会议，需要准备 Q2 路线图和用户反馈数据",
-  "capture_type": "mind_star",
-  "source_type": "mind_input"
-}
-```
-
-响应：
-
-```json
-{
-  "capture_id": "cap_001",
-  "document_id": "doc_001",
-  "node_id": "node_001",
-  "landing": {
-    "status": "suggested",
-    "confidence": 0.72,
-    "candidate_cluster_id": "cluster_phase3",
-    "reason": [
-      "命中关键词：产品评审",
-      "与 Atlax Phase 3 最近文档相似",
-      "近期该项目活跃"
-    ]
-  }
-}
-```
-
----
-
-### 11.2 Mind Graph
-
-```http
-GET /api/mind/graph?scope=global
-```
-
-响应：
-
-```json
-{
-  "nodes": [],
-  "edges": [],
-  "clusters": [],
-  "layout": {
-    "version": "layout_v1",
-    "scope": "global"
-  }
-}
-```
-
----
-
-### 11.3 Node Detail
-
-```http
-GET /api/mind/nodes/{node_id}
-```
-
-返回：
-
-```json
-{
-  "node": {},
-  "document": {},
-  "relations": {
-    "incoming": [],
-    "outgoing": [],
-    "suggested": []
-  },
-  "dock_path": [],
-  "signals": []
-}
-```
-
----
-
-### 11.4 Manual Link
-
-```http
-POST /api/mind/edges
-```
-
-请求：
-
-```json
-{
-  "source_node_id": "node_a",
-  "target_node_id": "node_b",
-  "relation_type": "manual",
-  "status": "confirmed"
-}
-```
-
----
-
-### 11.5 Drag Landing
-
-```http
-POST /api/mind/nodes/{node_id}/land
-```
-
-请求：
-
-```json
-{
-  "target_node_id": "node_project_phase3",
-  "relation_type": "parent_child",
-  "user_confirmed": true
-}
-```
-
----
-
-### 11.6 Layout Update
-
-```http
-PATCH /api/mind/nodes/{node_id}/layout
-```
-
-请求：
-
-```json
-{
-  "x": 120.4,
-  "y": -80.2,
-  "z": 0.2,
-  "pinned": true
-}
-```
-
----
-
-### 11.7 Dock Query
-
-```http
-GET /api/dock/items?view=list&status=archived&sort=updated_desc
-```
-
-响应：
-
-```json
-{
-  "items": [],
-  "facets": {
-    "projects": [],
-    "tags": [],
-    "sources": [],
-    "statuses": []
-  }
-}
-```
-
----
-
-### 11.8 Finder Columns
-
-```http
-GET /api/dock/finder?root=projects
-```
-
-响应：
-
-```json
-{
-  "columns": [
-    {
-      "level": 0,
-      "items": []
-    },
-    {
-      "level": 1,
-      "items": []
-    },
-    {
-      "level": 2,
-      "items": []
-    }
-  ],
-  "preview": {}
-}
-```
-
----
-
-### 11.9 Editor Save
-
-```http
-PUT /api/documents/{document_id}
-```
-
-请求：
-
-```json
-{
-  "title": "Atlax Phase 3 结构设计",
-  "markdown": "",
-  "block_json": {},
-  "plain_text": "",
-  "properties_json": {}
-}
-```
-
-保存后触发：
-
-```text
-document_saved
-  ↓
-extract signals
-  ↓
-update node
-  ↓
-update edges
-  ↓
-refresh Mind / Dock
-```
-
----
-
-### 11.10 Import Job
-
-```http
-POST /api/import/jobs
-```
-
-请求：
-
-```json
-{
-  "source_type": "obsidian",
-  "options": {
-    "preserve_folder_structure": true,
-    "preserve_tags": true,
-    "preserve_links": true,
-    "staging_first": true
-  }
-}
-```
-
----
-
-## 12. Dock 与 Mind 打通设计
-
-Dock 不是另一个页面。
-Dock 是 Mind 的结构化管理界面。
-
-### 12.1 Dock 三种视图
-
-#### List View
-
-适合批量管理。
-
-字段：
-
-| 字段      | 含义   |
-| ------- | ---- |
-| Title   | 文档标题 |
-| Status  | 状态   |
-| Project | 所属项目 |
-| Cluster | 所属星群 |
-| Tags    | 标签   |
-| Source  | 来源   |
-| Updated | 更新时间 |
-| Links   | 关系数量 |
-| Health  | 健康状态 |
-
-支持操作：
-
-1. 批量归档。
-2. 批量改项目。
-3. 批量打标签。
-4. 批量确认建议关系。
-5. 批量隐藏弱关系。
-6. 批量删除。
-7. 批量导出。
-
----
-
-#### Card View
-
-适合浏览。
-
-卡片内容：
-
-```text
-Title
-Summary
-Source Badge
-Project Badge
-Tags
-Last Updated
-Mini Relation Count
-```
-
-卡片 hover：
-
-1. 显示 Mind 小预览。
-2. 显示最近关联节点。
-3. 显示快速打开 Editor。
-4. 显示定位到 Mind。
-
----
-
-#### Finder Column View
-
-这是最适合 Atlax 的管理视图。
-它同时吸收 Notion 的组织感和 macOS Finder 的空间感。
-
-默认列：
-
-```text
-Column 1: Space
-  - Projects
-  - Topics
-  - Sources
-  - Dates
-  - Tags
-  - Unsorted
-
-Column 2: Group
-  - Atlax
-  - Java
-  - 产品设计
-  - 微信导入
-  - B站学习
-
-Column 3: Documents
-  - 文档列表
-
-Column 4: Preview
-  - 文档摘要
-  - 关联关系
-  - Mind 定位按钮
-```
-
-点击行为：
-
-| 操作                     | 结果                 |
-| ---------------------- | ------------------ |
-| 点击 Project             | Mind 聚焦项目星群        |
-| 点击 Topic               | Mind 聚焦主题星群        |
-| 点击 Document            | Editor 打开文档        |
-| Hover Document         | Mind 中节点轻微闪烁       |
-| 拖动 Document 到 Project  | 建立 parent_child 关系 |
-| 拖动 Document 到 Topic    | 建立 topic 关系        |
-| 拖动 Document 到 Unsorted | 取消归档关系             |
-
----
-
-### 12.2 Dock 和 Mind 状态同步
-
-前端需要一个共享状态：
-
-```ts
-type WorkspaceSelection = {
-  selectedNodeId?: string
-  selectedDocumentId?: string
-  selectedClusterId?: string
-  focusMode: 'global' | 'cluster' | 'node'
-  source: 'mind' | 'dock' | 'editor'
-}
-```
-
-同步规则：
-
-| 来源          | 行为          |
-| ----------- | ----------- |
-| Mind 选中节点   | Dock 定位对应项  |
-| Dock 选中文档   | Mind 高亮节点   |
-| Editor 保存文档 | Mind 更新节点亮度 |
-| Dock 批量修改   | Mind 重新计算星群 |
-| Mind 建立连线   | Dock 更新关系字段 |
-
----
-
-## 13. Editor 编辑体验设计
-
-Editor 必须成为产品第二核心。
-结构再美，如果编辑难用，用户还是不会留下。
-
-### 13.1 编辑器双模式
-
-| 模式               | 名称          | 面向用户                           |
-| ---------------- | ----------- | ------------------------------ |
-| Classic Markdown | 经典 Markdown | Obsidian 用户、开发者、重度 Markdown 用户 |
-| Block Markdown   | 块级 Markdown | Notion 用户、普通用户、结构化记录用户         |
-
-两个模式不是两套数据。
-
-底层统一：
-
-```text
-Block JSON
-  ↕
-Markdown
-  ↕
-Plain Text
-```
-
----
-
-### 13.2 Classic Markdown 功能
-
-必须支持：
-
-1. 标题 H1-H6。
-2. 粗体、斜体、删除线。
-3. 无序列表、有序列表。
-4. Todo checkbox。
-5. 引用。
-6. 代码块。
-7. Inline code。
-8. 表格。
-9. 分割线。
-10. 数学公式。
-11. Callout。
-12. 图片。
-13. 附件。
-14. 内链。
-15. 外链。
-16. 块引用。
-17. Frontmatter。
-18. 实时预览。
-19. 源码模式。
-20. 大纲。
-21. 查找替换。
-22. 字数统计。
-23. 自动保存。
-24. 版本历史。
-
----
-
-### 13.3 Block Markdown 功能
-
-必须支持：
-
-1. Slash Command。
-2. 拖动块。
-3. 块级菜单。
-4. 块复制。
-5. 块删除。
-6. 块折叠。
-7. Toggle。
-8. Callout。
-9. Todo。
-10. 表格。
-11. 图片。
-12. 文件。
-13. Bookmark。
-14. Embed。
-15. Block Reference。
-16. 属性面板。
-17. 模板插入。
-18. AI / Chat 预留操作入口。
-19. Convert to Document。
-20. Convert to Node。
-
----
-
-### 13.4 编辑器和 Mind 的联动
-
-保存文档后：
-
-```text
-Editor Save
-  ↓
-Update Document
-  ↓
-Extract Plain Text
-  ↓
-Update Mind Node
-  ↓
-Recompute Relations
-  ↓
-Refresh Dock
-```
-
-编辑器侧边可显示：
-
-| 面板           | 用途           |
-| ------------ | ------------ |
-| Properties   | 项目、标签、状态、来源  |
-| Links        | 出链、反链        |
-| Mind Preview | 当前文档在星云树中的位置 |
-| Suggestions  | 系统推荐关联       |
-| History      | 版本历史         |
-
----
-
-### 13.5 编辑器技术建议
-
-可以选择基于 ProseMirror / Tiptap / Lexical 这类结构化编辑器内核实现。
-ProseMirror 的核心思路是文档模型、事务、Schema、插件系统；这类模型更适合实现 Block 编辑、Markdown 序列化、实时预览和扩展能力。
-
-建议优先级：
-
-```text
-第一选择：Tiptap / ProseMirror
-第二选择：Lexical
-第三选择：自研 textarea + parser，不推荐作为长期方案
-```
-
-原因：
-
-1. 不要自己从 0 写复杂编辑器。
-2. 编辑器是深坑，必须站在成熟内核上。
-3. 自研只适合做 UI 层，不适合自研文档模型。
-4. Markdown 序列化必须稳定，否则长期资产会出问题。
-
----
-
-## 14. Chat 接入设计
-
-Chat 是主线功能之一，但当前不应该喧宾夺主。
-Chat 必须符合星云树概念，而不是像普通客服聊天框一样贴在页面上。
-
-### 14.1 Chat 产品定位
-
-Chat 在 Atlax 中应该叫：
-
-```text
-Oracle / 星核对话 / Mind Chat
-```
-
-它不是和用户闲聊，而是基于知识库上下文帮助用户：
-
-1. 解释当前节点。
-2. 总结某个星群。
-3. 找出缺失关系。
-4. 向用户提出反问。
-5. 生成周报。
-6. 帮助输出文章。
-7. 帮助整理导入内容。
-8. 帮助判断文档应该落到哪里。
-
----
-
-### 14.2 Chat 入口
-
-入口位置：
-
-1. 右侧浮动工具栏。
-2. 节点详情面板。
-3. Editor 内选中文本后呼出。
-4. Dock 批量选择后呼出。
-
----
-
-### 14.3 MVP 无 LLM 方案
-
-当前不接大模型，也可以先做“模板化 Chat”。
-
-示例：
-
-| 场景     | 系统回复                            |
-| ------ | ------------------------------- |
-| 点击孤立节点 | “这条内容暂时没有关联，要不要把它放入某个项目？”       |
-| 项目停滞   | “这个项目 7 天没有新增内容，是否需要复盘？”        |
-| 重复主题   | “你最近多次记录了‘星云树’，是否需要创建一个主题节点？”   |
-| 导入完成   | “已导入 42 条内容，其中 12 条建议归入 Atlax。” |
-
----
-
-### 14.4 后续 LLM 接入
-
-Chat 需要基于 Graph Context，而不是把所有文档塞进 prompt。
-
-上下文结构：
-
-```json
-{
-  "current_node": {},
-  "neighbor_nodes": [],
-  "related_documents": [],
-  "cluster_summary": {},
-  "user_question": "",
-  "system_task": "explain | summarize | suggest_links | ask_question | weekly_review"
-}
-```
-
----
-
-## 15. Review 与小组件的预留设计
-
-Review 和小组件是合伙人明确需求，但不是本阶段主交付。
-
-处理策略：
-
-1. 保留浮动工具入口。
-2. 不进入顶部主导航。
-3. 不占用主工作区。
-4. 不影响 Editor / Mind / Dock。
-5. 所需数据通过 `graph_signals` 预留。
-
-### 15.1 Review 后续模块
-
-| 模块   | 数据来源                     |
-| ---- | ------------------------ |
-| 周报   | documents + graph_events |
-| 健康检查 | graph_signals            |
-| 停滞项目 | activity_score           |
-| 孤立节点 | edge count               |
-| 重复主题 | topic frequency          |
-| 反问用户 | question_prompt          |
-
----
-
-### 15.2 Widget 后续模块
-
-| 小组件          | 数据来源             |
-| ------------ | ---------------- |
-| Calendar     | timeline_anchors |
-| Todo         | todo blocks      |
-| Recent Stars | captures         |
-| Health       | graph_signals    |
-| Weekly Focus | active projects  |
-
----
-
-## 16. 订阅付费能力预留
-
-免费版不能太残废，否则用户不愿意用。
-付费版应该卖“自动化、智能化、大规模处理、高级洞察”，不是卖基础编辑。
-
-### 16.1 Free
-
-适合个人轻量使用。
-
-包含：
-
-1. 本地文档编辑。
-2. Classic Markdown。
-3. Block Markdown 基础功能。
-4. Mind 基础星云树。
-5. Dock List / Card / Finder。
-6. 手动创建关系。
-7. 少量导入。
-8. 基础搜索。
-9. 本地导出 Markdown。
-
----
-
-### 16.2 Pro
-
-适合重度知识工作者。
-
-包含：
-
-1. 高级自动落库。
-2. 批量导入。
-3. Obsidian / Notion 结构保留导入。
-4. 中国大陆信息流导入增强。
-5. 高级 Mind 布局。
-6. Time Machine。
-7. Review 周报。
-8. 知识库健康检查。
-9. Chat with Knowledge Base。
-10. 版本历史增强。
-11. 高级导出。
-12. 多设备同步。
-
----
-
-### 16.3 Creator / Team 后续
-
-包含：
-
-1. 多知识宇宙。
-2. 协作星云树。
-3. 共享 Dock。
-4. 团队知识健康报告。
-5. 权限管理。
-6. 高级 AI Agent。
-7. API 接入。
-8. 自动发布。
-
----
-
-## 17. 本阶段明确不做
-
-为了避免再次变成粗糙大杂烩，本阶段不做：
-
-1. 浅色模式。
-2. 完整 Review 页面。
-3. 完整小组件系统。
-4. 多人协作。
-5. 云同步。
-6. 复杂权限系统。
-7. 移动端。
-8. 完整 AI Agent。
-9. 全平台自动爬取。
-10. 复杂任务管理。
-11. 类 Notion 全量数据库系统。
-12. 类 Obsidian 插件生态。
-13. 花哨但无结构意义的动效。
-
-本阶段只做：
-
-```text
-Home 引导得清晰
-Editor 写得舒服（以标签形式打开）
-Mind 星云树看得高级
-Dock 管得清楚
-Workspace Tabs 切换得流畅
-自动落库跑得稳
-```
-
----
-
-## 18. 开发落地路线
-
-### Phase A：数据骨架重建
-
-目标：先把结构层建稳。
-
-交付：
-
-1. 新增 `documents`。
-2. 新增 `document_blocks`。
-3. 新增 `mind_nodes`。
-4. 新增 `mind_edges`。
-5. 新增 `clusters`。
-6. 新增 `graph_layouts`。
-7. 新增 `captures`。
-8. 新增 `graph_events`。
-9. 完成 Capture → Document → Node 的最小链路。
-10. 完成 Node / Edge API。
-
-验收标准：
-
-1. Mind 输入一句话，可以生成 document + node。
-2. Dock 能看到该文档。
-3. Mind 能看到该节点。
-4. Editor 能打开该文档。
-5. 删除或修改文档后 Mind 同步变化。
-
----
-
-### Phase B：Mind 视觉重构
-
-目标：把 Mind 从“节点图”升级为“星云树”。
-
-交付：
-
-1. 重写节点视觉。
-2. 重写连线视觉。
-3. 增加星群雾区。
-4. 增加 LOD 显示。
-5. 增加 Focus Mode。
-6. 增加节点 hover / click / drag。
-7. 增加节点详情浮层。
-8. 增加自动落库反馈动画。
-9. 增加布局缓存。
-10. 增加局部布局更新。
-
-验收标准：
-
-1. 默认视图不乱。
-2. 节点大小有层级。
-3. 连线不粗糙。
-4. hover 后关系清楚。
-5. 点击节点有聚焦感。
-6. 拖动节点不会破坏整体布局。
-7. 新星辰进入时有“落入宇宙”的感觉。
-
----
-
-### Phase C：Dock 重构
-
-目标：Dock 成为知识库 Finder。
-
-交付：
-
-1. List View。
-2. Card View。
-3. Finder Column View。
-4. Dock 与 Mind selection 同步。
-5. Dock 批量操作。
-6. Dock 筛选和排序。
-7. Dock 预览面板。
-8. Dock 定位 Mind。
-9. Mind 定位 Dock。
-
-验收标准：
-
-1. 用户能在 Dock 中管理所有文档。
-2. 用户能通过 Finder 分栏理解知识结构。
-3. 用户能从 Dock 快速跳到 Mind。
-4. 用户能从 Mind 快速定位 Dock。
-5. 不再需要 Entry 模块。
-
----
-
-### Phase D：Editor 重构
-
-目标：编辑器达到可长期使用标准。
-
-交付：
-
-1. Classic Markdown。
-2. Block Markdown。
-3. 实时预览。
-4. Slash Command。
-5. Block 拖拽。
-6. Markdown 导入导出。
-7. Properties 面板。
-8. Links 面板。
-9. Editor 保存触发结构化。
-10. Editor 与 Mind 节点同步。
-
-验收标准：
-
-1. 用户愿意真的用它写东西。
-2. Markdown 渲染不丑。
-3. Block 编辑不割裂。
-4. 保存后 Mind 自动更新。
-5. 文档能稳定导出为 Markdown。
-
----
-
-### Phase E：自动落库 MVP
-
-目标：自动落库可用但不冒进。
-
-交付：
-
-1. 关键词抽取。
-2. 项目匹配。
-3. 标签匹配。
-4. 主题匹配。
-5. 来源识别。
-6. 置信度计算。
-7. 三段式落库。
-8. 用户确认。
-9. 撤销。
-10. 用户修正反哺。
-
-验收标准：
-
-1. 高置信内容能自动落入正确项目。
-2. 中置信内容能给出合理建议。
-3. 低置信内容不会乱归类。
-4. 用户可以一键修正。
-5. 修正后同类内容推荐更准。
-
----
-
-### Phase F：导入预备
-
-目标：为 Obsidian / Notion / 中文信息流导入打基础。
-
-交付：
-
-1. ImportJob。
-2. ImportItem。
-3. AUD 转换格式。
-4. Markdown 文件导入。
-5. URL 手动导入。
-6. 导入预览。
-7. 去重。
-8. 批量落库 staging。
-
-验收标准：
-
-1. 能导入 Markdown 文件夹。
-2. 能保留基础链接。
-3. 能生成临时星群。
-4. 不会一次导入就污染主 Mind。
-5. 用户确认后才正式入库。
-
----
-
-## 19. 核心体验验收标准
-
-### 19.1 第一眼体验
-
-用户打开产品后，必须感受到：
-
-1. 专业。
-2. 深邃。
-3. 安静。
-4. 有空间感。
-5. 不是玩具。
-6. 不是普通笔记软件。
-7. Mind 是产品灵魂。
-
----
-
-### 19.2 输入体验
-
-用户输入内容后，必须感受到：
-
-1. 系统接住了。
-2. 内容不是丢进黑洞。
-3. 有一个星辰诞生。
-4. 系统开始理解它。
-5. 用户可以修正它。
-6. 不需要先想文件夹和标签。
-
----
-
-### 19.3 结构体验
-
-用户进入 Mind 后，必须感受到：
-
-1. 结构有秩序。
-2. 关系能被理解。
-3. 重点内容一眼可见。
-4. 未整理内容不会污染主结构。
-5. 节点可以探索。
-6. 星群可以聚焦。
-7. 不是 Obsidian 那种无序毛线球。
-
----
-
-### 19.4 管理体验
-
-用户进入 Dock 后，必须感受到：
-
-1. 所有内容都能找到。
-2. 可以像 Finder 一样浏览。
-3. 可以像 Notion 一样管理属性。
-4. 可以和 Mind 双向联动。
-5. 不需要 Entry 模块。
-
----
-
-### 19.5 编辑体验
-
-用户进入 Editor 后，必须感受到：
-
-1. 写 Markdown 舒服。
-2. 看实时预览舒服。
-3. Block 编辑不别扭。
-4. 文档结构清楚。
-5. 保存后自动进入知识系统。
-6. 编辑不是孤立行为，而是在喂养 Mind。
-
----
-
-## 20. 最终产品结构定义
-
-Atlax MindDock 的最终结构应该是：
-
-```text
-Atlax MindDock
-│
-├── Home（入口页，默认首页）
-│   ├── Welcome（欢迎语）
-│   ├── Entry Cards（Latest Documents / Upload / Notebook）
-│   ├── Sidebar（Projects / Areas / Archive / New Folder）
-│   └── Recent Documents
-│
-├── TopNav（一级导航）
-│   └── Home | Mind | Dock
-│
-├── WorkspaceTabs（工作区标签系统）
-│   ├── Tab Management（打开、关闭、激活、恢复、置顶）
-│   ├── NewTabMenu（新建文档、项目等）
-│   └── Tab Persistence（标签持久化与恢复）
-│
-├── Editor（工作页，以标签形式打开）
-│   ├── Classic Markdown
-│   ├── Block Markdown
-│   ├── Properties
-│   ├── Links
-│   └── Mind Preview
-│
-├── Mind（星云树 Nebula Tree）
-│   ├── Nebula Tree Visualization
-│   ├── Star Input
-│   ├── Node Detail
-│   ├── Focus Mode
-│   ├── Drag Linking
-│   └── Auto Landing Feedback
-│
-└── Dock（知识库管理区）
-    ├── List View
-    ├── Card View
-    ├── Finder Column View
-    ├── Batch Management
-    ├── Import Staging
-    └── Mind Sync
-```
-
-后续扩展：
-
-```text
-Floating Tools
-├── Chat
-├── Review
-├── Calendar
-├── Time Machine
-└── Widgets
-```
-
-这才是 MindDock 应该有的骨架。
-
-不是：
-
-```text
-一堆页面 + 一个编辑框 + 一个图谱
-```
-
-而是：
-
-```text
-编辑产生内容
-内容进入结构
-结构形成星云
-星云反过来帮助用户管理和思考
-```
-
----
+- **状态**：[CURRENT-FE + MVP-BE]
+- **用途**：工作区会话，记录用户当前活跃标签和工作状态
+- **核心字段**：
+  - `id` TEXT PK
+  - `user_id` TEXT NOT NULL FK→users
+  - `active_tab_id` TEXT FK→workspace_open_tabs
+  - `last_activity_at` TIMESTAMPTZ NOT NULL
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：工作区闭环（3.4）
+- **迁移建议**：[CURRENT-FE] 前端 IndexedDB `workspaceSessions` 表。结构一致，直接迁移。id 生成规则：`makeWorkspaceSessionId(userId)` → 后端保持相同。
 
-## 21. 一句话执行原则
+### 6.4 workspace_open_tabs
 
-后续所有功能都必须通过这句话判断是否值得做：
+- **状态**：[CURRENT-FE + MVP-BE]
+- **用途**：工作区打开的标签页，持久化标签状态
+- **核心字段**：
+  - `id` TEXT PK
+  - `user_id` TEXT NOT NULL FK→users
+  - `session_id` TEXT NOT NULL FK→workspace_sessions
+  - `tab_type` TEXT NOT NULL（editor/home/mind/dock/project）
+  - `title` TEXT NOT NULL
+  - `path` TEXT NOT NULL
+  - `document_id` TEXT FK→documents
+  - `is_pinned` BOOLEAN DEFAULT FALSE
+  - `is_active` BOOLEAN DEFAULT FALSE
+  - `sort_order` INTEGER NOT NULL
+  - `opened_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：工作区闭环（3.4）
+- **迁移建议**：[CURRENT-FE] 前端 IndexedDB `workspaceOpenTabs` 表。结构一致，直接迁移。注意 document_id 从 INTEGER 改为 TEXT。
 
-> 这个功能是否能让用户更容易输入内容、更清楚看见结构、更稳定沉淀知识？
+### 6.5 documents
 
-如果不能，就暂时不要做。
+- **状态**：[CURRENT-FE + MVP-BE]
+- **用途**：长期内容资产，一篇完整文档。**不等于 Entry。**
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7 / ULID）
+  - `legacy_local_id` INTEGER nullable（兼容前端历史 IndexedDB 的 INTEGER id，迁移后保留用于 backward reference）
+  - `user_id` TEXT NOT NULL FK→users
+  - `workspace_id` TEXT NOT NULL FK→workspaces
+  - `title` TEXT NOT NULL
+  - `slug` TEXT
+  - `document_type` TEXT NOT NULL（note/meeting/idea/task/reading）
+  - `status` TEXT NOT NULL（draft/captured/suggested/active/archived/deleted）
+  - `primary_project_id` TEXT FK→projects（文档的主要归属项目，MVP 简洁方案）
+  - `markdown` TEXT（长期资产格式）
+  - `plain_text` TEXT（搜索和算法输入）
+  - `block_json` JSONB（编辑器结构）
+  - `properties_json` JSONB（属性、来源元数据）
+  - `source_type` TEXT DEFAULT 'manual'
+  - `source_url` TEXT
+  - `source_ref_id` TEXT（外键指向 source_items）
+  - `word_count` INTEGER DEFAULT 0
+  - `reading_time` INTEGER DEFAULT 0
+  - `content_hash` TEXT（去重用）
+  - `structure_recompute_status` TEXT DEFAULT 'idle'（idle/pending/in_progress/done/error，记录结构化重算状态）
+  - `sync_status` TEXT DEFAULT 'local'（local/pending/synced/error，IndexedDB ↔ 后端双写状态）
+  - `archived_at` TIMESTAMPTZ
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+  - `last_opened_at` TIMESTAMPTZ
+- **服务闭环**：编辑闭环（3.2）、管理闭环（3.3）、快速输入闭环（3.1）
+- **迁移建议**：[CURRENT-FE] 前端 IndexedDB `entries` 表即为 documents。当前字段：id (INTEGER), userId, sourceDockItemId, title, content, type, tags, project, actions, createdAt, archivedAt。**重要变化**：
+  - `id` INTEGER → TEXT（UUIDv7），原 INTEGER id 迁移至 `legacy_local_id`
+  - `content` → 拆为 `markdown` + `plain_text` + `block_json`
+  - `sourceDockItemId` → 改为 `capture_id` FK→captures
+  - 新增 `workspace_id`、`slug`、`source_type`、`source_url`、`content_hash`、`word_count`、`last_opened_at`
+  - 新增 `structure_recompute_status`（结构化重算状态）、`sync_status`（双写同步状态）
+  - 废弃 `actions` 字段（转为 block 内 todo）
+- **主键迁移策略**：旧 INTEGER id 通过 `INSERT INTO documents (id, legacy_local_id, ...) VALUES (gen_uuidv7(), old_integer_id, ...)` backward fill。所有 FK（如 captures.generated_document_id、workspace_open_tabs.document_id）同步转为 TEXT。
+
+### 6.6 document_blocks
+
+- **状态**：[CURRENT-FE + MVP-BE]
+- **用途**：文档的块级结构，支撑 Block Markdown 编辑器
+- **核心字段**：
+  - `id` TEXT PK
+  - `document_id` TEXT NOT NULL FK→documents
+  - `parent_block_id` TEXT FK→document_blocks
+  - `block_type` TEXT NOT NULL（paragraph/heading/bullet_list/...）
+  - `sort_order` INTEGER NOT NULL
+  - `markdown` TEXT
+  - `text` TEXT
+  - `attrs_json` JSONB
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：编辑闭环（3.2）
+- **迁移建议**：[CURRENT-FE] 前端未显式存储 blocks 表，Editor 以整体 content/markdown 存储。MVP 阶段 Editor 保存时同时写入 block 拆分。document_id 为 TEXT（UUIDv7）。
+
+### 6.7 assets
+
+- **状态**：[MVP-BE]
+- **用途**：二进制资源（图片、附件、音频封面等）
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `user_id` TEXT NOT NULL FK→users
+  - `workspace_id` TEXT NOT NULL FK→workspaces
+  - `document_id` TEXT FK→documents
+  - `asset_type` TEXT NOT NULL（image/file/audio/video）
+  - `filename` TEXT
+  - `mime_type` TEXT
+  - `size_bytes` INTEGER
+  - `local_path` TEXT（本地存储路径）
+  - `remote_url` TEXT（云端 URL，NEXT）
+  - `hash` TEXT
+  - `metadata_json` JSONB
+  - `created_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：编辑闭环（3.2）
+- **迁移建议**：[CURRENT-FE] 前端未独立建模。MVP 阶段新建。
+
+### 6.8 captures
+
+- **状态**：[CURRENT-FE + MVP-BE]
+- **用途**：原始输入记录。**不等于 DockItem。**
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `legacy_local_id` INTEGER nullable
+  - `user_id` TEXT NOT NULL FK→users
+  - `workspace_id` TEXT NOT NULL FK→workspaces
+  - `raw_text` TEXT NOT NULL（原始输入文本）
+  - `capture_type` TEXT NOT NULL（quick_text/mind_star/chat_message/clipboard/web_clip/voice/image）
+  - `capture_source` TEXT NOT NULL（text/voice/import/chat/manual）
+  - `status` TEXT NOT NULL（raw/normalized/suggested/anchored/rejected/manual_adjusted/archived）
+  - `topic` TEXT
+  - `source_type` TEXT DEFAULT 'manual'
+  - `source_url` TEXT
+  - `generated_document_id` TEXT FK→documents
+  - `generated_node_id` TEXT FK→mind_nodes
+  - `suggestions_json` JSONB（系统生成的建议）
+  - `user_tags` JSONB（用户手动标签）
+  - `analysis_json` JSONB（标准化/抽取/分类的中间结果）
+  - `confidence_score` REAL DEFAULT 0
+  - `processed_at` TIMESTAMPTZ
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：快速输入闭环（3.1）
+- **迁移建议**：[CURRENT-FE] 前端 IndexedDB `dockItems` 表即为 captures。当前字段：id (INTEGER), userId, rawText, topic, sourceType, status, suggestions, userTags, selectedActions, selectedProject, sourceId, parentId, processedAt, createdAt。**重要变化**：
+  - `id` INTEGER → TEXT（UUIDv7），原 INTEGER id 迁移至 `legacy_local_id`
+  - `sourceType` → `capture_source`
+  - 新增 `capture_type`（区分星辰输入/粘贴/语音等）
+  - 新增 `workspace_id`、`capture_source`、`source_url`、`generated_document_id`、`generated_node_id`、`analysis_json`、`confidence_score`
+  - `suggestions` → `suggestions_json`
+  - `sourceId`/`parentId`（链式关联）→ 保留但移至 `metadata_json`
+  - `selectedProject` → 通过 Document.properties_json 表达
+
+### 6.9 source_items
+
+- **状态**：[MVP-BE]
+- **用途**：外部来源引用（微信文章、B站视频、小红书笔记等），不保存原始内容，只保存引用和元数据
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `user_id` TEXT NOT NULL FK→users
+  - `workspace_id` TEXT NOT NULL FK→workspaces
+  - `source_type` TEXT NOT NULL（wechat/xiaohongshu/douyin/bilibili/obsidian/notion/web/manual）
+  - `source_url` TEXT
+  - `source_title` TEXT
+  - `source_author` TEXT
+  - `platform` TEXT（wechat/xiaohongshu/douyin/bilibili）
+  - `captured_at` TIMESTAMPTZ
+  - `metadata_json` JSONB
+  - `import_job_id` TEXT FK→import_jobs（NEXT）
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：快速输入闭环（3.1）、导入流程（NEXT）
+- **迁移建议**：[CURRENT-FE] 前端无此表。MVP 新建。来源信息当前嵌入 dockItems 的 sourceType 字段。
+
+### 6.10 import_jobs
+
+- **状态**：[NEXT]
+- **用途**：批量导入任务
+- **核心字段**：
+  - `id` TEXT PK
+  - `user_id` TEXT NOT NULL FK→users
+  - `workspace_id` TEXT NOT NULL FK→workspaces
+  - `source_type` TEXT NOT NULL
+  - `status` TEXT NOT NULL（pending/parsing/parsing_complete/previewing/confirmed/importing/done/failed）
+  - `total_count` INTEGER DEFAULT 0
+  - `parsed_count` INTEGER DEFAULT 0
+  - `imported_count` INTEGER DEFAULT 0
+  - `failed_count` INTEGER DEFAULT 0
+  - `options_json` JSONB
+  - `error_log` TEXT
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：导入流程（NEXT）
+- **迁移建议**：MVP 不做导入，NEXT 阶段新建。
+
+### 6.11 import_items
+
+- **状态**：[NEXT]
+- **用途**：导入任务中的单条记录
+- **核心字段**：
+  - `id` TEXT PK
+  - `import_job_id` TEXT NOT NULL FK→import_jobs
+  - `source_type` TEXT NOT NULL
+  - `raw_path` TEXT
+  - `raw_url` TEXT
+  - `raw_title` TEXT
+  - `raw_content_hash` TEXT
+  - `aud_json` JSONB（Atlax Universal Document 格式）
+  - `status` TEXT NOT NULL（pending/parsed/matched/imported/failed/duplicate）
+  - `matched_document_id` TEXT FK→documents
+  - `error_message` TEXT
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：导入流程（NEXT）
+- **迁移建议**：同 import_jobs。
+
+### 6.12 mind_nodes
+
+- **状态**：[CURRENT-FE + MVP-BE]
+- **用途**：星云树节点，内容的结构投影。Document 类型节点默认 1:1 关联；Project/Topic/Tag/Source/Cluster Center 类型节点可独立存在。
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `user_id` TEXT NOT NULL FK→users
+  - `workspace_id` TEXT NOT NULL FK→workspaces
+  - `node_type` TEXT NOT NULL（root/domain/project/topic/document/fragment/source/tag/question/insight/time）
+  - `state` TEXT NOT NULL（drifting/suggested/anchored/active/dormant/isolated/archived/conflicted）
+  - `title` TEXT NOT NULL
+  - `subtitle` TEXT
+  - `summary` TEXT
+  - `color_key` TEXT
+  - `icon_key` TEXT
+  - `weight` REAL DEFAULT 1
+  - `importance_score` REAL DEFAULT 0
+  - `activity_score` REAL DEFAULT 0
+  - `confidence_score` REAL DEFAULT 0
+  - `degree_score` REAL DEFAULT 0
+  - `cluster_id` TEXT FK→clusters
+  - `parent_node_id` TEXT FK→mind_nodes
+  - `source_type` TEXT
+  - `metadata_json` JSONB
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+  - `last_visited_at` TIMESTAMPTZ
+- **服务闭环**：快速输入闭环（3.1）、编辑闭环（3.2）、管理闭环（3.3）
+- **迁移建议**：[CURRENT-FE] 前端 IndexedDB `mindNodes` 表。当前字段：id, userId, nodeType, label, state, documentId, degreeScore, recentActivityScore, documentWeightScore, userPinScore, clusterCenterScore, positionX, positionY, metadata, createdAt, updatedAt。**重要变化**：
+  - `label` → `title`（语义更清晰）
+  - **移除 `document_id` 字段**：Document ↔ MindNode 关系下沉到 `mind_node_documents` 关联表
+  - 新增 `workspace_id`、`subtitle`、`summary`、`color_key`、`icon_key`、`weight`、`importance_score`、`activity_score`、`confidence_score`、`cluster_id`、`parent_node_id`、`source_type`、`last_visited_at`
+  - 位置字段 `positionX/positionY` → 拆分至 `graph_layouts` 表
+  - 评分字段保留但语义对齐：`degreeScore`→`degree_score`，`recentActivityScore`→`activity_score`
+
+### 6.12b mind_node_documents [新增]
+
+- **状态**：[MVP-BE]
+- **用途**：MindNode 与 Document 的多对多关联表。替代 mind_nodes.document_id 单 FK。
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `node_id` TEXT NOT NULL FK→mind_nodes
+  - `document_id` TEXT NOT NULL FK→documents
+  - `relation_type` TEXT NOT NULL（primary/associated/reference/derived/source_projection）
+  - `created_by` TEXT DEFAULT 'system'（user/system/import）
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - UNIQUE(node_id, document_id, relation_type)
+- **约束**：
+  - 每个 `document` 类型 node 应有一条 `relation_type=primary` 记录。
+  - 聚合节点（Project/Topic/Cluster Center）可有多条 `relation_type=associated` 记录。
+  - 一个 document 在同一 workspace 下最多只能有一个 `relation_type=primary` 的 node 关联。
+  - Project / Topic / Tag / Cluster Center 类型节点可以没有 document。
+  - 删除 Document 前，检查 node 是否仍有其他 primary document 关联。
+- **服务闭环**：编辑闭环（3.2）、管理闭环（3.3）、快速输入闭环（3.1）
+- **迁移建议**：[CURRENT-FE] 前端 mindNodes.documentId (INTEGER) 迁移为 `mind_node_documents` 单条记录，`relation_type=primary`，`created_by=system`。
+
+### 6.13 mind_edges
+
+- **状态**：[CURRENT-FE + MVP-BE]
+- **用途**：节点之间的关系连线
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `user_id` TEXT NOT NULL FK→users
+  - `workspace_id` TEXT NOT NULL FK→workspaces
+  - `source_node_id` TEXT NOT NULL FK→mind_nodes
+  - `target_node_id` TEXT NOT NULL FK→mind_nodes
+  - `relation_type` TEXT NOT NULL（parent_child/reference/backlink/semantic/tag_related/project_related/source_related/temporal/manual/suggested/conflict）
+  - `direction` TEXT DEFAULT 'undirected'
+  - `confidence` REAL DEFAULT 0
+  - `strength` REAL DEFAULT 0
+  - `status` TEXT NOT NULL（suggested/confirmed/rejected/hidden）
+  - `evidence_json` JSONB（推荐理由）
+  - `created_by` TEXT DEFAULT 'system'（user/system/import）
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：编辑闭环（3.2）、管理闭环（3.3）、快速输入闭环（3.1）
+- **迁移建议**：[CURRENT-FE] 前端 IndexedDB `mindEdges` 表。当前字段：id, userId, sourceNodeId, targetNodeId, edgeType, strength, source, confidence, reason, createdAt, updatedAt。**重要变化**：
+  - `edgeType` → `relation_type`（语义对齐）
+  - `source` → `created_by`
+  - `reason` → `evidence_json`（支持多理由结构化）
+  - 新增 `workspace_id`、`direction`、`status`
+
+### 6.14 clusters
+
+- **状态**：[CURRENT-FE + MVP-BE]
+- **用途**：星群/主题团簇，图谱算法/视觉层的主题团簇，在 Mind 视图中形成星云雾区。**Cluster 不等于 Project**。
+- **关键概念**：
+  - **Project** 是用户可管理的业务组织单位。
+  - **Cluster** 是图谱算法/视觉层的主题团簇。
+  - Cluster 可以由系统自动生成（算法聚类），也可以绑定 Project 或 Topic。
+  - 一个 Project 可以绑定 `default_cluster_id`（快速切换到对应星群视图）。
+  - 不是所有 Cluster 都是 Project，也不是所有 Project 都只能有一个 Cluster。
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `user_id` TEXT NOT NULL FK→users
+  - `workspace_id` TEXT NOT NULL FK→workspaces
+  - `cluster_type` TEXT NOT NULL（domain/project/topic/source/time/import_batch/temporary）
+  - `title` TEXT NOT NULL
+  - `summary` TEXT
+  - `center_node_id` TEXT FK→mind_nodes
+  - `bound_project_id` TEXT FK→projects（该 Cluster 绑定的 Project，nullable）
+  - `bound_topic_id` TEXT FK→mind_nodes（该 Cluster 绑定的 Topic 节点，nullable）
+  - `generation_source` TEXT DEFAULT 'system'（system/manual/project_binding/topic_binding）
+  - `color_key` TEXT
+  - `confidence` REAL DEFAULT 0
+  - `node_count` INTEGER DEFAULT 0
+  - `metadata_json` JSONB
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：管理闭环（3.3）
+- **迁移建议**：[CURRENT-FE] 前端 `collections` 表部分承担星群角色但没有显式 cluster 表。MVP 阶段新建 clusters 表，project/topic 类型的 collection 可自动映射为 cluster（绑定 `bound_project_id`）。
+
+### 6.15 projects
+
+- **状态**：[CURRENT-FE + MVP-BE]
+- **用途**：用户可管理的业务组织单位，是 Document 的组织容器。
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `user_id` TEXT NOT NULL FK→users
+  - `name` TEXT NOT NULL
+  - `description` TEXT
+  - `icon` TEXT
+  - `color` TEXT
+  - `parent_id` TEXT FK→projects
+  - `sort_order` INTEGER DEFAULT 0
+  - `collection_type` TEXT NOT NULL（folder/project/area/archive）
+  - `default_cluster_id` TEXT FK→clusters（该 Project 绑定的默认星群视图，nullable）
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：管理闭环（3.3）
+- **迁移建议**：[CURRENT-FE] 前端 IndexedDB `collections` 表。结构基本一致，新增 `default_cluster_id`。直接迁移。
+
+### 6.16 tags
+
+- **状态**：[CURRENT-FE + MVP-BE]
+- **用途**：标签
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `user_id` TEXT NOT NULL FK→users
+  - `name` TEXT NOT NULL
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - UNIQUE(user_id, name)
+- **服务闭环**：管理闭环（3.3）、快速输入闭环（3.1）
+- **迁移建议**：[CURRENT-FE] 前端 IndexedDB `tags` 表。id 生成规则：`${userId}_${makeTagId(name)}` → 后端保持一致。
+
+### 6.16b document_tags [新增]
+
+- **状态**：[MVP-BE]
+- **用途**：Document 与 Tag 的多对多关联表。支撑 Dock 标签筛选和算法反馈需求。
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `user_id` TEXT NOT NULL FK→users
+  - `workspace_id` TEXT NOT NULL FK→workspaces
+  - `document_id` TEXT NOT NULL FK→documents
+  - `tag_id` TEXT NOT NULL FK→tags
+  - `source` TEXT NOT NULL DEFAULT 'user'（user/system/import）
+  - `confidence_score` REAL DEFAULT 0
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **约束**：`UNIQUE(document_id, tag_id)`
+- **服务闭环**：管理闭环（3.3）、快速输入闭环（3.1）、反馈闭环（3.5）
+- **迁移建议**：[CURRENT-FE] 前端 IndexedDB `entryTagRelations` 表即为 document_tags 前身。MVP 建表后，前端标签关系迁移至本表。系统推荐标签（source=system）通过 recommendation 流程写入。
+
+### 6.17 graph_layouts
+
+- **状态**：[CURRENT-FE + MVP-BE]
+- **用途**：Mind 画布中节点的布局缓存（位置、速度、固定状态）
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `user_id` TEXT NOT NULL FK→users
+  - `workspace_id` TEXT NOT NULL FK→workspaces
+  - `node_id` TEXT NOT NULL FK→mind_nodes
+  - `layout_scope` TEXT NOT NULL（global/cluster/focus）
+  - `x` REAL NOT NULL
+  - `y` REAL NOT NULL
+  - `z` REAL DEFAULT 0
+  - `vx` REAL DEFAULT 0
+  - `vy` REAL DEFAULT 0
+  - `pinned` BOOLEAN DEFAULT FALSE
+  - `metadata_json` JSONB
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：编辑闭环（3.2，更新节点位置）、管理闭环（3.3，重排星群时更新布局）
+- **约束**：`UNIQUE(workspace_id, node_id, layout_scope)`
+- **迁移建议**：[CURRENT-FE] 前端 MindNode 表内嵌 `positionX`/`positionY` 字段。MVP 阶段分离到独立的 `graph_layouts` 表，每个 MindNode 对应一条 layout 记录。
+
+### 6.18 graph_events
+
+- **状态**：[CURRENT-FE + MVP-BE]
+- **用途**：图谱操作事件日志（自动落库、用户拖拽、自动连线），支持撤销
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `user_id` TEXT NOT NULL FK→users
+  - `workspace_id` TEXT NOT NULL FK→workspaces
+  - `event_type` TEXT NOT NULL（auto_landing/node_moved/edge_created/edge_deleted/layout_changed）
+  - `target_type` TEXT NOT NULL（node/edge/cluster/document）
+  - `target_id` TEXT NOT NULL
+  - `before_json` JSONB
+  - `after_json` JSONB
+  - `reason_json` JSONB
+  - `reversible` BOOLEAN DEFAULT TRUE
+  - `created_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：所有闭环（事件溯源）
+- **迁移建议**：[CURRENT-FE] 前端 `knowledgeEvents` 表即为 graph_events。当前字段：id, userId, eventType, targetType, targetId, metadata, createdAt。**重要变化**：`metadata` → 拆分为 `before_json`/`after_json`/`reason_json`，支持撤销。
+
+### 6.19 graph_signals
+
+- **状态**：[RESERVED]
+- **用途**：图谱健康信号（孤立节点、停滞项目、重复主题等），Review 功能的数据基础
+- **核心字段**：
+  - `id` TEXT PK
+  - `user_id` TEXT NOT NULL FK→users
+  - `workspace_id` TEXT NOT NULL FK→workspaces
+  - `signal_type` TEXT NOT NULL（orphan_node/stale_document/missing_link/repeated_topic/project_stalled/weekly_summary/question_prompt）
+  - `target_node_id` TEXT FK→mind_nodes
+  - `target_document_id` TEXT FK→documents
+  - `severity` TEXT
+  - `title` TEXT NOT NULL
+  - `description` TEXT
+  - `data_json` JSONB
+  - `status` TEXT DEFAULT 'active'
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：Review（RESERVED）
+- **迁移建议**：[CURRENT-FE] 前端无此表。RESERVED。
+
+### 6.20 user_behavior_events
+
+- **状态**：[MVP-BE]
+- **用途**：用户操作行为事件（拖动节点、修改归属、手动连线等），是反馈闭环的数据基础
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `user_id` TEXT NOT NULL FK→users
+  - `workspace_id` TEXT NOT NULL FK→workspaces
+  - `event_type` TEXT NOT NULL（move_node/change_cluster/manual_link/accept_suggestion/reject_suggestion/drag_layout）
+  - `target_type` TEXT NOT NULL（node/edge/document/cluster）
+  - `target_id` TEXT NOT NULL
+  - `from_context_json` JSONB（操作前上下文）
+  - `to_context_json` JSONB（操作后上下文）
+  - `session_id` TEXT FK→workspace_sessions
+  - `sync_status` TEXT DEFAULT 'local'（local/pending/synced/error）
+  - `created_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：反馈闭环（3.5）
+- **迁移建议**：[CURRENT-FE] 前端无显式 behavior event 表。MVP 新建。当前用户操作（拖动、修改归属）应改为写入此表。
+
+### 6.21 recommendations [新增，核心]
+
+- **状态**：[MVP-BE]
+- **用途**：推荐对象主表。维护推荐的当前状态与置信度，是 `recommendation_events` 的聚合投影。
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `user_id` TEXT NOT NULL FK→users
+  - `workspace_id` TEXT NOT NULL FK→workspaces
+  - `subject_type` TEXT NOT NULL（capture/document/node，被推荐处理的对象类型）
+  - `subject_id` TEXT NOT NULL（被推荐处理的对象 ID）
+  - `recommendation_type` TEXT NOT NULL（landing/link/tag/project/cluster/review/nudge）
+  - `candidate_type` TEXT NOT NULL（project/tag/cluster/node/document，推荐候选目标类型）
+  - `candidate_id` TEXT NOT NULL（推荐候选目标 ID）
+  - `status` TEXT NOT NULL（generated/shown/accepted/rejected/modified/ignored/cooled_down）
+  - `confidence_score` REAL DEFAULT 0
+  - `reason_json` JSONB（推荐理由）
+  - `created_at` TIMESTAMPTZ NOT NULL
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **约束**：
+  - 状态变更时同步追加 `recommendation_events` 记录。
+  - `UNIQUE(user_id, workspace_id, subject_type, subject_id, recommendation_type, candidate_type, candidate_id)`
+  - 同一 subject 可生成多个 candidate（Top-K 候选推荐）；用户接受一个后，其他同类候选进入 `ignored`/`cooled_down`。
+- **服务闭环**：反馈闭环（3.5）、快速输入闭环（3.1）
+- **迁移建议**：[CURRENT-FE] 前端无此表。MVP 从第一个 Capture 开始记录。
+
+### 6.21b recommendation_events
+
+- **状态**：[MVP-BE]
+- **用途**：推荐事件日志（不可变），记录推荐的完整生命周期事件。是反馈闭环的事件溯源表。
+- **核心字段**：
+  - `id` TEXT PK（UUIDv7）
+  - `recommendation_id` TEXT NOT NULL FK→recommendations
+  - `user_id` TEXT NOT NULL FK→users
+  - `workspace_id` TEXT NOT NULL FK→workspaces
+  - `event_type` TEXT NOT NULL（generated/shown/accepted/rejected/modified/ignored/cooled_down）
+  - `event_payload` JSONB（事件附加数据，如修改后的 candidate、用户反馈细节）
+  - `session_id` TEXT FK→workspace_sessions
+  - `sync_status` TEXT DEFAULT 'local'（local/pending/synced/error）
+  - `created_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：反馈闭环（3.5）、快速输入闭环（3.1）
+- **迁移建议**：[CURRENT-FE] 前端无此表。MVP 新建。与 `recommendations` 在同一事务内写入。
+
+### 6.22 feature_snapshots
+
+- **状态**：[NEXT]
+- **用途**：内容特征快照，用于训练和回溯对比
+- **核心字段**：
+  - `id` TEXT PK
+  - `user_id` TEXT NOT NULL FK→users
+  - `document_id` TEXT FK→documents
+  - `feature_type` TEXT NOT NULL（tfidf/embedding/entity/classification）
+  - `feature_data` JSONB NOT NULL
+  - `model_version` TEXT
+  - `created_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：反馈闭环（3.5，NEXT 阶段的算法输入）
+- **迁移建议**：NEXT 新建。
+
+### 6.23 preference_profiles
+
+- **状态**：[NEXT]
+- **用途**：用户偏好画像
+- **核心字段**：
+  - `id` TEXT PK
+  - `user_id` TEXT NOT NULL FK→users
+  - `category_weights` JSONB（各分类权重）
+  - `tag_preferences` JSONB（标签偏好）
+  - `time_preferences` JSONB（时间段偏好）
+  - `source_preferences` JSONB（来源偏好）
+  - `confidence_threshold` REAL DEFAULT 0.55
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：反馈闭环（3.5，NEXT）
+- **迁移建议**：NEXT 新建。
+
+### 6.24 rhythm_profiles
+
+- **状态**：[NEXT]
+- **用途**：用户使用节律画像
+- **核心字段**：
+  - `id` TEXT PK
+  - `user_id` TEXT NOT NULL FK→users
+  - `active_hours` JSONB（活跃时段分布）
+  - `input_frequency` JSONB（输入频率统计）
+  - `review_cycle_days` INTEGER（回顾周期，天）
+  - `peak_productivity_windows` JSONB
+  - `updated_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：Review/Nudge（NEXT）
+- **迁移建议**：NEXT 新建。
+
+### 6.25 algorithm_cache
+
+- **状态**：[RESERVED]
+- **用途**：算法中间结果缓存
+- **核心字段**：
+  - `id` TEXT PK
+  - `user_id` TEXT NOT NULL FK→users
+  - `cache_type` TEXT NOT NULL（embedding/clustering/similarity）
+  - `cache_key` TEXT NOT NULL
+  - `cache_data` JSONB NOT NULL
+  - `expires_at` TIMESTAMPTZ
+  - `created_at` TIMESTAMPTZ NOT NULL
+- **服务闭环**：未来算法加速
+- **迁移建议**：RESERVED。
+
+---
+
+## 7. 模块协作设计
+
+以下说明每个模块如何与其他模块协作完成闭环。不是 UI 说明，而是**数据如何流动、状态如何传递**。
+
+### 7.1 Home（入口页）[CURRENT-FE + MVP-BE]
+
+**职责**：用户进入产品后的默认起点，不对接核心业务数据创建。
+
+**协作行为**：
+
+| 行为 | 数据来源 | 目标 |
+| --- | --- | --- |
+| 显示最近文档 | GET `/api/documents?sort=recent&limit=20` [CURRENT-FE IndexedDB，MVP-BE 后端 API] | WorkspaceTabs：点击打开 Editor 标签 |
+| 新建文档入口 | 前端路由 `/editor/new` | Editor：创建空白 Draft，自动保存后生成 Document [MVP-BE] |
+| 上传入口 | [RESERVED] 文件上传 → ImportJob | Dock：后续进入 Import Staging |
+| 项目入口 | GET `/api/projects` [CURRENT-FE + MVP-BE] | Dock：切换到项目筛选视图 |
+
+**MVP 关键交付**：Home 能通过 `GET /api/documents?sort=recent&limit=20` 获取最近文档列表（此 API 替代独立的 `recent_documents` 表）。
+
+### 7.2 Mind（星云树视图）[CURRENT-FE + MVP-BE]
+
+**职责**：知识结构的可视化呈现，只展示结构化结果，不展示全部数据。
+
+**协作行为**：
+
+| 行为 | 触发 | 写入/读取 | 联动模块 |
+| --- | --- | --- | --- |
+| 加载全局星云 | Mind 页面激活 | GET `/api/mind/graph` [MVP-BE] → mind_nodes + mind_edges + clusters + graph_layouts | Dock（如打开）：同步 selection |
+| 星辰输入 | 用户在 Star Input 输入 | POST `/api/captures` [MVP-BE] → captures → documents → mind_nodes → recommendations + recommendation_events | Dock：新增条目；Editor：可打开对应 Document |
+| 点击节点 | 用户点击 Mind 节点 | GET `/api/mind/nodes/{id}` [MVP-BE] | Dock：同步定位；Editor：可选打开 |
+| 拖动节点 | 用户拖拽节点 | PATCH `/api/mind/nodes/{id}/layout` [CURRENT-FE，MVP-BE] + user_behavior_events | Dock：无变化（仅布局） |
+| 拖动建立关系 | 用户拖节点到另一个节点 | POST `/api/mind/edges` [MVP-BE] + user_behavior_events | Dock：关系字段更新 |
+| 落库反馈 | 用户确认/拒绝推荐 | POST `/api/recommendations/{id}/feedback` [MVP-BE] → recommendations + recommendation_events | Dock：状态更新 |
+| Focus Mode | 用户点击项目/主题节点 | 前端视图状态，数据不变 | Dock：同步定位到对应项目 |
+
+### 7.3 Dock（知识库管理区）[CURRENT-FE + MVP-BE]
+
+**职责**：Mind 的结构化后台，Editor 的内容仓库。管理所有已进入系统的数据对象。
+
+**协作行为**：
+
+| 行为 | 触发 | 写入/读取 | 联动模块 |
+| --- | --- | --- | --- |
+| 列表加载 | Dock 页面激活 | GET `/api/dock/items` [MVP-BE] → documents + mind_nodes + tags | Mind：如打开，同步 selection |
+| 选中文档 | 点击列表项 | 更新 WorkspaceSelection → dock | Mind：高亮对应节点 |
+| 修改标签/项目 | 行内编辑属性 | PUT `/api/documents/{id}`（properties 更新）→ 触发管理闭环 | Mind：重算节点归属和连线 |
+| 批量归档 | 多选 + 归档操作 | PATCH `/api/documents/batch` [MVP-BE] → 更新 status | Mind：节点 state → archived |
+| 批量导入 | [NEXT] | POST `/api/import/jobs` | Mind：分批生成节点 |
+| 待确认项 | 查看 suggested 状态的内容 | GET `/api/dock/items?status=suggested` | Mind：对应节点闪烁提示 |
+
+### 7.4 Editor（工作行为层）[CURRENT-FE + MVP-BE]
+
+**职责**：内容生产区，以 WorkspaceTabs 标签页形式打开。手动保存触发结构化流程。
+
+**协作行为**：
+
+| 行为 | 触发 | 写入/读取 | 联动模块 |
+| --- | --- | --- | --- |
+| 新建文档 | Cmd+N / Home 新建 | POST `/api/documents` [MVP-BE]（空文档，status=draft） | WorkspaceTabs：打开新标签 |
+| 打开文档 | Home/Dock/Mind 点击 | GET `/api/documents/{id}` [MVP-BE] → markdown + block_json | WorkspaceTabs：打开/激活标签 |
+| 自动保存 | Editor autosave / idle debounce / 关闭标签 / 切换文档 | PUT `/api/documents/{id}` [MVP-BE]（仅保存文档内容、草稿状态、content_hash）+ 前端 editorDrafts IndexedDB | 不触发结构化重算 |
+| 手动保存 | Cmd+S / 显式 Save | PUT `/api/documents/{id}` → **触发完整编辑闭环** → extract plain text → update mind_node → recompute edges | Mind：节点更新；Dock：时间/摘要刷新 |
+| 属性编辑 | Editor 侧边 Properties 面板 | PUT `/api/documents/{id}`（properties 更新）→ **触发管理闭环** | Mind：节点归属更新；Dock：列表刷新 |
+
+**保存分层说明**（与 3.2 节一致）：
+- **自动保存**：仅保存文档内容、草稿状态、`content_hash`，不触发完整结构化重算。
+- **手动保存**（Cmd+S / 显式 Save）：触发完整编辑闭环，包括 plain_text 提取、MindNode 更新、Edge 重算。
+- **轻量结构化检查**（idle debounce / 关闭标签 / 切换文档时可选触发）：只做 content_hash 比对和 node 存在性校验。
+
+### 7.5 WorkspaceTabs（工作区标签系统）[CURRENT-FE + MVP-BE]
+
+**职责**：管理多个打开的页面标签，支持打开、关闭、激活、恢复、置顶。
+
+**协作行为**：
+
+| 行为 | 触发 | 写入/读取 | 联动 |
+| --- | --- | --- | --- |
+| 打开标签 | 打开文档/项目/页面 | openWorkspaceTab() → workspace_open_tabs upsert + workspace_sessions update [CURRENT-FE IndexedDB，MVP-BE 后端 API] | 仅自身 |
+| 关闭标签 | 点击关闭按钮 | closeWorkspaceTab() → delete tab + 激活下一个 [CURRENT-FE] | 仅自身 |
+| 激活标签 | 点击标签 | activateWorkspaceTab() → 更新 is_active [CURRENT-FE] | 仅自身 |
+| 置顶标签 | 右键置顶 | pinWorkspaceTab() → 更新 is_pinned [CURRENT-FE] | 仅自身 |
+| 恢复标签 | 页面刷新后 | restoreWorkspaceTabs() → 从后端/IndexedDB 加载 [CURRENT-FE] | 仅自身 |
+
+### 7.6 Floating Tools（浮动工具栏）[CURRENT-FE 入口 + RESERVED 后端]
+
+**当前阶段**：只做入口样式和状态预留，不做完整功能。
+
+| 工具 | 当前 | 后续（RESERVED） |
+| --- | --- | --- |
+| Chat | 浮动按钮入口 | 知识库问答，基于 graph context，不把所有文档塞入 prompt |
+| Review | 浮动按钮入口 | 周报、健康检查，数据来源：graph_signals + documents + graph_events |
+| Calendar | 浮动按钮入口 | 时间回看、Time Machine，数据来源：timeline_anchors |
+| Widgets | 浮动按钮入口 | 小组件系统，数据来源：各功能独立接入 |
+
+---
+
+## 8. API 契约
+
+按闭环组织 API，不按页面堆 API。每个 API 标注状态、闭环归属、字段契约。
+
+### 8.1 POST /api/captures
+
+- **状态**：[MVP-BE]
+- **闭环**：快速输入闭环（3.1）
+- **用途**：接收用户原始输入（星辰输入框、粘贴、导入）
+- **触发来源**：Mind Star Input、Home Quick Input、Dock 手动添加
+- **请求字段**：
+  - `raw_text` string required
+  - `capture_type` string required（quick_text/mind_star/clipboard）
+  - `capture_source` string required（text/manual）
+  - `source_url` string optional
+  - `client_mutation_id` string required（幂等键，UUIDv7）
+- **响应字段**：
+  - `capture_id` string（UUIDv7）
+  - `document_id` string（UUIDv7）
+  - `node_id` string（UUIDv7）
+  - `landing` object { status, confidence_score, candidate_type, candidate_id, reason[] }
+- **写入表**：captures → documents → mind_nodes → recommendations + recommendation_events（同一事务）
+- **触发事件**：recommendation_events（event_type=generated）
+
+### 8.2 PUT /api/documents/{id}
+
+- **状态**：[MVP-BE]
+- **闭环**：编辑闭环（3.2）、管理闭环（3.3）
+- **用途**：更新文档内容或属性。手动保存时触发完整编辑闭环；自动保存仅写入内容。
+- **触发来源**：Editor 手动保存（Cmd+S）、Editor 自动保存、Dock 属性编辑
+- **请求字段**：
+  - `title` string optional
+  - `markdown` string optional
+  - `block_json` JSONB optional
+  - `plain_text` string optional
+  - `properties_json` JSONB optional（tags、project_id、status）
+  - `save_mode` string optional（auto/manual），默认 manual
+  - `client_mutation_id` string required（幂等键，UUIDv7）
+  - `version` integer required（乐观锁版本号）
+- **响应字段**：
+  - `document` object（全量返回更新后的 Document）
+  - `mind_node_updated` boolean
+  - `structure_recompute_status` string
+- **写入表**：documents（→ 若 save_mode=manual 则级联更新 mind_nodes、mind_edges）
+- **触发事件**：若 manual：document_saved → extract → update node → recompute edges → refresh
+
+### 8.2b GET /api/documents（列表/最近文档）
+
+- **状态**：[MVP-BE]
+- **闭环**：管理闭环（3.3）
+- **用途**：获取文档列表，支持排序和筛选。`sort=recent` 替代独立的 `recent_documents` 表。
+- **触发来源**：Home 最近文档、Dock 列表加载
+- **请求字段**：
+  - `sort` string optional（recent/updated_desc/updated_asc/created_desc/title_asc），默认 updated_desc
+  - `status` string optional
+  - `project_id` string optional
+  - `limit` integer optional（默认 20）
+- **响应字段**：
+  - `documents` Document[]
+  - `total` integer
+- **写入表**：无（纯读）
+- **说明**：此 API 代理 Home 的 `GET /api/documents/recent` 和 Dock 的部分列表需求。`GET /api/dock/items` 在此基础上返回更多 Dock 专属数据（facets、mind_node 关联等）。
+
+### 8.2c PATCH /api/documents/batch
+
+- **状态**：[MVP-BE]
+- **闭环**：管理闭环（3.3）
+- **用途**：批量更新文档（归档、状态变更等）
+- **触发来源**：Dock 批量归档
+- **请求字段**：
+  - `document_ids` string[] required
+  - `updates` object required（如 { status: "archived" }）
+  - `client_mutation_id` string required（幂等键，UUIDv7）
+- **响应字段**：
+  - `updated_count` integer
+  - `failed_ids` string[]
+- **写入表**：documents（→ 触发管理闭环，mind_nodes/mind_edges 异步更新）
+- **触发事件**：batch_update_completed
+
+### 8.2d PATCH /api/mind/nodes/{id}/layout
+
+- **状态**：[CURRENT-FE + MVP-BE]
+- **闭环**：Mind 视图交互
+- **用途**：更新节点布局位置（拖动后持久化）
+- **触发来源**：Mind 拖动节点
+- **请求字段**：
+  - `x` real required
+  - `y` real required
+  - `pinned` boolean optional
+  - `client_mutation_id` string required（幂等键，UUIDv7）
+  - `version` integer required（乐观锁版本号）
+- **写入表**：graph_layouts → user_behavior_events
+
+### 8.3 GET /api/mind/graph
+
+- **状态**：[MVP-BE]
+- **闭环**：所有闭环（Mind 主视图数据源）
+- **用途**：获取星云树全局图谱数据
+- **触发来源**：Mind 页面激活、Dock 联动刷新
+- **请求字段**：
+  - `scope` string optional（global/cluster/focus），默认 global
+  - `cluster_id` string optional（scope=cluster 时必传）
+  - `node_id` string optional（scope=focus 时必传）
+- **响应字段**：
+  - `nodes` MindNode[]
+  - `edges` MindEdge[]
+  - `clusters` Cluster[]
+  - `layouts` GraphLayout[]
+- **写入表**：无（纯读）
+- **触发事件**：无
+
+### 8.4 GET /api/mind/nodes/{id}
+
+- **状态**：[MVP-BE]
+- **闭环**：编辑闭环（3.2）
+- **用途**：获取节点详情，包含关联文档（通过 mind_node_documents）、关系、Dock 路径
+- **触发来源**：Mind 点击节点
+- **请求字段**：无
+- **响应字段**：
+  - `node` MindNode
+  - `document` Document
+  - `relations` { incoming, outgoing, suggested }
+  - `dock_path` array（从根到该节点的路径）
+  - `signals` array（NEXT）
+- **写入表**：无
+- **触发事件**：无
+
+### 8.5 POST /api/mind/edges
+
+- **状态**：[MVP-BE]
+- **闭环**：管理闭环（3.3）
+- **用途**：手动创建/确认节点关系
+- **触发来源**：Mind 拖动建立关系、Dock 批量确认关系
+- **请求字段**：
+  - `source_node_id` string required
+  - `target_node_id` string required
+  - `relation_type` string required
+  - `status` string required（confirmed）
+- **响应字段**：
+  - `edge` MindEdge
+- **写入表**：mind_edges → user_behavior_events → graph_events
+- **触发事件**：relation_confirmed
+
+### 8.6 POST /api/mind/nodes/{id}/land
+
+- **状态**：[MVP-BE]
+- **闭环**：快速输入闭环（3.1）、反馈闭环（3.5）
+- **用途**：用户确认节点落点（拖动到目标节点/星群）
+- **触发来源**：Mind 拖动节点到星群、点击确认建议
+- **请求字段**：
+  - `target_node_id` string required
+  - `relation_type` string required
+  - `user_confirmed` boolean required
+- **响应字段**：
+  - `node` MindNode（更新后的节点）
+  - `edge` MindEdge（创建的连线）
+- **写入表**：mind_nodes（更新 parent_node_id/cluster_id/state）→ mind_node_documents（如适用）→ mind_edges → user_behavior_events → recommendations + recommendation_events
+- **触发事件**：node_landed
+
+### 8.7 GET /api/dock/items
+
+- **状态**：[MVP-BE]
+- **闭环**：管理闭环（3.3）
+- **用途**：获取 Dock 管理视图数据
+- **触发来源**：Dock 页面激活
+- **请求字段**：
+  - `view` string optional（list/card），默认 list
+  - `status` string optional（过滤状态）
+  - `project_id` string optional
+  - `tag_id` string optional
+  - `sort` string optional（updated_desc/updated_asc/created_desc/title_asc/recent）
+  - `page` integer optional
+  - `page_size` integer optional
+- **响应字段**：
+  - `items` DockItem[]
+  - `facets` { projects, tags, sources, statuses }
+  - `total` integer
+- **写入表**：无（纯读）
+- **触发事件**：无
+
+### 8.8 POST /api/recommendations/{id}/feedback
+
+- **状态**：[MVP-BE]
+- **闭环**：反馈闭环（3.5）
+- **用途**：记录用户对推荐的反馈，更新 recommendations 状态 + 追加 recommendation_events
+- **触发来源**：Mind 落库反馈、Dock 确认建议
+- **请求字段**：
+  - `event_type` string required（accepted/rejected/modified/ignored）
+  - `event_payload` JSONB optional（修改细节）
+  - `idempotency_key` string required（幂等键，UUIDv7）
+- **响应字段**：
+  - `recommendation_id` string
+  - `event_id` string
+  - `new_status` string
+- **写入表**：recommendations（更新 status）→ recommendation_events（追加事件）→ user_behavior_events（如适用）
+- **触发事件**：recommendation_feedback_received
+
+### 8.9 POST /api/import/jobs
+
+- **状态**：[NEXT]
+- **闭环**：导入流程（NEXT）
+- **用途**：创建批量导入任务
+- **触发来源**：Dock 导入按钮、Home Upload 入口
+- **请求字段**：
+  - `source_type` string required（obsidian/notion/markdown_files）
+  - `options` object optional（preserve_folder_structure, preserve_tags, staging_first）
+- **响应字段**：
+  - `job_id` string
+  - `status` string
+- **写入表**：import_jobs → import_items（异步处理）
+- **触发事件**：import_job_created
+
+### 8.10 GET /api/review/weekly
+
+- **状态**：[RESERVED]
+- **闭环**：Review（RESERVED）
+- **用途**：获取周报数据
+- **响应字段**：
+  - `summary` string
+  - `highlights` array
+  - `stale_projects` array
+  - `signals` array
+- **写入表**：无（纯读 graph_signals + documents + graph_events）
+
+### 8.11 GET /api/chat/nudges/next
+
+- **状态**：[RESERVED]
+- **闭环**：Chat/Nudge（RESERVED）
+- **用途**：获取下一条系统提示/反问
+- **响应字段**：
+  - `nudge_type` string
+  - `title` string
+  - `description` string
+  - `target_node_id` string optional
+  - `action_suggestion` object optional
+- **写入表**：无
+
+---
+
+## 9. 数据一致性与事务边界
+
+后端 MVP 必须保证以下操作的数据一致性和可靠性。
+
+### 9.1 关键事务边界
+
+1. **POST /api/captures 快速输入事务**
+   - capture、document、mind_node 创建必须在同一数据库事务内完成。
+   - recommendation 记录在同一事务内初始生成。
+   - 任一步骤失败，整体回滚，返回明确错误码。
+
+2. **PUT /api/documents/{id} 文档保存**
+   - 文档内容保存必须可靠（markdown、block_json、content_hash 写入不可丢失）。
+   - 结构化重算（plain_text 提取 → MindNode 更新 → Edge 重算）可以异步执行，但必须通过 `structure_recompute_status` 字段追踪状态（idle → pending → in_progress → done / error）。
+   - 自动保存（save_mode=auto）仅写 content，不触发重算。
+
+3. **POST /api/recommendations/{id}/feedback 推荐反馈**
+   - 更新 recommendations.status 和追加 recommendation_events 必须在同一事务内。
+   - 反馈失败时不阻塞用户主操作（前端乐观更新），但后端必须记录 retry 状态。
+   - 推荐反馈失败的事件标记 `sync_status=error`，由后台 job 重试。
+
+### 9.2 降级与容错策略
+
+1. **graph_events 写入降级**
+   - graph_events 写入失败时，事件暂存于内存 buffer，批量重试。
+   - 连续失败 3 次后降级为本地 IndexedDB 写入，标记 `sync_status=error`。
+
+2. **user_behavior_events 写入降级**
+   - behavior event 写入失败时，事件缓存在本地队列（最多 500 条），网络恢复后批量上传。
+   - 超过 500 条时 FIFO 丢弃最旧事件并记录 warning。
+
+3. **IndexedDB ↔ 后端双写策略**
+   - MVP 阶段以本地 IndexedDB 数据为准，后端作为同步目标。
+   - 写入流程：本地 IndexedDB 写入成功 → 标记 `sync_status=pending` → 异步写后端 → 成功后标记 `sync_status=synced`。
+   - 后端写入失败时，保留 `sync_status=error`，下次同步周期重试。
+   - 读取流程：优先读后端（如有），后端不可用时读本地 IndexedDB。
+
+4. **冲突处理**
+   - MVP 阶段采用 last-write-wins 策略（以 `updated_at` 最大的版本为准）。
+   - 冲突检测通过 `content_hash` 比对实现。
+   - 冲突发生时，旧版本保存到 `documents.properties_json._conflict_backup`。
+
+### 9.3 异步处理约定
+
+- 结构化重算（extract plain text → update node → recompute edges）通过后台 job 异步执行。
+- jobs 表（MVP 可用简单内存队列）追踪 retry 状态。
+- 异步任务失败不阻塞 API 响应，前端通过 `structure_recompute_status` 轮询进展。
+
+### 9.4 统一字段约定（本地优先同步预留）
+
+为支持本地优先（local-first）架构和后续云同步，核心可变业务表建议统一预留以下字段。MVP 不一定实现完整云同步，但字段预留可避免后续大规模迁移。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `client_id` | TEXT | 客户端生成的唯一 ID（UUIDv7），用于离线写入和冲突检测 |
+| `device_id` | TEXT | 产生该记录的设备标识 |
+| `client_created_at` | TIMESTAMPTZ | 客户端记录的创建时间 |
+| `client_updated_at` | TIMESTAMPTZ | 客户端记录的最后更新时间 |
+| `server_updated_at` | TIMESTAMPTZ | 服务端最后确认写入时间 |
+| `sync_status` | TEXT | 同步状态，默认 `'local'`（local/pending/synced/error/conflict） |
+| `deleted_at` | TIMESTAMPTZ | 软删除时间，nullable |
+| `version` | INTEGER | 乐观锁版本号，默认 1 |
+
+**适用表范围**（核心可变业务表）：
+
+```
+documents
+document_blocks
+captures
+mind_nodes
+mind_edges
+clusters
+projects
+tags
+document_tags
+graph_layouts
+recommendations
+recommendation_events
+user_behavior_events
+workspace_sessions
+workspace_open_tabs
+```
+
+### 9.5 API 幂等性约定
+
+所有写接口应支持 `client_mutation_id`（或 `idempotency_key`），防止网络重试导致重复写入。
+
+**必覆盖接口**：
+
+| 接口 | 幂等键字段 |
+| --- | --- |
+| `POST /api/captures` | `client_mutation_id` 写入 captures.client_id |
+| `PUT /api/documents/{id}` | `client_mutation_id` header + documents.version 乐观锁 |
+| `POST /api/recommendations/{id}/feedback` | `idempotency_key` 写入 recommendation_events.client_id |
+| `PATCH /api/documents/batch` | `client_mutation_id` header，服务端幂等去重 |
+| `PATCH /api/mind/nodes/{id}/layout` | `client_mutation_id` header + graph_layouts.version 乐观锁 |
+
+**实现约定**：
+- 服务端按 `(user_id, client_mutation_id)` 去重，重复请求返回已有结果（不重复执行）。
+- 幂等窗口至少保留 24 小时。
+- `client_mutation_id` 由客户端生成（UUIDv7），一次用户操作使用同一个 ID。
+
+---
+
+## 10. 后端第一阶段落地路线
+
+按闭环拆解 Phase，不按页面拆。
+
+### Phase 0：代码事实扫描与 Schema 对齐 [MVP-BE 前置]
+
+- **目标**：全面扫描前端 IndexedDB schema、Domain types、API 调用，确认当前实际数据结构和后端目标之间的 gap。
+- **交付**：
+  - 当前 IndexedDB 表清单与字段映射文档（含 INTEGER → UUIDv7 主键迁移方案）
+  - 前端 Domain Type 与后端目标 Schema 的 diff 报告
+- **不做**：任何后端代码
+
+### Phase 1：统一数据骨架 [MVP-BE]
+
+- **目标**：建立后端核心数据表，完成用户、工作空间、文档的基础 CRUD。使用 UUIDv7/ULID 主键。
+- **表结构**：users [MVP-BE]、workspaces [MVP-BE]、documents [CURRENT-FE + MVP-BE]、document_blocks [CURRENT-FE + MVP-BE]、tags [CURRENT-FE + MVP-BE]、assets [MVP-BE]
+- **API**：POST /api/documents、PUT /api/documents/{id}（支持 save_mode）、GET /api/documents/{id}、GET /api/documents?sort=recent
+- **验收标准**：
+  - 用户可创建 Document（UUIDv7 主键）
+  - Editor 可保存和读取 Document（含 markdown + block_json，自动/手动保存区分）
+  - Tag CRUD 正常
+- **不做**：Mind 相关表、Capture 流程、导入
+
+### Phase 2：Capture → Document → MindNode 最小闭环 [MVP-BE]
+
+- **目标**：打通快速输入闭环的核心链路。
+- **表结构**：captures [CURRENT-FE + MVP-BE]、mind_nodes [CURRENT-FE + MVP-BE]、mind_node_documents [MVP-BE]、mind_edges [CURRENT-FE + MVP-BE]、clusters [CURRENT-FE + MVP-BE]、graph_layouts [CURRENT-FE + MVP-BE]、graph_events [CURRENT-FE + MVP-BE]、source_items [MVP-BE]、projects [CURRENT-FE + MVP-BE]
+- **API**：POST /api/captures（事务内创建 capture + document + mind_node + recommendations）、GET /api/mind/graph、GET /api/mind/nodes/{id}、POST /api/mind/edges、POST /api/mind/nodes/{id}/land
+- **验收标准**：
+  - Mind 输入一句话后，生成 Capture → Document → MindNode，同时写入 mind_node_documents
+  - Mind 画布能加载节点、连线、星群
+  - 用户可拖动节点确认落点
+- **不做**：推荐系统算法、批量导入
+
+### Phase 3：Dock / Mind / Editor 同步闭环 [MVP-BE]
+
+- **目标**：打通管理闭环和编辑闭环，实现双向联动。
+- **表结构**：完成所有 [CURRENT-FE + MVP-BE] / [MVP-BE] 表的字段和索引
+- **API**：GET /api/dock/items、PUT /api/documents/{id}（触发结构化流程，异步重算 + structure_recompute_status）、PATCH /api/mind/nodes/{id}/layout、PATCH /api/documents/batch
+- **关键交付**：
+  - Editor 手动保存后触发结构化流程（extract plain text → update node → recompute edges，异步追踪）
+  - Dock 修改标签/项目后 Mind 关系同步变化
+- **不做**：大型图谱性能优化、WebSocket 实时同步
+
+### Phase 4：Recommendation / RecommendationEvent / UserBehaviorEvent 反馈闭环 [MVP-BE]
+
+- **目标**：建立推荐对象 + 推荐事件 + 用户行为事件的完整记录，为后续算法学习建立数据基础。
+- **表结构**：recommendations [MVP-BE]、recommendation_events [MVP-BE]、user_behavior_events [MVP-BE]
+- **API**：POST /api/recommendations/{id}/feedback
+- **验收标准**：
+  - 推荐生成时写入 recommendations + recommendation_events
+  - 用户接受/拒绝推荐后更新 recommendations.status + 追加 recommendation_events
+  - 用户拖动节点或修改归属后写入 user_behavior_events
+  - 删除文档后不产生破坏性孤儿节点
+- **不做**：preference_profiles 自动更新、算法权重实时调整
+
+### Phase 5：Review / Nudge 数据预留 [NEXT + RESERVED]
+
+- **目标**：建立 Review 和 Chat/Nudge 所需的数据表骨架，不做功能实现。
+- **表结构**：graph_signals [RESERVED]、feature_snapshots [NEXT]、preference_profiles [NEXT]、rhythm_profiles [NEXT]、algorithm_cache [RESERVED]
+- **API**：GET /api/review/weekly [RESERVED]、GET /api/chat/nudges/next [RESERVED]
+- **验收标准**：表结构存在、API 骨架定义完成，入口 UI 可展示但不假装已有完整智能能力
+- **不做**：实际 Review 算法、Chat 智能问答、Nudge 策略
+
+---
+
+## 11. 验收标准
+
+### 11.1 可测试验收清单
+
+以下每条都必须可被手动或自动测试验证：
+
+1. [MVP-BE] Mind 输入一句话后，系统生成 Capture、Document、MindNode 三对象，同时写入 mind_node_documents。
+2. [MVP-BE] Dock 列表能看到该 Document。
+3. [MVP-BE] Editor 能通过 WorkspaceTabs 打开该 Document。
+4. [MVP-BE] Editor 手动保存后，Mind 中对应节点更新 `updated_at` 和 `summary`；自动保存不触发。
+5. [MVP-BE] Dock 修改标签/项目后，Mind 中节点关系和星群归属同步变化。
+6. [MVP-BE] 用户确认/拒绝推荐落点后，`recommendations.status` 更新 + `recommendation_events` 追加记录。
+7. [MVP-BE] 用户拖动节点或修改归属后，`user_behavior_events` 表写入对应记录。
+8. [CURRENT-FE → MVP-BE] 刷新页面后，WorkspaceTabs 恢复之前的标签状态。
+9. [MVP-BE] 删除 Document 后，检查 mind_node_documents 关联，正确标记 isolated 或级联处理。
+10. [RESERVED] Review / Chat 入口存在于浮动工具栏，但不返回假装有完整智能能力的数据。
+11. [MVP-BE] `GET /api/documents?sort=recent&limit=20` 返回最近文档列表（替代 recent_documents 独立表）。
+12. [MVP-BE] POST /api/captures 的事务性：任一环节失败全部回滚。
+
+### 11.2 必须避免的错误模式
+
+| 错误 | 检查方法 |
+| --- | --- |
+| 把结构文档写成 UI 说明书 | 检查：有无 CSS 变量、组件树、视觉规范？应无。 |
+| 把算法公式大量塞进结构文档 | 检查：TF-IDF/向量公式细节是否在本文件？应在算法文档。 |
+| 制造新的 Entry 模块 | 检查：表中是否有 entry 命名？应为 document。 |
+| Dock 和 Mind 成为两套状态 | 检查：Dock 修改标签是否触发 Mind 重算？API 设计已保证。 |
+| Review / Chat / Widgets 提升为当前主导航 | 检查：主导航是否只有 Home/Mind/Dock？是。 |
+| 未来能力写成已完成 | 检查：所有表是否都有 [CURRENT-FE + MVP-BE] / [MVP-BE] / [NEXT] / [RESERVED] 标记？是。 |
+| Editor 保存只停留在文本层 | 检查：PUT /api/documents/{id} 手动保存是否触发结构化流程？是。 |
+| 推荐没有事件记录 | 检查：POST /api/recommendations/{id}/feedback 是否存在？是。 |
+| 后端误认为 [CURRENT] 表已在 BE 存在 | 检查：所有 [CURRENT] 已替换为 [CURRENT-FE + MVP-BE] 或 [MVP-BE]。 |
+
+---
+
+## 附录 A：当前前端 IndexedDB → 后端表映射速查
+
+| 前端 IndexedDB 表名 | 后端目标表名 | 状态 | 关键差异 |
+| --- | --- | --- | --- |
+| dockItems | captures | [CURRENT-FE + MVP-BE] | id INTEGER→UUIDv7；新增 capture_type、workspace_id、confidence_score |
+| entries | documents | [CURRENT-FE + MVP-BE] | id INTEGER→UUIDv7 (legacy_local_id)；content 拆为 markdown/plain_text/block_json；sourceDockItemId→capture_id |
+| tags | tags | [CURRENT-FE + MVP-BE] | id→UUIDv7 |
+| collections | projects | [CURRENT-FE + MVP-BE] | id→UUIDv7；新增 default_cluster_id |
+| mindNodes | mind_nodes | [CURRENT-FE + MVP-BE] | 移除 document_id（下沉至 mind_node_documents）；positionX/Y→graph_layouts；label→title |
+| mindEdges | mind_edges | [CURRENT-FE + MVP-BE] | edgeType→relation_type；source→created_by；reason→evidence_json |
+| knowledgeEvents | graph_events | [CURRENT-FE + MVP-BE] | metadata→拆分为 before/after/reason |
+| temporalActivities | timeline_anchors | [NEXT] | 结构对齐 |
+| entryTagRelations | document_tags | [MVP-BE] | 从 [NEXT] 提升为 MVP-BE；source 字段区分 user/system/import |
+| entryRelations | — | [NEXT] | 重构为 document_relations |
+| workspaceSessions | workspace_sessions | [CURRENT-FE + MVP-BE] | 结构一致 |
+| workspaceOpenTabs | workspace_open_tabs | [CURRENT-FE + MVP-BE] | document_id INTEGER→TEXT |
+| recentDocuments | — | [移除] | 由 GET /api/documents?sort=recent 替代 |
+| editorDrafts | editor_drafts | [MVP 保留前端 IndexedDB] | 后端以 documents.status=draft 支撑基础草稿；跨端草稿恢复升级为 NEXT-BE |
+| chatSessions | chat_sessions | [RESERVED] | 结构预留 |
+| widgets | widgets | [RESERVED] | 结构预留 |
+| — | mind_node_documents | [MVP-BE] | **新增**（替代 mind_nodes.document_id） |
+| — | recommendations | [MVP-BE] | **新增**（推荐对象主表） |
+| — | recommendation_events | [MVP-BE] | **新增**（推荐事件日志） |
+| — | user_behavior_events | [MVP-BE] | **新增** |
+| — | graph_signals | [RESERVED] | **新增** |
+| — | feature_snapshots | [NEXT] | **新增** |
+| — | preference_profiles | [NEXT] | **新增** |
+| — | rhythm_profiles | [NEXT] | **新增** |
+| — | algorithm_cache | [RESERVED] | **新增** |
+| — | source_items | [MVP-BE] | **新增** |
+| — | document_blocks | [CURRENT-FE + MVP-BE] | **新增**（document_id TEXT FK） |
+| — | assets | [MVP-BE] | **新增** |
+| — | graph_layouts | [CURRENT-FE + MVP-BE] | **新增**（从 mind_nodes 分离） |
+| — | clusters | [CURRENT-FE + MVP-BE] | **新增**（从 collections 概念独立，新增 bound_project_id 等） |
+| — | import_jobs | [NEXT] | **新增** |
+| — | import_items | [NEXT] | **新增** |
+
+---
+
+## 附录 B：名词对齐表
+
+| 旧名词（废弃） | 新名词 | 说明 |
+| --- | --- | --- |
+| Entry | Document | Entry 模块已取消，Entry 对象废弃 |
+| DockItem | Capture（原始）/ DockViewItem（视图） | dockItem 不再作为核心资产模型 |
+| Suggestion | Recommendation | 统一为推荐概念 |
+| KnowledgeEvent | GraphEvent | 语义对齐到图谱事件 |
+| TemporalActivity | TimelineAnchor | NEXT 阶段 |

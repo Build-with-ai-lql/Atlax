@@ -1,1982 +1,1447 @@
-# Atlax MindDock 本地化结构算法设计文档
+# Atlax MindDock 本地结构算法与偏好蒸馏设计文档
 
-```
-本地算法定义说明：
-必须把“90%精准度”定义清楚：不是冷启动时就像大模型一样“什么都懂”，而是**在用户有足够记录数据后，系统给出的 Top-3 落库/链接/编辑/Review/Chat 引导建议中，用户接受或轻微修正后接受的比例达到 90% 左右**。冷启动阶段只能做到“合理”，数据积累后才能做到“很准”。下面这版基于当前 `STRUCTURE_DESIGN` 里已经确定的三主模块、取消 Entry、Mind 默认主视图、Dock 直连知识库、Chat/Classic 共用知识库与规则优先路线继续深化。
-```
-
-版本：v0.2
-适用阶段：第二版 Demo / Nebula Tree 重构阶段
-核心目标：在不接入 LLM 的情况下，通过本地结构算法支撑自动落库、链接推荐、编辑辅助、Review、Chat 引导、导入归类与查询推荐。
-主线模块：Editor / Mind / Dock
-核心产品灵魂：星云树 Nebula Tree
-算法原则：本地优先、结构优先、轻量高性能、可解释、可修正、可持续学习。
+版本：v1.1
+适用阶段：后端第一阶段 Intelligence Spine 结构基线
+核心目标：基于 `STRUCTURE_DESIGN.md` 四层对象模型，建立本地算法的边界、架构与数据闭环骨架。本文档已包含 MVP 核心推荐闭环，包括统一排序、自动落库、标签/项目/星群/链接推荐、反馈学习、冷启动策略。
+状态标记：[MVP] 后端第一阶段必须实现 / [NEXT] 第二阶段增强 / [RESERVED] 未来预留
+前置文档：`STRUCTURE_DESIGN.md`（已冻结，本文档不修改该文件）
 
 ---
 
-## 1. 可行性结论
+## 1. 文档定位与算法边界
 
-本方案可以实现。
+### 1.1 本文档是什么
 
-但需要明确一点：所谓“无限接近大模型推荐策略”，不能理解为本地算法具备大模型的开放语义理解能力，而是通过以下方式逼近大模型在知识管理场景中的推荐效果：
+本文档是 Atlax MindDock 的**本地结构算法设计文档**。它定义：
 
-1. 用户行为数据长期积累。
-2. 内容结构元数据足够完整。
-3. 本地文本特征、时间特征、图关系特征、行为习惯特征共同参与计算。
-4. 所有推荐都保留用户反馈，持续修正用户偏好。
-5. 不追求“一次性绝对判断”，而追求“Top-K 推荐中高概率命中”。
-6. 推荐结果必须可解释、可撤销、可修正。
-7. 算法不伪装成人类智能，而是成为用户知识结构的本地导航系统。
+- 在 `STRUCTURE_DESIGN.md` 四层对象模型之上，算法如何运转
+- 后端第一阶段算法数据闭环的依据
+- 不接 LLM 时的本地智能骨架：**Local Preference Distillation Engine（本地偏好蒸馏引擎）**
+- 算法的输入、输出、依赖表、状态分层
 
-因此，本阶段算法目标不是“创造一个本地大模型”，而是构建一个：
+### 1.2 本文档不是什么
 
-> 基于个人知识图谱 + 行为习惯 + 时间节律 + 内容结构 + 反馈闭环的本地推荐系统。
+| 不是 | 原因 |
+| --- | --- |
+| LLM prompt 设计文档 | LLM 接入方案由独立文档负责 |
+| 开放问答设计文档 | Chat 自由问答不在本地算法范围内 |
+| 结构设计文档 | 对象模型、表结构、API 契约属于 `STRUCTURE_DESIGN.md` |
+| 完整 ML/LLM 算法实现手册 | 本文只定义本地规则/启发式/可解释排序算法，不包含模型训练、向量模型、LLM prompt 或云端推理实现 |
+| UI 说明书 | 前端交互规范由前端文档负责 |
 
-更准确地说，Atlax 的非 LLM 算法应该是：
+### 1.3 本地算法能做
 
-> 一个面向个人知识库的 Local Personal Knowledge Intelligence Engine。
+| 能力 | 说明 |
+| --- | --- |
+| 自动落库建议 | 新 Capture 进入后推荐归入的 project / cluster / tag |
+| 标签推荐 | 基于内容和用户历史推荐标签 |
+| 项目归属推荐 | 推荐 primary_project_id |
+| 星群/节点归属推荐 | 推荐目标 cluster 或 parent node |
+| 链接推荐 | 推荐有意义的 mind_edge |
+| 草稿清理提醒 | 长期未编辑 draft 提醒归档或丢弃 |
+| Quick Note 落地提醒 | 漂浮星辰提醒锚定 |
+| 每日推荐 | 基于节律和偏好的轻量每日内容推送 |
+| 周 Review 结构健康检查 | 孤立节点、停滞项目、重复主题检测 |
 
-中文可称为：
+### 1.4 本地算法不能做
 
-> 本地个人知识智能引擎。
-
----
-
-## 2. 精准度定义
-
-算法不能只说“精准”，必须定义指标。
-
-### 2.1 推荐精准度定义
-
-本产品中的“精准度”不指搜索引擎式的完全匹配，也不指大模型式自由回答，而指以下指标：
-
-| 指标 | 含义 | 目标 |
-|---|---|---|
-| Top-1 Accept Rate | 第一推荐被用户直接接受的比例 | 成熟用户 65%+ |
-| Top-3 Accept Rate | 前三推荐中至少一个被接受的比例 | 成熟用户 90%+ |
-| Correction Distance | 用户修正幅度 | 越低越好 |
-| Reject Rate | 用户完全拒绝推荐的比例 | 越低越好 |
-| Silent Success Rate | 系统自动落库后用户不修改的比例 | 成熟用户 75%+ |
-| Explanation Trust Rate | 用户认为解释合理的比例 | 80%+ |
-| Recovery Rate | 错误推荐被用户修正后下次不再重复的比例 | 90%+ |
-
-### 2.2 用户数据阶段划分
-
-算法效果与数据量强相关，因此需要按用户数据阶段区分能力。
-
-| 阶段 | 数据量 | 算法状态 | 可承诺效果 |
-|---|---:|---|---|
-| 冷启动 | 0 - 30 条记录 | 主要依赖规则、时间、显式标签 | 只能给基础建议 |
-| 初步学习 | 30 - 150 条记录 | 开始学习主题、来源、习惯 | 推荐开始稳定 |
-| 稳定学习 | 150 - 500 条记录 | 图谱和行为信号可用 | Top-3 明显提升 |
-| 成熟知识库 | 500+ 条记录 | 结构、习惯、周期都成形 | Top-3 可冲击 90% |
-| 高密度知识库 | 2000+ 条记录 | 可做长期趋势、复用、Review | 可形成明显产品壁垒 |
-
-结论：
-
-> 90% 精准度不能承诺给冷启动用户，只能承诺给已经形成一定记录规模的成熟用户。
-
-这不是缺点，这是诚实。
-冷启动阶段应该靠低打扰、可解释、可修正来建立信任，而不是强行装聪明。
+| 不能 | 原因 |
+| --- | --- |
+| 开放式复杂问答 | 需要语义理解和推理，属于 LLM 范畴 |
+| 高质量长文语义总结 | 需要深度语言生成能力 |
+| 深层推理 | 无法进行因果推理、逻辑链推导 |
+| 替用户做最终决策 | 所有推荐必须可撤销、可修正 |
+| 心理分析或情绪诊断 | 算法只观察行为，不评价人格和心理状态 |
+| 冷启动高精准 | 冷启动只能做到"合理"，数据积累后才能"很准" |
 
 ---
 
-## 3. 算法总体架构
+## 2. 与 LLM 的关系
 
-### 3.1 总体结构
+### 2.1 核心结论
 
-```text
-User Input / Import / Editor / Dock Action / Mind Action
-        ↓
-Ingestion Layer
-        ↓
-Feature Extraction Layer
-        ↓
-Local Index Layer
-        ↓
-Graph Intelligence Layer
-        ↓
-Recommendation Engine
-        ↓
-Ranking & Explanation Layer
-        ↓
-UI Delivery Layer
-        ↓
-User Feedback Loop
-        ↓
-Preference Update / Cache Update / Graph Update
-````
+> **Atlax 免费版智能体验不应依赖 LLM 成立。LLM 是增强器，不是发动机。**
 
-### 3.2 核心算法模块
+### 2.2 分工边界
 
-| 模块                          | 职责                             |
-| --------------------------- | ------------------------------ |
-| Ingestion Engine            | 接收 Editor、Mind、Dock、导入、Chat 输入 |
-| Feature Extractor           | 提取文本、结构、时间、来源、行为特征             |
-| Local Indexer               | 建立本地倒排索引、标签索引、时间索引、图索引         |
-| Graph Builder               | 构建星云树节点、边、星群、权重                |
-| Auto Landing Engine         | 自动落库推荐                         |
-| Link Recommendation Engine  | 链接推荐                           |
-| Import Mapping Engine       | 外部数据导入归类                       |
-| Editor Assist Engine        | 编辑辅助与卡住提醒                      |
-| Review Engine               | 周报、趋势、沉没内容、复用建议                |
-| Chat Nudge Engine           | 本地化 Chat 引导消息推送                |
-| Query Recommendation Engine | 查询建议与相关内容召回                    |
-| Layout Intelligence Engine  | 支撑星云树结构清晰、美观、低混乱度              |
-| Feedback Learning Engine    | 根据用户接受、修改、拒绝行为调整推荐权重           |
+```
+┌─────────────────────────────────────────────────────┐
+│                   Atlax 智能体系                       │
+├─────────────────────────┬───────────────────────────┤
+│   Local Algorithm       │   LLM（后续接入）           │
+│   本地结构算法            │   大语言模型增强             │
+├─────────────────────────┼───────────────────────────┤
+│ 长期记忆                 │ 语义增强                   │
+│ 用户习惯学习              │ 长文总结                   │
+│ 结构判断                 │ 表达生成                   │
+│ 低成本推荐               │ 开放式问答                 │
+│ 隐私优先                 │ 复杂意图理解               │
+│ 快速响应                 │ 跨文档深度关联             │
+│ 可解释反馈闭环           │                            │
+│ 完全离线可用             │                            │
+└─────────────────────────┴───────────────────────────┘
+```
+
+### 2.3 本地算法的独立价值
+
+本地算法不是 LLM 的低配替代品，而是：
+
+1. **长期记忆层**：记录用户在 Atlax 中的所有行为轨迹，形成持续偏好画像
+2. **结构导航层**：基于知识图谱结构给出推荐，不依赖语义理解
+3. **隐私边界层**：所有核心计算在本地完成，不上传原始内容
+4. **反馈闭环层**：记录每一次推荐的接受/拒绝/修正，持续调整权重
+5. **低延迟层**：毫秒级响应，不等待远程模型推理
+
+### 2.4 LLM 的增强定位
+
+LLM 在后续阶段的角色：
+
+- 对本地算法产出的候选做语义排序增强
+- 生成推荐的解释文字（explanation text）
+- 处理开放式用户提问
+- Chat 中的自由对话
+- 跨语言内容理解
+
+**LLM 不能替代本地算法，因为：**
+- LLM 不理解用户的长期行为模式
+- LLM 无法持续学习用户偏好
+- LLM 每次推理成本高、延迟高
+- LLM 不适合记录用户反馈闭环
 
 ---
 
-## 4. 数据采集原则
+## 3. Local Preference Distillation Engine（本地偏好蒸馏引擎）
 
-算法是否精准，首先取决于数据字段是否完整。
+### 3.1 概念定义
 
-如果数据库只存标题、正文、标签，那么算法只能做到浅层推荐。
+**Local Preference Distillation Engine**（中文：本地偏好蒸馏引擎）是 Atlax 本地算法的核心概念。
 
-Atlax 必须保存以下几类数据：
+这里的"蒸馏"不是模型蒸馏（Knowledge Distillation），而是：
 
-1. 内容数据。
-2. 结构数据。
-3. 来源数据。
-4. 用户行为数据。
-5. 时间节律数据。
-6. 编辑过程数据。
-7. 推荐反馈数据。
-8. 星云树交互数据。
-9. 导入映射数据。
-10. Chat 推送反馈数据。
+> 将用户的每一次操作、每一次反馈，持续转化为结构化的偏好画像数据。
 
-本地结构优先策略下，用户数据可以在本地被充分分析，因此字段设计必须比普通笔记软件更完整。
+它是一组持续运行的规则和统计算法，负责从 `user_behavior_events`、`recommendation_events`、`captures`、`documents` 等表中提取信号，更新偏好画像表。
+
+### 3.2 蒸馏的不是模型，是行为
+
+```
+用户行为 ──→ 事件记录 ──→ 信号提取 ──→ 偏好更新 ──→ 推荐增强
+   │            │            │            │
+   │    user_behavior_    preference_    下次推荐
+   │    events           profiles        权重调整
+   │    recommendation_  rhythm_
+   │    events           profiles
+```
+
+### 3.3 画像定义
+
+以下每个画像单独说明来源事件、依赖表、用途、MVP/NEXT 状态。
 
 ---
 
-## 5. 核心数据表设计
-
-### 5.1 documents 文档表
-
-```sql
-CREATE TABLE documents (
-  id                  VARCHAR(64) PRIMARY KEY,
-  user_id             VARCHAR(64) NOT NULL,
-
-  title               TEXT,
-  content_markdown    TEXT,
-  content_plain       TEXT,
-  content_json        JSON,
-
-  document_type       VARCHAR(32),
-  status              VARCHAR(32),
-
-  source_type         VARCHAR(32),
-  source_id           VARCHAR(64),
-  source_url          TEXT,
-  source_platform     VARCHAR(64),
-
-  primary_project_id  VARCHAR(64),
-  primary_topic_id    VARCHAR(64),
-  primary_cluster_id  VARCHAR(64),
-
-  word_count          INT DEFAULT 0,
-  block_count         INT DEFAULT 0,
-  heading_count       INT DEFAULT 0,
-  link_count          INT DEFAULT 0,
-  media_count         INT DEFAULT 0,
-
-  importance_score    DOUBLE DEFAULT 0,
-  activity_score      DOUBLE DEFAULT 0,
-  structure_score     DOUBLE DEFAULT 0,
-  freshness_score     DOUBLE DEFAULT 0,
-
-  created_at          TIMESTAMP,
-  updated_at          TIMESTAMP,
-  last_opened_at      TIMESTAMP,
-  last_edited_at      TIMESTAMP,
-  archived_at         TIMESTAMP
-);
-```
-
-### 5.2 document_blocks 块表
-
-Editor 必须支持 Classic Markdown 和 Block Markdown，两种模式不能割裂，所以底层必须以 block 作为结构基础。
-
-```sql
-CREATE TABLE document_blocks (
-  id                  VARCHAR(64) PRIMARY KEY,
-  document_id         VARCHAR(64) NOT NULL,
-
-  block_type          VARCHAR(32),
-  parent_block_id     VARCHAR(64),
-  order_index         INT,
-
-  markdown_text       TEXT,
-  plain_text          TEXT,
-  block_json          JSON,
-
-  heading_level       INT,
-  word_count          INT,
-  has_task            BOOLEAN DEFAULT FALSE,
-  task_status         VARCHAR(32),
-
-  local_keywords      JSON,
-  linked_node_ids     JSON,
-  referenced_doc_ids  JSON,
-
-  created_at          TIMESTAMP,
-  updated_at          TIMESTAMP
-);
-```
-
-### 5.3 captures 临时输入表
-
-Capture 是所有快速输入、Mind 星辰输入、Chat 引导记录、导入碎片的统一入口。
-
-```sql
-CREATE TABLE captures (
-  id                  VARCHAR(64) PRIMARY KEY,
-  user_id             VARCHAR(64) NOT NULL,
-
-  raw_text            TEXT NOT NULL,
-  normalized_text     TEXT,
-  capture_type        VARCHAR(32),
-
-  input_surface       VARCHAR(32),
-  input_context       JSON,
-
-  status              VARCHAR(32),
-  landing_state       VARCHAR(32),
-
-  suggested_doc_id    VARCHAR(64),
-  suggested_node_id   VARCHAR(64),
-  suggested_cluster_id VARCHAR(64),
-
-  confidence          DOUBLE DEFAULT 0,
-  user_decision       VARCHAR(32),
-
-  created_at          TIMESTAMP,
-  processed_at        TIMESTAMP,
-  confirmed_at        TIMESTAMP
-);
-```
-
-推荐状态：
-
-```text
-raw
-processing
-suggested
-anchored
-rejected
-manual_adjusted
-archived
-```
-
-### 5.4 mind_nodes 星云节点表
-
-```sql
-CREATE TABLE mind_nodes (
-  id                  VARCHAR(64) PRIMARY KEY,
-  user_id             VARCHAR(64) NOT NULL,
-
-  node_type           VARCHAR(32),
-  node_status         VARCHAR(32),
-
-  title               TEXT,
-  summary             TEXT,
-
-  document_id         VARCHAR(64),
-  capture_id          VARCHAR(64),
-  project_id          VARCHAR(64),
-  topic_id            VARCHAR(64),
-  cluster_id          VARCHAR(64),
-
-  degree              INT DEFAULT 0,
-  in_degree           INT DEFAULT 0,
-  out_degree          INT DEFAULT 0,
-
-  importance_score    DOUBLE DEFAULT 0,
-  activity_score      DOUBLE DEFAULT 0,
-  centrality_score    DOUBLE DEFAULT 0,
-  confidence_score    DOUBLE DEFAULT 0,
-
-  visual_size         DOUBLE,
-  visual_color        VARCHAR(32),
-  visual_depth        DOUBLE,
-
-  x                   DOUBLE,
-  y                   DOUBLE,
-  z                   DOUBLE,
-
-  pinned              BOOLEAN DEFAULT FALSE,
-  hidden              BOOLEAN DEFAULT FALSE,
-
-  created_at          TIMESTAMP,
-  updated_at          TIMESTAMP,
-  last_interacted_at  TIMESTAMP
-);
-```
-
-### 5.5 mind_edges 星云连线表
-
-```sql
-CREATE TABLE mind_edges (
-  id                  VARCHAR(64) PRIMARY KEY,
-  user_id             VARCHAR(64) NOT NULL,
-
-  source_node_id      VARCHAR(64) NOT NULL,
-  target_node_id      VARCHAR(64) NOT NULL,
-
-  edge_type           VARCHAR(32),
-  relation_reason     VARCHAR(128),
-
-  weight              DOUBLE DEFAULT 0,
-  confidence          DOUBLE DEFAULT 0,
-  user_confirmed      BOOLEAN DEFAULT FALSE,
-
-  source              VARCHAR(32),
-  explanation         TEXT,
-
-  visible_level       INT DEFAULT 2,
-  is_suggested        BOOLEAN DEFAULT FALSE,
-  is_hidden           BOOLEAN DEFAULT FALSE,
-
-  created_at          TIMESTAMP,
-  updated_at          TIMESTAMP,
-  confirmed_at        TIMESTAMP
-);
-```
-
-### 5.6 clusters 星群表
-
-```sql
-CREATE TABLE clusters (
-  id                  VARCHAR(64) PRIMARY KEY,
-  user_id             VARCHAR(64) NOT NULL,
-
-  name                TEXT,
-  cluster_type        VARCHAR(32),
-
-  center_node_id      VARCHAR(64),
-  parent_cluster_id   VARCHAR(64),
-
-  keyword_signature   JSON,
-  tag_signature       JSON,
-  source_signature    JSON,
-
-  node_count          INT DEFAULT 0,
-  density_score       DOUBLE DEFAULT 0,
-  coherence_score     DOUBLE DEFAULT 0,
-  activity_score      DOUBLE DEFAULT 0,
-
-  visual_radius       DOUBLE,
-  visual_color        VARCHAR(32),
-
-  created_at          TIMESTAMP,
-  updated_at          TIMESTAMP
-);
-```
-
-### 5.7 user_behavior_events 用户行为事件表
-
-```sql
-CREATE TABLE user_behavior_events (
-  id                  VARCHAR(64) PRIMARY KEY,
-  user_id             VARCHAR(64) NOT NULL,
-
-  event_type          VARCHAR(64),
-  target_type         VARCHAR(64),
-  target_id           VARCHAR(64),
-
-  surface             VARCHAR(32),
-  context             JSON,
-
-  duration_ms         INT,
-  before_state        JSON,
-  after_state         JSON,
-
-  created_at          TIMESTAMP
-);
-```
-
-事件类型包括：
-
-```text
-document_created
-document_opened
-document_edited
-document_archived
-block_created
-block_moved
-node_clicked
-node_dragged
-node_linked
-node_unlinked
-recommendation_accepted
-recommendation_rejected
-recommendation_modified
-dock_filter_used
-dock_view_changed
-mind_zoomed
-mind_cluster_focused
-chat_nudge_clicked
-chat_nudge_dismissed
-weekly_review_opened
-import_confirmed
-```
-
-### 5.8 recommendation_events 推荐记录表
-
-```sql
-CREATE TABLE recommendation_events (
-  id                  VARCHAR(64) PRIMARY KEY,
-  user_id             VARCHAR(64) NOT NULL,
-
-  recommendation_type VARCHAR(64),
-  trigger_type        VARCHAR(64),
-  trigger_id          VARCHAR(64),
-
-  candidates          JSON,
-  selected_candidate  JSON,
-
-  score_breakdown     JSON,
-  explanation         TEXT,
-
-  status              VARCHAR(32),
-  user_feedback       VARCHAR(32),
-  feedback_detail     JSON,
-
-  created_at          TIMESTAMP,
-  resolved_at         TIMESTAMP
-);
-```
-
-### 5.9 rhythm_profiles 用户节律表
-
-```sql
-CREATE TABLE rhythm_profiles (
-  id                  VARCHAR(64) PRIMARY KEY,
-  user_id             VARCHAR(64) NOT NULL,
-
-  active_hours        JSON,
-  active_weekdays     JSON,
-
-  writing_frequency   DOUBLE,
-  inspiration_frequency DOUBLE,
-  review_frequency    DOUBLE,
-
-  avg_session_minutes DOUBLE,
-  avg_words_per_day   DOUBLE,
-
-  topic_cycle         JSON,
-  source_cycle        JSON,
-
-  last_inspiration_at TIMESTAMP,
-  last_deep_work_at   TIMESTAMP,
-  last_review_at      TIMESTAMP,
-
-  updated_at          TIMESTAMP
-);
-```
-
-### 5.10 algorithm_cache 算法缓存表
-
-```sql
-CREATE TABLE algorithm_cache (
-  id                  VARCHAR(64) PRIMARY KEY,
-  user_id             VARCHAR(64) NOT NULL,
-
-  cache_type          VARCHAR(64),
-  cache_key           VARCHAR(255),
-
-  cache_value         JSON,
-  version             INT,
-
-  expires_at          TIMESTAMP,
-  created_at          TIMESTAMP,
-  updated_at          TIMESTAMP
-);
-```
+#### 3.3.1 Topic Preference（主题偏好）
+
+| 维度 | 内容 |
+| --- | --- |
+| **含义** | 用户长期关注的主题领域及其权重分布 |
+| **来源事件** | document_created、document_saved、capture confirmed、tag_added、node_clicked |
+| **依赖表** | documents、captures、mind_nodes、document_tags、tags、user_behavior_events |
+| **用途** | 新内容自动落库时优先匹配高频主题；每日推荐中优先展示活跃主题相关内容 |
+| **MVP/NEXT** | [NEXT] preference_profiles.category_weights |
 
 ---
 
+#### 3.3.2 Project Preference（项目偏好）
 
-
-### 5.11 markdown_syntax_rules Markdown 语法规则表
-
-```sql
-CREATE TABLE markdown_syntax_rules (
-  id VARCHAR(64) PRIMARY KEY,
-  rule_key VARCHAR(64),
-  trigger_text VARCHAR(64),
-  block_type VARCHAR(32),
-  template_text TEXT,
-  priority_score DOUBLE DEFAULT 0,
-  enabled BOOLEAN DEFAULT TRUE,
-  created_at TIMESTAMP
-);
-```
-
-### 5.12 editor_suggestion_events 编辑器推荐事件表
-
-```sql
-CREATE TABLE editor_suggestion_events (
-  id VARCHAR(64) PRIMARY KEY,
-  user_id VARCHAR(64),
-  document_id VARCHAR(64),
-  suggestion_type VARCHAR(64),
-  suggestion_payload JSON,
-  accepted BOOLEAN,
-  created_at TIMESTAMP
-);
-```
-
-### 5.13 user_editor_habits 用户编辑习惯表
-
-```sql
-CREATE TABLE user_editor_habits (
-  id VARCHAR(64) PRIMARY KEY,
-  user_id VARCHAR(64),
-  habit_key VARCHAR(64),
-  score DOUBLE DEFAULT 0,
-  updated_at TIMESTAMP
-);
-```
-
-
-## 6. 特征工程设计
-
-### 6.1 文本特征
-
-不接 LLM 时，文本理解主要依赖轻量特征。
-
-| 特征           | 用途          |
-| ------------ | ----------- |
-| 标题关键词        | 判断主题与归属     |
-| 正文关键词        | 内容相似度       |
-| 高频词          | 长期兴趣识别      |
-| 低频重要词        | 专业概念识别      |
-| Markdown 标题  | 文档结构识别      |
-| 任务块          | 行动项识别       |
-| 链接           | 外部引用关系      |
-| 图片 / 视频 / 附件 | 内容来源与类型判断   |
-| 中文分词 token   | 中文内容匹配      |
-| 字符 n-gram    | 解决中文分词不稳定问题 |
-| SimHash      | 快速近似去重      |
-| MinHash      | 快速相似内容召回    |
-| TF-IDF       | 本地关键词权重     |
-| BM25         | 本地全文搜索排序    |
-
-### 6.2 时间特征
-
-| 特征       | 用途           |
-| -------- | ------------ |
-| 创建时间     | 判断记录场景       |
-| 编辑时间     | 判断活跃内容       |
-| 打开时间     | 判断复用价值       |
-| 一天中的时间段  | 判断用户习惯       |
-| 星期几      | 判断周期性        |
-| 月份 / 季度  | Review 与长期趋势 |
-| 距离上次记录时间 | 判断沉默、恢复、打断   |
-| 周期性主题    | 判断长期关注点      |
-
-### 6.3 行为特征
-
-| 特征          | 用途        |
-| ----------- | --------- |
-| 用户常点的节点     | 判断关注主题    |
-| 用户常修改的推荐    | 修正算法权重    |
-| 用户常拒绝的标签    | 降低错误推荐    |
-| 用户拖动建立的关系   | 高价值人工反馈   |
-| 用户主动搜索的关键词  | 查询推荐      |
-| 用户停留时间      | 判断内容重要性   |
-| 用户反复打开的文档   | 判断长期价值    |
-| 用户长时间未打开的内容 | Review 提醒 |
-| 用户保存但不编辑的内容 | 判断导入收藏型内容 |
-| 用户编辑中频繁删除   | 可能卡住或不确定  |
-
-### 6.4 图谱特征
-
-| 特征     | 用途         |
-| ------ | ---------- |
-| 节点度数   | 判断连接强度     |
-| 中心性    | 判断核心主题     |
-| 聚类密度   | 判断星群稳定性    |
-| 孤立节点比例 | 判断落库质量     |
-| 弱边数量   | 判断推荐质量     |
-| 用户确认边  | 高置信结构      |
-| 系统建议边  | 待验证结构      |
-| 跨星群边   | 判断新洞察      |
-| 冷却节点   | Review 激活  |
-| 新增节点速度 | 判断用户近期记录密度 |
-
-### 6.5 来源特征
-
-| 来源          | 特征                           |
-| ----------- | ---------------------------- |
-| Obsidian    | 文件路径、frontmatter、双链、tag、标题层级 |
-| Notion      | 页面层级、数据库属性、block 类型、创建时间     |
-| 微信          | 聊天对象、收藏时间、链接标题、公众号来源         |
-| 小红书         | 标题、正文、标签、作者、收藏时间、图片数量        |
-| 抖音          | 视频标题、作者、收藏夹、音频、话题            |
-| B站          | 视频标题、UP 主、分区、收藏夹、观看时间、简介     |
-| 浏览器剪藏       | URL、域名、标题、选中文本、保存时间          |
-| 本地 Markdown | 文件路径、标题、tag、修改时间             |
+| 维度 | 内容 |
+| --- | --- |
+| **含义** | 用户在各项目上的活跃度和投入分布 |
+| **来源事件** | document_created、document_saved、project_changed、node_clicked |
+| **依赖表** | documents.primary_project_id、projects、mind_nodes、user_behavior_events |
+| **用途** | 新 content 推荐 primary_project_id；停滞项目检测；周 Review 项目状态 |
+| **MVP/NEXT** | [NEXT] preference_profiles |
 
 ---
 
+#### 3.3.3 Tag Preference（标签偏好）
 
-
-### 6.6 编辑器语法行为特征
-
-| 特征 | 用途 |
-|---|---|
-| 高频标题结构 | 推荐标题层级 |
-| 常用列表格式 | 推荐任务/清单 |
-| 常用代码语言 | 推荐代码块语言 |
-| 常用快捷键 | 个性化操作提示 |
-| 常用链接对象 | 内链推荐 |
-| 常用表格结构 | 表格模板推荐 |
-
-
-## 7. 自动落库算法
-
-### 7.1 自动落库目标
-
-自动落库不是简单分类，而是回答四个问题：
-
-1. 这条内容是什么？
-2. 它应该进入哪个文档或节点？
-3. 它和哪些已有内容有关？
-4. 它在星云树中应该处于什么位置？
-
-### 7.2 自动落库流程
-
-```text
-Input
-  ↓
-Normalize
-  ↓
-Extract Features
-  ↓
-Detect Type
-  ↓
-Find Candidate Containers
-  ↓
-Find Candidate Nodes
-  ↓
-Find Candidate Links
-  ↓
-Score Candidates
-  ↓
-Generate Landing Suggestion
-  ↓
-Create / Update Document
-  ↓
-Create / Update Mind Node
-  ↓
-Update Graph
-  ↓
-Update Dock
-  ↓
-Wait for Feedback
-```
-
-### 7.3 内容类型识别
-
-```text
-type_score =
-keyword_pattern_score * 0.25
-+ markdown_structure_score * 0.2
-+ source_type_score * 0.2
-+ time_context_score * 0.1
-+ user_history_score * 0.25
-```
-
-类型候选：
-
-```text
-idea
-note
-task
-project_log
-meeting_note
-reading_note
-learning_note
-life_record
-inspiration
-question
-quote
-resource
-draft
-review
-```
-
-### 7.4 候选容器召回
-
-候选容器包括：
-
-1. 已有文档。
-2. 项目节点。
-3. 主题节点。
-4. 星群。
-5. 标签。
-6. 来源集合。
-7. 时间集合。
-
-召回策略：
-
-```text
-candidate_score =
-keyword_similarity * 0.25
-+ tag_similarity * 0.2
-+ graph_proximity * 0.2
-+ source_similarity * 0.1
-+ time_context_similarity * 0.1
-+ user_behavior_similarity * 0.15
-```
-
-### 7.5 落库置信度分级
-
-|         置信度 | 行为                    |
-| ----------: | --------------------- |
-| 0.85 - 1.00 | 自动落库，并显示“已归入 xxx，可撤销” |
-| 0.65 - 0.85 | 推荐落库，默认选中，等待用户确认      |
-| 0.45 - 0.65 | 给出 2-3 个候选位置          |
-| 0.25 - 0.45 | 作为漂浮星辰，进入待确认          |
-| 0.00 - 0.25 | 保留原始记录，不强行结构化         |
-
-### 7.6 自动落库解释
-
-每次推荐都必须给出解释。
-
-示例：
-
-```text
-推荐归入「Atlax 产品设计」
-原因：
-1. 内容中出现“星云树 / Dock / Editor”等高频关键词。
-2. 你最近 7 天持续编辑该项目。
-3. 该内容与项目下 5 个节点存在相似关键词。
-4. 你过去 3 次类似内容都确认归入该项目。
-```
-
-解释必须简洁，不能像日志，也不能像算法论文。
+| 维度 | 内容 |
+| --- | --- |
+| **含义** | 用户常用的标签以及系统推荐标签的接受率 |
+| **来源事件** | tag_added、tag_removed、recommendation_accepted（recommendation_type=tag） |
+| **依赖表** | document_tags、tags、recommendations、recommendation_events |
+| **用途** | 自动标签推荐；标签补全；降低被反复拒绝的标签推荐权重 |
+| **MVP/NEXT** | [NEXT] preference_profiles.tag_preferences |
 
 ---
 
-## 8. 链接推荐算法
+#### 3.3.4 Source Preference（来源偏好）
 
-### 8.1 链接推荐目标
-
-链接推荐不是把所有相似内容都连起来，而是找到“对用户有意义的关系”。
-
-### 8.2 边类型推荐
-
-| 边类型           | 推荐依据       |
-| ------------- | ---------- |
-| parent_child  | 项目 / 主题归属  |
-| reference     | 文档中出现明确引用  |
-| similar       | 内容相似       |
-| temporal      | 同一周期内反复出现  |
-| source        | 同来源或同导入批次  |
-| continuation  | 内容是之前记录的延续 |
-| contradiction | 内容与之前观点冲突  |
-| inspiration   | 新内容由旧内容启发  |
-| task_followup | 行动项后续记录    |
-
-### 8.3 链接评分公式
-
-```text
-link_score =
-text_similarity * 0.25
-+ graph_distance_score * 0.2
-+ tag_overlap_score * 0.15
-+ temporal_score * 0.1
-+ source_score * 0.1
-+ user_history_score * 0.15
-+ manual_signal_score * 0.05
-```
-
-### 8.4 链接显示原则
-
-1. 默认只展示强链接。
-2. 弱链接只在节点聚焦时展示。
-3. 系统建议链接使用虚线。
-4. 用户确认链接使用稳定实线。
-5. 用户删除过的链接不应反复推荐。
-6. 跨星群链接优先用于洞察推荐，不直接污染主结构。
-7. 链接推荐必须控制数量，宁少勿乱。
-
-### 8.5 推荐数量限制
-
-| 场景          |       推荐数量 |
-| ----------- | ---------: |
-| 新建文档        |    3 - 5 条 |
-| 新建碎片        |    1 - 3 条 |
-| 导入批次        |   每条最多 3 条 |
-| Editor 旁侧推荐 |      3 条以内 |
-| Mind 节点详情   |      5 条以内 |
-| Dock 批量整理   | 每项最多 3 个候选 |
+| 维度 | 内容 |
+| --- | --- |
+| **含义** | 用户输入内容的来源分布（manual/mind_star/import/web_clip/voice） |
+| **来源事件** | document_created、capture confirmed、import_item_confirmed |
+| **依赖表** | captures.capture_source、documents.source_type、source_items |
+| **用途** | 导入时根据历史来源判断归类优先级；不同来源类型的内容给予不同默认置信度 |
+| **MVP/NEXT** | [NEXT] preference_profiles.source_preferences |
 
 ---
 
-## 9. Editor 编辑辅助算法
+#### 3.3.5 Time Rhythm（时间节律）
 
-### 9.1 Editor 的算法定位
-
-Editor 不是简单输入区域，而是结构生成的入口。
-
-编辑辅助算法需要支持：
-
-1. 自动识别当前文档主题。
-2. 推荐已有相关节点。
-3. 推荐可引用内容。
-4. 用户卡住时给轻提示。
-5. 识别任务、问题、灵感、总结。
-6. 保存时自动更新星云树。
-7. 编辑过程中不打扰用户。
-
-### 9.2 卡住识别
-
-```text
-stuck_score =
-idle_time_score * 0.25
-+ repeated_delete_score * 0.2
-+ cursor_stay_score * 0.15
-+ unfinished_sentence_score * 0.15
-+ low_progress_score * 0.15
-+ historical_pattern_score * 0.1
-```
-
-触发条件：
-
-```text
-stuck_score > 0.72
-AND 当前文档编辑时间 > 3 分钟
-AND 最近 10 分钟未推送过同类提示
-```
-
-### 9.3 编辑提示类型
-
-| 场景          | 提示                            |
-| ----------- | ----------------------------- |
-| 用户停在标题下很久   | “可以先写一句最粗糙的判断，结构之后再补。”        |
-| 用户反复删除同一段   | “这段可能还没成形，要不要先把它保存成一个漂浮星辰？”   |
-| 用户写技术内容     | “你之前在「xxx」里写过类似问题，可能可以接上。”    |
-| 用户写产品内容     | “这个想法和「xxx 需求分析」有关系，要不要建立链接？” |
-| 用户长时间只写生活记录 | “这段时间生活记录很多。好好休息也是在给下一次输出蓄力。” |
-| 用户一周没有灵感记录  | “最近灵感少一点也正常，可以先记录一个很小的问题。”    |
-
-### 9.4 编辑辅助原则
-
-1. 不抢用户笔。
-2. 不写大段内容。
-3. 不假装比用户懂。
-4. 不把所有建议都变成 Chat。
-5. 只在用户可能需要时出现。
-6. 用户关闭一次，同类提示短期内不再出现。
-7. 用户接受某类提示，未来适度增加权重。
+| 维度 | 内容 |
+| --- | --- |
+| **含义** | 用户使用 Atlax 的时间分布（活跃时段、周几最活跃、输入频率） |
+| **来源事件** | open_document、manual_save、auto_save、document_created |
+| **依赖表** | documents（created_at、updated_at、last_opened_at）、user_behavior_events |
+| **用途** | 在用户活跃时段推送推荐；在非活跃时段降低打扰；判断内容沉默期 |
+| **MVP/NEXT** | [NEXT] rhythm_profiles.active_hours、rhythm_profiles.input_frequency |
 
 ---
 
+#### 3.3.6 Editing Habit（编辑习惯）
 
+| 维度 | 内容 |
+| --- | --- |
+| **含义** | 用户的编辑行为模式（手动保存频率、auto save 频率、卡住模式、常用文档类型） |
+| **来源事件** | manual_save、auto_save、open_document、close_document |
+| **依赖表** | documents、user_behavior_events |
+| **用途** | 卡住检测；编辑辅助触发时机；自动保存频率自适应 |
+| **MVP/NEXT** | [NEXT] 存入 rhythm_profiles 或独立 habit 字段 |
 
-### 9.5 Markdown 自动补全与语法推荐
+---
 
-目标：
+#### 3.3.7 Recommendation Feedback Pattern（推荐接受/拒绝模式）
 
-1. 降低 Markdown 学习门槛。
-2. 提升 Block 编辑效率。
-3. 让新用户无需记忆语法即可产出结构化内容。
+| 维度 | 内容 |
+| --- | --- |
+| **含义** | 用户对不同推荐类型的接受率、修改率、拒绝率、忽略率 |
+| **来源事件** | recommendation accepted/rejected/modified/ignored |
+| **依赖表** | recommendations、recommendation_events |
+| **用途** | 调整不同推荐类型的默认 confidence_threshold；高拒绝类型降权；高接受类型提升展示优先级 |
+| **MVP/NEXT** | [MVP] 事件记录；[NEXT] 反馈模式自动调整权重 |
 
-触发方式：
+---
 
-| 触发 | 行为 |
-|---|---|
-| `/` | 打开 Slash Command |
-| `# ` | 标题推荐 |
-| `- ` | 列表推荐 |
-| `> ` | 引用推荐 |
-| ``` | 代码块推荐 |
-| `[[` | 内链推荐 |
-| `|` | 表格推荐 |
+#### 3.3.8 Graph Structure Habit（图谱结构习惯）
 
-推荐评分：
+| 维度 | 内容 |
+| --- | --- |
+| **含义** | 用户在星云树中的操作模式（是否偏好星群组织、是否频繁建立手动连线、是否经常拖拽调整布局） |
+| **来源事件** | node_moved、edge_created、edge_rejected、node_landed |
+| **依赖表** | mind_nodes、mind_edges、graph_layouts、user_behavior_events |
+| **用途** | 判断是否自动生成更多建议连线；是否降低自动连线频率；星群重算触发策略 |
+| **MVP/NEXT** | [NEXT] 存入 graph_signals 或关联偏好 |
 
-```text
-hint_score =
-trigger_match * 0.35
-+ cursor_context * 0.25
-+ user_habit * 0.20
-+ doc_context * 0.20
-```
+---
 
-展示规则：
+#### 3.3.9 Review Rhythm（Review 节奏）
 
-| 分数 | 行为 |
-|---|---|
-| >0.82 | 主动弹出 |
-| 0.65-0.82 | 弱提示 |
-| <0.65 | 不打扰 |
+| 维度 | 内容 |
+| --- | --- |
+| **含义** | 用户进行 Review 的频率和时机（是否定期打开 Review、是否响应 Review 建议） |
+| **来源事件** | review_opened、action_clicked、review_snoozed |
+| **依赖表** | user_behavior_events、recommendation_events |
+| **用途** | 在用户习惯的 Review 时间点推送周报；避免在不合适时间推送 Review |
+| **MVP/NEXT** | [NEXT] rhythm_profiles.review_cycle_days |
 
-支持能力：
+---
 
-1. 语法补全
-2. 表格模板插入
-3. 链接补全
-4. 标题层级修正
-5. 代码块闭合
-6. Frontmatter 模板生成
-7. 当前文档结构建议
+## 4. 总体算法架构
 
-用户连续拒绝同类提示 3 次后，7 天内自动降权。
-
-
-## 10. Chat Nudge 本地推送算法
-
-### 10.1 Chat 的定位
-
-Atlax 的 Chat 不是用户依赖型聊天机器人，而是：
-
-> 引导用户输出、整理、回看、恢复节奏的知识陪跑系统。
-
-在不接 LLM 的情况下，Chat 仍然可以通过本地算法做到自然化推送。
-
-### 10.2 Chat 推送不是模板群发
-
-要避免这种廉价提示：
+### 4.1 架构主干
 
 ```text
-你已经 7 天没有记录了，请记录。
+Event Engine
+    ↓
+Feature Engine
+    ↓
+Local Index Engine
+    ↓
+Candidate Engine
+    ↓
+Ranking Engine
+    ↓
+Explanation Engine
+    ↓
+Delivery Engine
+    ↓
+Feedback Learning Engine
+    ↓
+Preference / Rhythm / Graph Update
 ```
 
-应该转为具有人味的上下文提示：
+### 4.2 各 Engine 详细定义
 
-```text
-这周你记录了不少生活片段，说明你确实在认真过日子。工作灵感少一点也没关系，好好休息本身就是恢复生产力的一部分。
+---
+
+#### 4.2.1 Event Engine（事件引擎）
+
+| 维度 | 内容 |
+| --- | --- |
+| **输入** | 前端所有用户操作（输入、点击、拖拽、保存、反馈） |
+| **输出** | 写入 `user_behavior_events`、`recommendation_events`、`graph_events` |
+| **依赖表** | user_behavior_events、recommendation_events、graph_events |
+| **服务功能** | 统一事件采集，为所有后续算法提供事件数据基础 |
+| **MVP/NEXT/RESERVED** | [MVP] user_behavior_events + recommendation_events 写入 |
+
+---
+
+#### 4.2.2 Feature Engine（特征引擎）
+
+| 维度 | 内容 |
+| --- | --- |
+| **输入** | captures.raw_text、documents.markdown、documents.plain_text、document_tags、mind_nodes |
+| **输出** | 内容特征、结构特征、行为特征、时间特征、来源特征 |
+| **依赖表** | captures、documents、document_tags、mind_nodes、mind_edges、clusters、tags |
+| **服务功能** | 为新内容提取多维特征，支撑候选召回和排序 |
+| **MVP/NEXT/RESERVED** | [MVP] 基础特征提取（关键词、时间、来源）；[NEXT] feature_snapshots 落表 |
+
+---
+
+#### 4.2.3 Local Index Engine（本地索引引擎）
+
+| 维度 | 内容 |
+| --- | --- |
+| **输入** | documents.plain_text、document_tags、mind_nodes、tags |
+| **输出** | 倒排索引、标签索引、时间桶索引、关键词索引 |
+| **依赖表** | documents、document_tags、mind_nodes、tags、clusters |
+| **服务功能** | 为候选召回提供高效的检索能力 |
+| **MVP/NEXT/RESERVED** | [MVP] 基础内存索引；[RESERVED] algorithm_cache 落盘索引 |
+
+---
+
+#### 4.2.4 Candidate Engine（候选召回引擎）
+
+| 维度 | 内容 |
+| --- | --- |
+| **输入** | subject_type、subject_id、推荐场景类型 |
+| **输出** | Candidate[]，每个 Candidate 包含 candidate_type、candidate_id、confidence_score |
+| **依赖表** | captures、documents、mind_nodes、mind_edges、clusters、projects、tags、document_tags |
+| **服务功能** | 根据不同推荐场景召回候选集（landing candidates、tag candidates、link candidates 等） |
+| **MVP/NEXT/RESERVED** | [MVP] 基础 landing/tag 候选；[NEXT] 完整候选类型 |
+
+---
+
+#### 4.2.5 Ranking Engine（排序引擎）
+
+| 维度 | 内容 |
+| --- | --- |
+| **输入** | Candidate[] + 用户偏好权重 |
+| **输出** | 排序后的 Candidate[]，附带 confidence_score |
+| **依赖表** | [NEXT] preference_profiles、[NEXT] rhythm_profiles |
+| **服务功能** | 对候选集打分排序，选出 Top-K |
+| **MVP/NEXT/RESERVED** | [MVP] 基础规则排序；[NEXT] 偏好加权排序 |
+
+---
+
+#### 4.2.6 Explanation Engine（解释引擎）
+
+| 维度 | 内容 |
+| --- | --- |
+| **输入** | 排好序的 Candidate[] |
+| **输出** | 每个 Candidate 附带 reason_json |
+| **依赖表** | 无独立表，写入 recommendations.reason_json |
+| **服务功能** | 为每个推荐生成可解释的理由 |
+| **MVP/NEXT/RESERVED** | [MVP] 基础 reason_json；[NEXT] LLM 增强解释文本 |
+
+---
+
+#### 4.2.7 Delivery Engine（交付引擎）
+
+| 维度 | 内容 |
+| --- | --- |
+| **输入** | 最终推荐结果 + reason_json |
+| **输出** | 写入 recommendations 表，生成 recommendation_events(event_type=generated/shown) |
+| **依赖表** | recommendations、recommendation_events |
+| **服务功能** | 将推荐结果持久化并标记为已展示 |
+| **MVP/NEXT/RESERVED** | [MVP] |
+
+---
+
+#### 4.2.8 Feedback Learning Engine（反馈学习引擎）
+
+| 维度 | 内容 |
+| --- | --- |
+| **输入** | 用户反馈（accepted/rejected/modified/ignored） |
+| **输出** | 更新 recommendations.status、追加 recommendation_events |
+| **依赖表** | recommendations、recommendation_events、user_behavior_events |
+| **服务功能** | 记录反馈闭环，为偏好蒸馏提供数据 |
+| **MVP/NEXT/RESERVED** | [MVP] 事件记录；[NEXT] 实时权重调整 |
+
+---
+
+#### 4.2.9 Preference / Rhythm / Graph Update（偏好/节律/图谱更新）
+
+| 维度 | 内容 |
+| --- | --- |
+| **输入** | user_behavior_events、recommendation_events 的累积数据 |
+| **输出** | 更新 preference_profiles、rhythm_profiles、graph_signals |
+| **依赖表** | preference_profiles、rhythm_profiles、graph_signals |
+| **服务功能** | 定期（每日/每周）批量更新偏好画像，支撑下次推荐 |
+| **MVP/NEXT/RESERVED** | [NEXT] preference_profiles + rhythm_profiles；[RESERVED] graph_signals |
+
+---
+
+## 5. 统一事件模型
+
+### 5.1 核心原则
+
+> **没有事件模型，就没有本地智能。**
+
+所有用户操作都必须转化为标准化事件，写入对应事件表。算法通过消费事件来更新偏好画像和推荐策略。
+
+### 5.2 事件分类
+
+---
+
+#### 5.2.1 Content Events（内容事件）
+
+| 事件类型 | 触发来源 | 写入表 | 后续算法用途 |
+| --- | --- | --- | --- |
+| `document_created` | API 创建 Document / Capture 标准化生成 Document | user_behavior_events | 更新文档计数、主题分布、来源偏好 |
+| `document_saved` | Editor Manual Save（Cmd+S） | user_behavior_events | 编辑闭环触发结构化重算 |
+| `document_archived` | 用户归档文档 | user_behavior_events | 更新项目活跃度、节点状态 |
+| `document_deleted` | 用户删除文档 | user_behavior_events | 级联处理 mind_node_documents、mind_edges |
+
+---
+
+#### 5.2.2 Editor Events（编辑器事件）
+
+| 事件类型 | 触发来源 | 写入表 | 后续算法用途 |
+| --- | --- | --- | --- |
+| `manual_save` | Cmd+S / 显式 Save 按钮 | user_behavior_events | 编辑习惯节律、内容变更检测、结构化重算触发 |
+| `auto_save` | Editor autosave / idle debounce | user_behavior_events | 编辑频率统计、工作时段判断 |
+| `open_document` | 通过 WorkspaceTabs 打开文档 | user_behavior_events（更新 documents.last_opened_at） | 内容活跃度、时间节律 |
+| `close_document` | 关闭 Editor 标签 | user_behavior_events | 编辑会话时长统计 |
+
+---
+
+#### 5.2.3 Mind Events（星云树事件）
+
+| 事件类型 | 触发来源 | 写入表 | 后续算法用途 |
+| --- | --- | --- | --- |
+| `node_clicked` | 用户点击 Mind 节点 | user_behavior_events | 节点关注度、主题偏好 |
+| `node_moved` | 用户拖拽节点 | user_behavior_events、graph_layouts | 布局习惯、图谱结构习惯 |
+| `edge_created` | 用户手动创建连线 / 拖动建立关系 | user_behavior_events、mind_edges | 关系偏好、图谱结构习惯 |
+| `edge_rejected` | 用户拒绝系统建议连线 | user_behavior_events、mind_edges | 推荐反馈模式、降低该类连线权重 |
+| `node_landed` | 用户确认节点落点 | user_behavior_events、mind_nodes、recommendation_events | 自动落库精度评估、偏好更新 |
+
+---
+
+#### 5.2.4 Dock Events（管理区事件）
+
+| 事件类型 | 触发来源 | 写入表 | 后续算法用途 |
+| --- | --- | --- | --- |
+| `tag_added` | 用户在 Dock 中为文档添加标签 | document_tags、user_behavior_events | 标签偏好、标签推荐 |
+| `tag_removed` | 用户在 Dock 中移除标签 | document_tags、user_behavior_events | 标签偏好 |
+| `project_changed` | 用户修改文档的 primary_project_id | documents、user_behavior_events | 项目偏好、归属推荐 |
+| `batch_archived` | Dock 批量归档 | documents、user_behavior_events | 归档行为模式 |
+
+---
+
+#### 5.2.5 Recommendation Events（推荐事件）
+
+| 事件类型 | 触发来源 | 写入表 | 后续算法用途 |
+| --- | --- | --- | --- |
+| `generated` | 系统算法生成推荐 | recommendations、recommendation_events | 推荐量统计 |
+| `shown` | 前端展示推荐给用户 | recommendations、recommendation_events | 曝光量统计 |
+| `accepted` | 用户接受推荐 | recommendations、recommendation_events | 正反馈权重提升 |
+| `rejected` | 用户拒绝推荐 | recommendations、recommendation_events | 负反馈权重降低 |
+| `modified` | 用户修改推荐后接受 | recommendations、recommendation_events | 半正反馈，记录修改方向 |
+| `ignored` | 用户未操作超时 / 同类其他候选被接受 | recommendations、recommendation_events | 弱负反馈 |
+| `cooled_down` | 同类推荐冷却期 | recommendations、recommendation_events | 推荐频率控制 |
+
+---
+
+#### 5.2.6 Review Events（回顾事件）
+
+| 事件类型 | 触发来源 | 写入表 | 后续算法用途 |
+| --- | --- | --- | --- |
+| `review_opened` | 用户打开 Review 页面 | user_behavior_events | Review 节奏、周报推送时机 |
+| `action_clicked` | 用户在 Review 中点击行动建议 | user_behavior_events | Review 建议效果评估 |
+| `review_snoozed` | 用户推迟 Review | user_behavior_events | Review 推送频率调整 |
+
+---
+
+#### 5.2.7 Nudge Events（推送事件）
+
+| 事件类型 | 触发来源 | 写入表 | 后续算法用途 |
+| --- | --- | --- | --- |
+| `nudge_shown` | 系统推送提示 | user_behavior_events | 推送曝光统计 |
+| `nudge_clicked` | 用户点击推送 | user_behavior_events | 推送效果正反馈 |
+| `nudge_dismissed` | 用户关闭推送 | user_behavior_events | 推送负反馈 |
+| `nudge_muted` | 用户主动关闭某类推送 | user_behavior_events | 推送冷却策略 |
+
+---
+
+#### 5.2.8 Import Events（导入事件）
+
+| 事件类型 | 触发来源 | 写入表 | 后续算法用途 |
+| --- | --- | --- | --- |
+| `import_started` | 用户发起导入任务 | user_behavior_events | 来源偏好、导入频率 |
+| `import_item_confirmed` | 用户确认导入条目归类 | user_behavior_events | 导入归类准确度 |
+| `import_item_rejected` | 用户拒绝导入归类建议 | user_behavior_events | 导入归类算法优化 |
+
+---
+
+## 6. 特征工程
+
+### 6.1 特征来源总览
+
+特征工程从五类数据源中提取信号，支撑候选召回和排序。
+
+---
+
+#### 6.1.1 内容特征
+
+| 特征 | 数据来源 | 用途 |
+| --- | --- | --- |
+| title | documents.title | 主题判断、归属匹配 |
+| plain_text | documents.plain_text | 全文相似度、关键词提取 |
+| markdown headings | documents.markdown 解析 | 文档结构识别 |
+| task blocks | documents.markdown 解析 | 行动项检测、待办提醒 |
+| links | documents.markdown 解析 | 外部引用关系 |
+| word_count | documents.word_count | 内容规模判断 |
+| content_hash | documents.content_hash | 去重、变更检测 |
+
+---
+
+#### 6.1.2 结构特征
+
+| 特征 | 数据来源 | 用途 |
+| --- | --- | --- |
+| node_type | mind_nodes.node_type | 判断节点角色（document/project/topic 等） |
+| cluster_id | mind_nodes.cluster_id | 星群归属 |
+| degree_score | mind_nodes.degree_score | 连接强度 |
+| mind_edges | mind_edges（relation_type、strength） | 关系类型和强度 |
+| document_tags | document_tags（tag_id、source） | 标签关联 |
+| primary_project_id | documents.primary_project_id | 项目归属 |
+
+---
+
+#### 6.1.3 行为特征
+
+| 特征 | 数据来源 | 用途 |
+| --- | --- | --- |
+| opened | documents.last_opened_at / user_behavior_events | 内容关注度 |
+| edited | documents.updated_at / user_behavior_events | 内容活跃度 |
+| manual_saved | user_behavior_events(event_type=manual_save) | 编辑习惯 |
+| auto_saved | user_behavior_events(event_type=auto_save) | 编辑习惯 |
+| node_moved | user_behavior_events(event_type=node_moved) | 图谱交互习惯 |
+| recommendation_accepted | recommendation_events(event_type=accepted) | 推荐接受模式 |
+| recommendation_rejected | recommendation_events(event_type=rejected) | 推荐拒绝模式 |
+| tag_manually_added | document_tags(source=user) | 标签偏好 |
+
+---
+
+#### 6.1.4 时间特征
+
+| 特征 | 数据来源 | 用途 |
+| --- | --- | --- |
+| created_at | documents.created_at | 内容年龄 |
+| updated_at | documents.updated_at | 活跃度衰减 |
+| last_opened_at | documents.last_opened_at | 沉默期判断 |
+| active hour | user_behavior_events.created_at 聚合 | 活跃时段、推送时机 |
+| dormant days | last_opened_at 距今 | 冷却/Review 触发 |
+| weekly rhythm | 按周聚合行为频率 | 周 Review 时机 |
+
+---
+
+#### 6.1.5 来源特征
+
+| 特征 | 数据来源 | 用途 |
+| --- | --- | --- |
+| manual | documents.source_type='manual' / captures.capture_source='manual' | 人工记录 |
+| mind_star | captures.capture_source='mind_star' | 星辰输入 |
+| import | documents.source_type 指向导入来源 | 导入内容 |
+| web_clip | captures.capture_type='web_clip' | 网页剪藏 |
+| voice | captures.capture_type='voice' | 语音输入 |
+| chat_message | captures.capture_type='chat_message' | Chat 引导 |
+
+---
+
+### 6.2 MVP 阶段特征策略
+
+- [MVP] 不落完整 `feature_snapshots` 表
+- [MVP] 特征以内存计算为主，字段值直接取自业务表
+- [MVP] `recommendations.reason_json` 必须保留基础 evidence，支撑可解释推荐
+
+---
+
+## 7. 候选召回抽象
+
+### 7.1 Candidate 统一模型
+
+所有推荐统一抽象为 **Candidate**。一个 Subject 可对应多个 Candidate。
+
+```
+Subject（被推荐对象）          Candidate（推荐候选目标）
+─────────────────────        ─────────────────────────
+subject_type                 candidate_type
+subject_id                   candidate_id
+                              + confidence_score
+                              + reason_json
 ```
 
-这类提示不需要 LLM，也可以通过：
+### 7.2 Candidate 类型
 
-1. 用户近期记录类型分布。
-2. 最近主题变化。
-3. 时间节律。
-4. 用户历史偏好。
-5. 语气模板库。
-6. 同义模板随机。
-7. 冷却机制。
-8. 反馈学习。
+| Candidate 类型 | candidate_type 枚举值 | 说明 |
+| --- | --- | --- |
+| Landing Candidate | `project` / `cluster` / `node` | 新内容归入的容器 |
+| Tag Candidate | `tag` | 推荐标签 |
+| Link Candidate | `node`（作为 edge target） | 推荐连线目标 |
+| Review Candidate | `document` / `node` / `cluster` | Review 中推荐关注的对象 |
+| Cleanup Candidate | `document` | 待清理的草稿 |
+| Quick Note Landing Candidate | `project` / `cluster` / `node` | 漂浮星辰推荐落点 |
+| Nudge Candidate | 推送行动建议 | Chat 推送中推荐的下一步操作 |
 
-组合生成。
+### 7.3 Candidate 到 recommendations 表的映射
 
-### 10.3 Chat 推送触发器
+每个 Candidate 必须能完整映射到 `recommendations` 表的字段：
 
-| 触发器                | 条件            | 推送意图      |
-| ------------------ | ------------- | --------- |
-| inspiration_gap    | 长期没有灵感记录      | 温和引导      |
-| life_heavy_week    | 生活记录明显多于工作/学习 | 接纳与鼓励     |
-| project_stall      | 某项目长期没有推进     | 轻提醒       |
-| orphan_nodes_high  | 孤立节点过多        | 引导整理      |
-| weekly_review_due  | 到达周回顾时间       | 推送 Review |
-| repeated_topic     | 某主题反复出现       | 建议形成专题    |
-| import_pending     | 导入后未整理        | 提醒处理      |
-| editor_stuck       | 编辑卡住          | 提供低负担建议   |
-| dormant_core_node  | 核心节点长期未打开     | 激活旧知识     |
-| high_output_day    | 当天输出很多        | 鼓励沉淀      |
-| low_energy_pattern | 晚间多次记录负面或疲惫内容 | 降低工作型催促   |
+| Candidate 属性 | recommendations 字段 |
+| --- | --- |
+| 被推荐对象类型 | `subject_type` |
+| 被推荐对象 ID | `subject_id` |
+| 推荐类型 | `recommendation_type` |
+| 候选目标类型 | `candidate_type` |
+| 候选目标 ID | `candidate_id` |
+| 置信度 | `confidence_score` |
+| 推荐理由 | `reason_json` |
 
-### 10.4 Chat 消息生成结构
+### 7.4 MVP 召回策略
 
-```text
-message =
-opening_empathy
-+ context_observation
-+ light_suggestion
-+ optional_action
+- [MVP] 关键词匹配（从 documents.title + plain_text 提取）
+- [MVP] 标签重叠度（document_tags）
+- [MVP] 项目归属匹配（primary_project_id）
+- [MVP] 时间上下文（最近活跃项目/主题优先）
+- [MVP] 基础去重（content_hash）
+
+---
+
+## 8. MVP / NEXT / RESERVED 状态分层
+
+### 8.1 MVP（后端第一阶段必须实现）
+
+| 交付项 | 说明 |
+| --- | --- |
+| `recommendations` 表写入 | 从第一个 Capture 开始记录每条推荐 |
+| `recommendation_events` 表写入 | 记录 generated/shown/accepted/rejected/modified/ignored |
+| `user_behavior_events` 表写入 | 记录关键用户操作（node_moved、edge_created、tag_added、project_changed 等） |
+| 基础自动落库候选 | 新 Capture → 生成 landing candidates（project/cluster） |
+| 基础 tag 候选 | 基于关键词和已有标签推荐 tag |
+| 基础 project 候选 | 推荐 primary_project_id |
+| 基础 cluster 候选 | 推荐目标 cluster_id |
+| 基础 reason_json | 每条推荐附带至少一条 evidence |
+
+### 8.2 NEXT（第二阶段增强）
+
+| 交付项 | 说明 |
+| --- | --- |
+| `preference_profiles` 建表与更新 | 用户偏好画像定期更新 |
+| `rhythm_profiles` 建表与更新 | 用户节律画像定期更新 |
+| `feature_snapshots` 建表 | 内容特征快照落表 |
+| 每日推荐 | 基于节律和偏好的每日内容推荐 |
+| 草稿清理提醒 | 长期 draft 文档提醒 |
+| Quick Note 落地提醒 | 漂浮星辰锚定提醒 |
+| 周 Review 初版 | 结构健康检查、周报生成 |
+| 反馈学习权重调整 | 根据 recommendation_events 自动调整推荐置信度阈值 |
+
+### 8.3 RESERVED（未来预留）
+
+| 交付项 | 说明 |
+| --- | --- |
+| `graph_signals` 高级健康检查 | 孤立节点检测、停滞项目检测、重复主题检测、知识图谱混乱度评分 |
+| `algorithm_cache` | Embedding 缓存、聚类中间态缓存 |
+| LLM 增强 | 语义排序、解释文本生成、长文总结 |
+| Chat Nudge 深度策略 | 个性化语气、上下文感知推送、多轮对话 |
+
+---
+
+## 9. 与 STRUCTURE_DESIGN.md 的字段对齐表
+
+以下列出算法依赖的所有结构对象与其在 `STRUCTURE_DESIGN.md` 中的表名对齐关系。
+
+| 结构对象 | 表名（结构文档） | 算法用途 | MVP 状态 |
+| --- | --- | --- | --- |
+| Capture | `captures` | 原始输入，是自动落库推荐的 subject | [MVP] |
+| Document | `documents` | 长期内容资产，特征提取来源，可作为推荐 subject 或 candidate | [MVP] |
+| Document Tag Relation | `document_tags` | 文档标签关联，支撑标签推荐和标签偏好 | [MVP] |
+| Project | `projects` | 组织容器，落库候选目标，项目偏好 | [MVP] |
+| Tag | `tags` | 标签推荐候选，标签偏好 | [MVP] |
+| Mind Node | `mind_nodes` | 星云节点，结构投影，归属推荐 subject 或 candidate | [MVP] |
+| Mind Edge | `mind_edges` | 节点关系，链接推荐 candidate 或反馈证据 | [MVP] |
+| Cluster | `clusters` | 星群/主题团簇，落库候选目标 | [MVP] |
+| Graph Layout | `graph_layouts` | 节点布局缓存，拖动行为记录 | [MVP] |
+| Recommendation | `recommendations` | 推荐对象主表，维护推荐状态 | [MVP] |
+| Recommendation Event | `recommendation_events` | 推荐事件日志，不可变事件溯源 | [MVP] |
+| User Behavior Event | `user_behavior_events` | 用户行为事件，偏好蒸馏数据源 | [MVP] |
+| Feature Snapshot | `feature_snapshots` | 内容特征快照，训练/回溯 | [NEXT] |
+| Preference Profile | `preference_profiles` | 用户偏好画像，排序加权 | [NEXT] |
+| Rhythm Profile | `rhythm_profiles` | 用户节律画像，推送时机 | [NEXT] |
+| Graph Signal | `graph_signals` | 图谱健康信号，Review 数据基础 | [RESERVED] |
+| Algorithm Cache | `algorithm_cache` | 算法中间结果缓存 | [RESERVED] |
+
+### 9.1 字段命名对齐声明
+
+本文档全文使用 `STRUCTURE_DESIGN.md` 定义的新字段命名：
+
+| 字段用途 | 新命名 | 旧命名（已废弃） |
+| --- | --- | --- |
+| 被推荐处理的对象 | `subject_type` / `subject_id` | ~~target_type / target_id~~ |
+| 推荐候选目标 | `candidate_type` / `candidate_id` | ~~recommended_target_id~~ |
+
+**本文档不出现以下废弃命名：** `target_type`、`target_id`、`recommended_target_id`。
+
+---
+
+## 10. 下一轮待补充内容
+
+> **状态说明**：✅ = 已完成（Round 2，第11-16章） | ⬜ = 待后续轮次补充
+
+### 10.1 排序与评分公式
+
+- ✅ 统一排序公式（Ranking Score）→ 第11章
+- ✅ 自动落库候选评分详细公式 → 第12章
+- ✅ 标签推荐评分公式 → 第13章
+- ✅ 链接推荐评分公式 → 第14章
+- ✅ 反馈学习权重更新公式 → 第15章
+- ✅ 偏好衰减公式 → 第15章
+
+### 10.2 详细算法
+
+- ✅ 自动落库详细算法（类型识别、候选召回策略、置信度分级）→ 第12章
+- ✅ 标签推荐详细算法 → 第13章
+- ✅ 项目归属推荐详细算法 → 第13章
+- ✅ 链接推荐详细算法 → 第14章
+- ⬜ 每日推荐算法
+- ⬜ 周 Review 算法（数据采集、主题分析、项目健康、建议生成）
+- ⬜ 草稿清理算法
+- ⬜ Quick Note 落地算法
+- ⬜ Chat Nudge 算法（触发条件、模板选择、冷却策略）
+
+### 10.3 反馈学习
+
+- ✅ 反馈学习公式 → 第15章
+- ✅ 正反馈/负反馈权重映射表 → 第15章
+- ✅ 冷却机制参数 → 第15章
+
+### 10.4 评估与测试
+
+- ✅ 用户数据阶段划分与各阶段期望指标 → 第16章
+- ⬜ 算法评估指标定义（Top-1 Accept Rate、Top-3 Accept Rate、Recovery Rate 等）
+- ⬜ 测试集设计
+- ⬜ 模拟数据生成方案
+
+### 10.5 接口对齐
+
+- ✅ 推荐接口的完整请求/响应示例 → 第12-14章各算法示例
+- ⬜ 各 Engine 与 API 契约的精确对应关系
+
+---
+
+## 11. 统一排序公式
+
+### 11.1 设计原则
+
+> **一份公式，多场景复用。不同推荐场景只调整权重，不重写公式。**
+
+本排序公式是 Atlax 本地算法唯一的评分入口。`Candidate Engine` 召回候选集后，全部送入 `Ranking Engine` 通过本公式打分排序。
+
+### 11.2 Base Ranking Formula
+
+```
+final_score =
+    content_similarity_score    * w1
+  + structure_affinity_score   * w2
+  + user_history_score         * w3
+  + graph_proximity_score      * w4
+  + rhythm_match_score         * w5
+  + recent_activity_score      * w6
+  + source_context_score       * w7
+  + manual_signal_score        * w8
+  - negative_feedback_penalty
+  - cooldown_penalty
+  - chaos_penalty
 ```
 
-示例：
+### 11.3 各 score 定义
 
-```text
-opening_empathy:
-“这周你其实记录了不少东西。”
+| score | 含义 | 数据来源 | MVP 状态 |
+| --- | --- | --- | --- |
+| `content_similarity_score` | subject 与 candidate 的内容相似度（关键词匹配、标题相似度、标签重叠度） | documents.title、documents.plain_text、document_tags、tags | [MVP] |
+| `structure_affinity_score` | subject 与 candidate 在 document_type、node_type 等结构属性上的匹配度 | documents.document_type、mind_nodes.node_type | [MVP] |
+| `user_history_score` | 用户历史上对同类 candidate 的接受频率 | [NEXT] preference_profiles | [NEXT] |
+| `graph_proximity_score` | subject 与 candidate 在图谱上的距离（同 cluster、相邻节点、共享边） | mind_nodes.cluster_id、mind_edges | [MVP] |
+| `rhythm_match_score` | 推荐时机与用户活跃节律的匹配度 | [NEXT] rhythm_profiles | [NEXT] |
+| `recent_activity_score` | candidate 的近期活跃度（最近被编辑、被打开、被关联） | documents.updated_at、documents.last_opened_at、mind_nodes.activity_score | [MVP] |
+| `source_context_score` | subject 与 candidate 在来源类型上的相似度 | captures.capture_source、documents.source_type | [MVP] |
+| `manual_signal_score` | 用户显式操作信号（手动连线、手动拖入星群、手动添加标签） | user_behavior_events | [MVP] |
 
-context_observation:
-“只是它们更多分布在生活、休息和日常片段里。”
+### 11.4 三档惩罚
 
-light_suggestion:
-“这不一定是效率下降，可能只是你进入了恢复期。”
+| penalty | 含义 | 数据来源 | MVP 状态 |
+| --- | --- | --- | --- |
+| `negative_feedback_penalty` | 历史上同类推荐被拒绝的惩罚 | recommendation_events(event_type=rejected) | [MVP] |
+| `cooldown_penalty` | 近期已推送过同类推荐的冷却惩罚 | recommendation_events(event_type=shown/cooled_down) | [MVP] |
+| `chaos_penalty` | 推荐可能导致图谱混乱度的惩罚（如推荐链接到已高连接的节点） | mind_nodes.degree_score | [MVP] |
 
-optional_action:
-“要不要我帮你把这些内容整理成一份轻量周回顾？”
-```
+### 11.5 场景权重矩阵
 
-最终消息：
+不同推荐场景使用同一公式，但权重配比不同：
 
-```text
-这周你其实记录了不少东西，只是它们更多分布在生活、休息和日常片段里。这不一定是效率下降，可能只是你进入了恢复期。要不要我帮你把这些内容整理成一份轻量周回顾？
-```
+| 场景 | w1 | w2 | w3 | w4 | w5 | w6 | w7 | w8 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 自动落库 | 0.30 | 0.20 | [NEXT] | 0.20 | [NEXT] | 0.15 | 0.10 | 0.05 |
+| 标签推荐 | 0.40 | 0.05 | [NEXT] | 0.10 | [NEXT] | 0.15 | 0.10 | 0.20 |
+| 项目推荐 | 0.20 | 0.25 | [NEXT] | 0.20 | [NEXT] | 0.20 | 0.10 | 0.05 |
+| 链接推荐 | 0.25 | 0.10 | [NEXT] | 0.30 | [NEXT] | 0.15 | 0.10 | 0.10 |
+| 星群推荐 | 0.15 | 0.15 | [NEXT] | 0.35 | [NEXT] | 0.20 | 0.05 | 0.10 |
 
-### 10.5 语气模板库
+> [NEXT] 标记的权重在 MVP 阶段设为 0 或使用默认值，NEXT 阶段接入 preference_profiles / rhythm_profiles 后启用。
 
-模板需要按场景维护。
+### 11.6 reason_json 中的 score_breakdown
+
+每条推荐写入 `recommendations.reason_json` 时，必须包含 `score_breakdown`，记录各项得分：
 
 ```json
 {
-  "life_heavy_week": [
-    "这周你记录了不少生活片段。好好休息不是偏离目标，而是在给下一次输出蓄力。",
-    "最近你的记录更偏向生活状态，这其实也是知识库的一部分：它记录了你当时为什么这样选择。",
-    "这几天工作相关内容少一点也没关系。稳定生活节奏，有时候比硬挤灵感更重要。"
-  ],
-  "project_stall": [
-    "你已经有一段时间没碰「{project}」了。要不要先写一句现在卡在哪里？",
-    "「{project}」最近安静了下来。也许不需要马上推进，只要补一个当前状态就够了。",
-    "这个项目之前积累了不少内容，现在可以先做一次轻量回看。"
-  ],
-  "orphan_nodes_high": [
-    "最近有一些星辰还没有接入主结构。要不要我帮你挑出最容易归类的几个？",
-    "你的知识星云里出现了一些漂浮节点，它们可能不是没用，只是还没找到轨道。",
-    "有几条记录和现有主题很接近，可以考虑把它们接进已有星群。"
+  "score_breakdown": {
+    "content_similarity_score": 0.82,
+    "structure_affinity_score": 0.65,
+    "user_history_score": null,
+    "graph_proximity_score": 0.71,
+    "rhythm_match_score": null,
+    "recent_activity_score": 0.55,
+    "source_context_score": 0.60,
+    "manual_signal_score": 0.00,
+    "negative_feedback_penalty": 0.00,
+    "cooldown_penalty": 0.00,
+    "chaos_penalty": 0.05,
+    "final_score": 0.73
+  },
+  "top_evidence": [
+    "内容关键词与项目「Atlax 产品设计」高度匹配",
+    "该节点与你最近活跃的 3 个节点位于同一星群",
+    "过去 7 天内你编辑过该项目"
   ]
 }
 ```
 
-### 10.6 Chat 推送限制
+> `null` 表示该因子在当前阶段不可用（非错误）。
 
-| 限制     | 规则           |
-| ------ | ------------ |
-| 频率     | 普通提示每天最多 2 条 |
-| Review | 每周最多 1 次主动周报 |
-| 同类提示   | 24 小时内不重复    |
-| 用户关闭   | 同类提示 7 天冷却   |
-| 用户接受   | 同类权重增加       |
-| 用户忽略   | 轻微降权         |
-| 用户反感   | 直接进入长期冷却     |
+### 11.7 MVP 缺失因子处理规则
 
-### 10.7 避免心理诊断
+MVP 阶段以下因子不可用：`user_history_score`（依赖 [NEXT] preference_profiles）、`rhythm_match_score`（依赖 [NEXT] rhythm_profiles）。处理规则：
 
-Chat 可以温和，但不能越界。
+1. **[NEXT] 因子在 MVP 阶段不可用时，不直接按 0 拉低 final_score。** 直接置 0 会导致不可用因子稀释可用因子的有效得分，对冷启动用户不公。
 
-禁止：
+2. **MVP 阶段只对 enabled signals 参与加权求和。** 即只对标记为 [MVP] 的 score 及其 weight 求和。
 
-```text
-你最近可能焦虑。
-你状态不好。
-你需要调整心理健康。
-你正在逃避工作。
-```
+3. **归一化公式**：
+   ```
+   final_score = sum(score_i * weight_i for enabled signals) / sum(weight_i for enabled signals) - penalties
+   ```
+   其中 `enabled signals` 为当前阶段可用的信号（MVP: content_similarity、structure_affinity、graph_proximity、recent_activity、source_context、manual_signal）。
 
-允许：
+4. **reason_json.score_breakdown 中不可用因子记录为 null**（已在 11.6 示例中体现）。null 明确表示"不可用"而非"得分为 0"。
 
-```text
-最近你的记录更偏向生活片段。
-这周工作类记录少了一些。
-你已经有几天没有更新这个项目。
-这段内容可以先不用整理得很完整。
-```
+5. **penalties 始终参与扣分**。negative_feedback_penalty、cooldown_penalty、chaos_penalty 在 MVP 阶段均为可用因子，直接从归一化后得分中减去。
 
-算法只能观察行为，不评价人格和心理状态。
+6. **NEXT 阶段接入 preference_profiles / rhythm_profiles 后，恢复完整权重矩阵。** 届时移除归一化逻辑，直接使用原始加权求和公式（第 11.2 节）。
 
 ---
 
-## 11. 周 Review 算法
+## 12. 自动落库算法
 
-### 11.1 周 Review 目标
+### 12.1 算法目标
 
-周 Review 不是流水账统计，而是帮助用户看见：
+当 Capture / Document 进入系统后，自动落库算法回答四个问题：
 
-1. 本周记录了什么。
-2. 哪些主题变强了。
-3. 哪些项目停滞了。
-4. 哪些灵感值得继续。
-5. 哪些孤立内容应该归档。
-6. 哪些旧内容被重新激活。
-7. 下周最值得关注的 1-3 件事。
+1. 这条内容是什么类型？
+2. 它应该归入哪个 project / cluster / node？
+3. 有多大的把握？
+4. 应该自动锚定还是等待用户确认？
 
-### 11.2 周 Review 数据源
+### 12.2 完整流程
 
-| 数据源                   | 用途        |
-| --------------------- | --------- |
-| documents             | 本周新增和编辑内容 |
-| captures              | 本周碎片输入    |
-| mind_nodes            | 新增节点和活跃节点 |
-| mind_edges            | 新增链接      |
-| clusters              | 活跃星群      |
-| behavior_events       | 用户实际操作    |
-| recommendation_events | 推荐接受和拒绝   |
-| rhythm_profiles       | 用户节律变化    |
-
-### 11.3 周 Review 生成流程
-
-```text
-Collect Weekly Data
-  ↓
-Calculate Topic Distribution
-  ↓
-Calculate Project Progress
-  ↓
-Detect Dormant / Active Clusters
-  ↓
-Detect Orphan Nodes
-  ↓
-Detect Repeated Themes
-  ↓
-Generate Review Sections
-  ↓
-Generate Suggested Actions
-  ↓
-Push Chat Nudge
+```
+Capture / Document 输入
+    ↓
+Normalize（标准化 raw_text → plain_text，识别 capture_type）
+    ↓
+Extract Features（第6章五大特征）
+    ↓
+Candidate Recall（召回 project / cluster / node 候选）
+    ↓
+Ranking（第11章排序公式，场景=自动落库）
+    ↓
+Confidence Decision（三段式决策）
+    ↓
+写入 recommendations（每个 candidate 一条记录）
+    ↓
+生成 reason_json（附带 score_breakdown）
+    ↓
+前端展示推荐
+    ↓
+User Feedback（accepted / rejected / modified / ignored）
+    ↓
+写入 recommendation_events + user_behavior_events
+    ↓
+后续学习（第15章反馈学习）
 ```
 
-### 11.4 周 Review 内容结构
+### 12.3 候选召回策略
 
-```text
-本周概览
-  - 新增记录数量
-  - 编辑文档数量
-  - 新增链接数量
-  - 活跃星群数量
+| 候选类型 | candidate_type | 召回来源 | MVP 状态 |
+| --- | --- | --- | --- |
+| 项目候选 | `project` | documents.primary_project_id 为最近活跃项目的 documents；用户手动关联过的 projects | [MVP] |
+| 星群候选 | `cluster` | mind_nodes.cluster_id 为活跃 cluster；与 subject 关键词匹配的 cluster | [MVP] |
+| 节点候选 | `node` | 与 subject 内容相似的 mind_nodes；同 tag 的 mind_nodes；同 source_type 的 mind_nodes | [MVP] |
 
-主题变化
-  - 变强主题
-  - 变弱主题
-  - 新出现主题
+### 12.4 三段式置信度决策
 
-项目状态
-  - 推进项目
-  - 停滞项目
-  - 值得回看的项目
+```
+高置信（final_score >= 0.85）：
+  → 自动锚定
+  → recommendations.status = accepted
+  → mind_nodes.state = anchored
+  → 前端展示"已归入 xxx，可撤销"
+  → 必须同时生成 recommendation_events(event_type=accepted)
 
-灵感整理
-  - 新增灵感
-  - 可连接灵感
-  - 漂浮星辰
+中置信（0.55 <= final_score < 0.85）：
+  → 推荐 Top-K（K ≤ 3）
+  → recommendations.status = generated → shown
+  → mind_nodes.state = suggested
+  → 前端展示候选列表，等待用户确认
+  → 用户操作后写入 recommendation_events
 
-下周建议
-  - 最值得继续的主题
-  - 最应该整理的内容
-  - 最轻量的下一步
+低置信（final_score < 0.55）：
+  → 不强制结构化
+  → mind_nodes.state = drifting
+  → 仅写入一条 recommendations（status = generated，不 shown）
+  → 可在后续 Dock/Mind 中手动处理
 ```
 
-### 11.5 周 Review 评分
-
-```text
-weekly_focus_score =
-active_cluster_score * 0.25
-+ repeated_topic_score * 0.2
-+ project_momentum_score * 0.2
-+ user_interaction_score * 0.15
-+ unfinished_item_score * 0.1
-+ dormant_reactivation_score * 0.1
-```
-
----
-
-## 12. 导入推荐算法
-
-### 12.1 导入目标
-
-Atlax 不能只服务 Markdown 用户。
-必须能接住中国大陆真实信息流环境。
-
-支持来源：
-
-1. Obsidian。
-2. Notion。
-3. Markdown 文件夹。
-4. 微信收藏。
-5. 微信聊天片段。
-6. 公众号文章。
-7. 小红书收藏。
-8. 抖音收藏。
-9. B站收藏。
-10. 浏览器剪藏。
-11. PDF / 图片 / 音频 / 视频元数据。
-
-### 12.2 导入后的处理流程
-
-```text
-Import Source
-  ↓
-Parse Metadata
-  ↓
-Normalize Content
-  ↓
-Deduplicate
-  ↓
-Extract Source Features
-  ↓
-Batch Grouping
-  ↓
-Suggest Clusters
-  ↓
-Generate Dock Import Queue
-  ↓
-User Confirm / Adjust
-  ↓
-Create Documents / Nodes / Edges
-  ↓
-Update Mind
-```
-
-### 12.3 导入推荐策略
-
-导入时不能直接把所有内容打散进星云树，否则 Mind 会爆炸。
-
-必须先进入 Dock 的 Import Queue。
-
-分层策略：
-
-| 层级 | 处理方式                      |
-| -- | ------------------------- |
-| 批次 | 按来源、导入时间、收藏夹分组            |
-| 主题 | 按标题、标签、关键词聚合              |
-| 内容 | 创建文档或碎片                   |
-| 结构 | 推荐星群和链接                   |
-| 视觉 | Mind 中批量生成低亮度节点，用户确认后稳定显示 |
-
-### 12.4 中国平台字段映射
-
-| 平台       | 关键字段                | 推荐用途        |
-| -------- | ------------------- | ----------- |
-| 微信       | 聊天对象、时间、链接、标题       | 人际/项目/时间上下文 |
-| 公众号      | 标题、作者、账号、发布时间       | 阅读主题、信息来源   |
-| 小红书      | 标题、正文、标签、作者、图片      | 生活/消费/灵感主题  |
-| 抖音       | 视频标题、作者、话题、收藏夹      | 视频资源、趋势灵感   |
-| B站       | 标题、UP主、分区、收藏夹、简介    | 学习资源、长期项目   |
-| Notion   | 页面层级、数据库属性          | 原有结构继承      |
-| Obsidian | 文件路径、双链、frontmatter | 链接结构继承      |
-
-### 12.5 导入置信度
-
-```text
-import_landing_score =
-source_metadata_score * 0.25
-+ title_keyword_score * 0.2
-+ existing_cluster_similarity * 0.2
-+ user_import_history_score * 0.15
-+ tag_overlap_score * 0.1
-+ time_context_score * 0.1
-```
-
----
-
-## 13. Dock 与 Mind 打通算法
-
-### 13.1 Dock 的本质
-
-Dock 是知识库管理区，不是文件列表。
-
-Dock 管理的对象包括：
-
-1. 文档。
-2. 星辰碎片。
-3. 星群。
-4. 项目。
-5. 标签。
-6. 来源。
-7. 导入批次。
-8. 待确认推荐。
-9. 孤立节点。
-10. 冷却节点。
-
-### 13.2 Dock 视图
-
-| 视图                 | 算法支持                  |
-| ------------------ | --------------------- |
-| List View          | 排序、筛选、批量操作            |
-| Card View          | 摘要、主题色、状态、推荐操作        |
-| Finder Column View | 项目 / 主题 / 来源 / 日期层级浏览 |
-| Relation View      | 当前文档相关节点              |
-| Import Queue       | 导入待确认                 |
-| Review Queue       | 需要回看的内容               |
-
-### 13.3 Mind-Dock 联动
-
-| 操作        | 算法行为         |
-| --------- | ------------ |
-| Dock 选中文档 | Mind 聚焦对应节点  |
-| Dock 选中项目 | Mind 展开项目星群  |
-| Dock 修改标签 | 重新计算相关边      |
-| Dock 批量归档 | 批量更新节点状态     |
-| Mind 点击节点 | Dock 定位对应文档  |
-| Mind 拖动节点 | 生成用户确认边      |
-| Mind 删除弱边 | 更新推荐负反馈      |
-| Mind 聚焦星群 | Dock 展示该星群内容 |
-
-### 13.4 Dock 推荐排序
-
-```text
-dock_priority_score =
-unconfirmed_score * 0.25
-+ recent_activity_score * 0.2
-+ importance_score * 0.15
-+ orphan_score * 0.15
-+ review_due_score * 0.1
-+ source_batch_score * 0.1
-+ user_pin_score * 0.05
-```
-
----
-
-## 14. 星云树布局算法
-
-### 14.1 目标
-
-星云树不能只是力导向图。
-普通 force graph 会乱、会糊、会像一团毛线。
-
-Mind 的布局目标是：
-
-1. 星群清晰。
-2. 核心节点突出。
-3. 弱关系不干扰。
-4. 层级有空间感。
-5. 拖动自然。
-6. 缩放时有信息层级。
-7. 默认状态要美，不需要用户整理后才美。
-
-### 14.2 布局流程
-
-```text
-Build Graph
-  ↓
-Detect Clusters
-  ↓
-Select Core Nodes
-  ↓
-Assign Cluster Regions
-  ↓
-Place Domain / Project Nodes
-  ↓
-Place Topic Nodes
-  ↓
-Place Document Nodes
-  ↓
-Place Fragment Nodes
-  ↓
-Calculate Edge Visibility
-  ↓
-Apply Visual LOD
-  ↓
-Cache Layout
-```
-
-### 14.3 节点位置策略
-
-| 节点       | 布局策略         |
-| -------- | ------------ |
-| domain   | 稳定大星核，低频移动   |
-| project  | 星群中心，保持视觉位置  |
-| topic    | 围绕项目分布       |
-| document | 围绕主题分布       |
-| fragment | 外围漂浮，等待确认    |
-| source   | 作为侧向星群，不抢主结构 |
-| tag      | 默认隐藏或弱显示     |
-| insight  | 高亮短期显示       |
-| review   | 临时浮层，不长期占图   |
-
-### 14.4 混乱度评分
-
-```text
-graph_chaos_score =
-edge_crossing_score * 0.3
-+ node_overlap_score * 0.25
-+ weak_edge_density_score * 0.2
-+ cluster_overlap_score * 0.15
-+ isolated_noise_score * 0.1
-```
-
-当混乱度过高时：
-
-1. 隐藏弱边。
-2. 折叠低权重节点。
-3. 聚合碎片节点。
-4. 只显示星群边界。
-5. 提示用户进入 Dock 整理。
-
----
-
-## 15. 查询推荐算法
-
-### 15.1 查询场景
-
-用户查询不一定发生在搜索框，也可能发生在：
-
-1. Dock 搜索。
-2. Editor 引用。
-3. Mind 节点详情。
-4. Chat 输入。
-5. Review 页面。
-6. 导入整理时。
-
-### 15.2 查询召回策略
-
-```text
-query_score =
-bm25_score * 0.25
-+ tag_match_score * 0.15
-+ graph_proximity_score * 0.2
-+ recent_activity_score * 0.1
-+ user_frequency_score * 0.1
-+ source_relevance_score * 0.1
-+ exact_match_score * 0.1
-```
-
-### 15.3 查询建议
-
-当用户搜索时，系统应推荐：
-
-1. 相关文档。
-2. 相关节点。
-3. 相关星群。
-4. 可能的标签。
-5. 最近相关内容。
-6. 可继续编辑的草稿。
-7. 可回看的旧内容。
-
----
-
-## 16. 用户习惯学习算法
-
-### 16.1 用户画像不是广告画像
-
-Atlax 的用户画像只服务用户自己，不做商业广告。
-
-用户画像包括：
-
-1. 常写主题。
-2. 常用来源。
-3. 常用时间段。
-4. 常接受推荐类型。
-5. 常拒绝推荐类型。
-6. 常编辑文档类型。
-7. 常复用内容。
-8. 常停滞项目。
-9. 常见记录节奏。
-10. 常见整理习惯。
-
-### 16.2 偏好更新
-
-```text
-preference_weight_new =
-preference_weight_old * decay
-+ feedback_signal * learning_rate
-```
-
-推荐：
-
-```text
-decay = 0.96
-learning_rate = 0.08
-```
-
-解释：
-
-1. 用户偏好会变化，所以旧偏好要衰减。
-2. 用户一次行为不能过度影响算法。
-3. 多次相同行为才形成稳定偏好。
-
-### 16.3 正反馈
-
-| 行为         |   权重 |
-| ---------- | ---: |
-| 接受推荐       | +1.0 |
-| 手动确认链接     | +1.2 |
-| 手动拖入星群     | +1.5 |
-| 反复打开推荐内容   | +0.6 |
-| 在推荐基础上轻微修改 | +0.5 |
-
-### 16.4 负反馈
-
-| 行为         |   权重 |
-| ---------- | ---: |
-| 拒绝推荐       | -1.0 |
-| 删除推荐链接     | -1.2 |
-| 将内容移出推荐星群  | -1.5 |
-| 忽略同类推荐多次   | -0.5 |
-| 关闭 Chat 提示 | -0.8 |
-
----
-
-## 17. 性能设计
-
-### 17.1 性能目标
-
-| 场景          |           目标 |
-| ----------- | -----------: |
-| 输入保存        |      < 100ms |
-| 初步落库建议      |      < 300ms |
-| Editor 旁侧推荐 |      < 300ms |
-| Mind 节点点击详情 |      < 150ms |
-| Dock 筛选排序   |      < 200ms |
-| 本地全文搜索      |      < 300ms |
-| 批量导入初步预览    | 1000 条内 < 5s |
-| 图谱局部重算      |      < 500ms |
-| 全量图谱重算      |         后台异步 |
-
-### 17.2 本地索引
-
-必须维护以下索引：
-
-1. 文档倒排索引。
-2. block 倒排索引。
-3. tag → document 索引。
-4. node → edge 邻接索引。
-5. cluster → node 索引。
-6. source → document 索引。
-7. date bucket 索引。
-8. keyword → cluster 索引。
-9. user action 最近行为索引。
-10. recommendation feedback 索引。
-
-### 17.3 增量计算优先
-
-不能每次输入都全量重算。
-
-事件触发策略：
-
-| 事件          | 计算方式               |
-| ----------- | ------------------ |
-| 新建 capture  | 只计算该 capture 的候选归属 |
-| 新建 document | 更新文档特征、局部图谱        |
-| 修改 block    | 更新该 block 和文档摘要特征  |
-| 修改 tag      | 更新相关索引和边           |
-| 用户确认推荐      | 更新偏好权重             |
-| 用户拖动节点      | 更新布局和确认边           |
-| 批量导入        | 分批异步计算             |
-| 每日空闲        | 重算活跃星群             |
-| 每周          | 生成 Review 快照       |
-
-### 17.4 缓存策略
-
-| 缓存                       | 内容          |
-| ------------------------ | ----------- |
-| hot_nodes_cache          | 最近活跃节点      |
-| candidate_clusters_cache | 常用落库候选      |
-| user_preference_cache    | 用户偏好权重      |
-| graph_adjacency_cache    | 图邻接表        |
-| dock_filter_cache        | Dock 常用筛选结果 |
-| editor_context_cache     | 当前编辑上下文     |
-| weekly_review_cache      | 周报草稿        |
-| import_preview_cache     | 导入预览结果      |
-
-### 17.5 Redis 使用建议
-
-如果当前 Demo 是纯本地，可以先不引入 Redis。
-如果后续接入后端和多端同步，可以使用 Redis 缓存：
-
-1. 用户热节点。
-2. 最近推荐候选。
-3. 图谱邻接快照。
-4. Dock 查询结果。
-5. 导入任务状态。
-6. 周 Review 临时结果。
-7. Chat 推送冷却状态。
-
-Redis 不是算法核心，只是性能层。
-不要让算法正确性依赖 Redis。
-
----
-
-## 18. 前后端交互接口设计
-
-### 18.1 自动落库接口
-
-```http
-POST /api/captures
-```
-
-请求：
+### 12.5 写入 recommendations 的字段规范
+
+每个 candidate 生成一条 `recommendations` 记录：
+
+| 字段 | 值 | 说明 |
+| --- | --- | --- |
+| `subject_type` | `capture` 或 `document` | 被推荐处理的对象类型 |
+| `subject_id` | capture.id 或 document.id | 被推荐处理的对象 ID |
+| `recommendation_type` | `landing` | 推荐类型 |
+| `candidate_type` | `project` / `cluster` / `node` | 候选目标类型 |
+| `candidate_id` | project.id / cluster.id / node.id | 候选目标 ID |
+| `confidence_score` | final_score | 排序得分 |
+| `reason_json` | score_breakdown + top_evidence | 推荐理由 |
+
+### 12.6 reason_json 示例（自动落库，中置信）
 
 ```json
 {
-  "rawText": "下周产品评审会议，需要准备 Q2 路线图和用户反馈数据",
-  "inputSurface": "mind",
-  "context": {
-    "currentView": "mind",
-    "focusedNodeId": null,
-    "timezone": "Asia/Shanghai"
-  }
-}
-```
-
-响应：
-
-```json
-{
-  "captureId": "cap_001",
-  "status": "suggested",
-  "suggestions": [
-    {
-      "type": "landing",
-      "targetType": "project",
-      "targetId": "project_atlax",
-      "targetName": "Atlax 产品设计",
-      "confidence": 0.82,
-      "explanation": [
-        "内容包含产品评审、路线图等关键词",
-        "你最近持续编辑 Atlax 产品设计",
-        "该项目下存在多个相似节点"
-      ]
-    }
-  ],
-  "createdNode": {
-    "nodeId": "node_001",
-    "state": "suggested",
-    "visual": {
-      "x": 120,
-      "y": 340,
-      "size": 8
-    }
-  }
-}
-```
-
-### 18.2 推荐反馈接口
-
-```http
-POST /api/recommendations/{id}/feedback
-```
-
-请求：
-
-```json
-{
-  "action": "accepted",
-  "modifiedTargetId": null,
-  "surface": "mind"
-}
-```
-
-### 18.3 链接推荐接口
-
-```http
-GET /api/mind/nodes/{nodeId}/link-suggestions
-```
-
-响应：
-
-```json
-{
-  "nodeId": "node_001",
-  "suggestions": [
-    {
-      "targetNodeId": "node_089",
-      "edgeType": "similar",
-      "confidence": 0.76,
-      "reason": "两者都涉及产品路线图和用户反馈"
-    }
+  "score_breakdown": {
+    "content_similarity_score": 0.78,
+    "structure_affinity_score": 0.65,
+    "graph_proximity_score": 0.71,
+    "recent_activity_score": 0.55,
+    "source_context_score": 0.60,
+    "manual_signal_score": 0.00,
+    "final_score": 0.70
+  },
+  "top_evidence": [
+    "内容关键词与项目「Atlax 产品设计」的 5 篇文档高度匹配",
+    "该内容与星群「产品迭代」中的 3 个节点有共享标签",
+    "最近 3 次类似内容你都确认归入该项目"
   ]
 }
 ```
 
-### 18.4 Editor 推荐接口
+---
 
-```http
-POST /api/editor/context-suggestions
-```
+## 13. 标签 / 项目 / 星群推荐算法
 
-请求：
+### 13.1 Tag Recommendation（标签推荐）
+
+#### 输入
+
+- `subject_type` = `capture` 或 `document`
+- `subject_id` = capture.id 或 document.id
+- 推荐上下文：用户正在编辑 / Dock 中查看 / Capture 刚进入系统
+
+#### 候选来源
+
+| 来源 | 说明 | 依赖表 |
+| --- | --- | --- |
+| 内容关键词匹配 | 从 subject 的 title + plain_text 提取关键词，匹配已有 tag 名称 | documents、tags |
+| 相似文档的标签 | 找到与 subject 内容相似的文档，提取其标签作为候选 | document_tags、tags |
+| 用户常用标签 | 用户历史上手动添加频率最高的标签 | document_tags(source=user) |
+| 同项目关联标签 | subject 所属 project 下其他文档的标签 | documents.primary_project_id、document_tags |
+
+#### 关键评分因子
+
+- 关键词与 tag 名称的匹配度（权重最高）
+- 该 tag 在相似文档中的出现频率
+- 用户历史上接受 tag 推荐的频率（NEXT）
+- 该 tag 是否曾被用户拒绝过（惩罚）
+
+#### 输出到 recommendations
+
+| 字段 | 值 |
+| --- | --- |
+| `subject_type` | `capture` 或 `document` |
+| `subject_id` | 对应 ID |
+| `recommendation_type` | `tag` |
+| `candidate_type` | `tag` |
+| `candidate_id` | tag.id |
+| `confidence_score` | 排序得分 |
+| `reason_json` | score_breakdown |
+
+#### reason_json 示例
 
 ```json
 {
-  "documentId": "doc_001",
-  "currentBlockId": "block_009",
-  "cursorContext": "这里需要重新设计 Dock 与 Mind 的关系",
-  "idleMs": 12000
-}
-```
-
-响应：
-
-```json
-{
-  "stuckScore": 0.68,
-  "suggestions": [
-    {
-      "type": "related_node",
-      "title": "Dock 与 Mind 双向联动",
-      "targetId": "node_023",
-      "confidence": 0.81
-    }
+  "score_breakdown": {
+    "content_similarity_score": 0.85,
+    "structure_affinity_score": 0.20,
+    "graph_proximity_score": 0.40,
+    "recent_activity_score": 0.35,
+    "source_context_score": 0.10,
+    "manual_signal_score": 0.00,
+    "final_score": 0.72
+  },
+  "top_evidence": [
+    "文档中出现「产品设计」「UX」等关键词",
+    "同项目的 3 篇文档也使用了该标签",
+    "该标签是你最常用的 5 个标签之一"
   ]
 }
 ```
 
-### 18.5 Chat 推送接口
+#### 用户反馈影响
 
-```http
-GET /api/chat/nudges/next
-```
+| 反馈 | 影响 |
+| --- | --- |
+| accepted → 写入 document_tags(source=system)，提升该 tag 相关性 | document_tags、recommendation_events |
+| rejected → 记录负反馈，该 tag 在未来对同类内容的推荐中降权 | recommendation_events(event_type=rejected) |
+| modified（用户选了系统推荐的另一个 tag）→ 提升最终选择的 tag | recommendation_events(event_type=modified) |
+| ignored → 弱负反馈 | recommendation_events(event_type=ignored) |
 
-响应：
+---
+
+### 13.2 Project Recommendation（项目推荐）
+
+#### 输入
+
+- `subject_type` = `capture` 或 `document`
+- `subject_id` = 对应 ID
+
+#### 候选来源
+
+| 来源 | 说明 | 依赖表 |
+| --- | --- | --- |
+| 内容相似度匹配 | subject 关键词与各 project 下文档的关键词匹配 | documents、projects |
+| 最近活跃项目 | 用户最近 7 天内编辑过的 documents 所属 projects | documents.primary_project_id、documents.updated_at |
+| 来源匹配 | 同 source_type 的 documents 归属的 projects | documents.source_type、documents.primary_project_id |
+| 用户手动关联 | 用户历史上通过 project_changed 事件修改到的 projects | user_behavior_events(event_type=project_changed) |
+
+#### 关键评分因子
+
+- 项目下文档与 subject 的内容相似度（平均/最高）
+- 项目的最近活跃度
+- 用户历史上将类似内容归入该项目的频率（NEXT）
+- 该项目的文档数量（越多越稳定，但权重不能过高）
+
+#### 输出到 recommendations
+
+| 字段 | 值 |
+| --- | --- |
+| `subject_type` | `capture` 或 `document` |
+| `subject_id` | 对应 ID |
+| `recommendation_type` | `project` |
+| `candidate_type` | `project` |
+| `candidate_id` | project.id |
+| `confidence_score` | 排序得分 |
+| `reason_json` | score_breakdown |
+
+#### reason_json 示例
 
 ```json
 {
-  "shouldPush": true,
-  "nudgeType": "life_heavy_week",
-  "message": "这周你记录了不少生活片段。好好休息不是偏离目标，而是在给下一次输出蓄力。",
-  "actions": [
-    {
-      "label": "生成轻量周回顾",
-      "action": "open_weekly_review"
-    },
-    {
-      "label": "稍后再说",
-      "action": "dismiss"
-    }
-  ],
-  "cooldownHours": 24
+  "score_breakdown": {
+    "content_similarity_score": 0.75,
+    "structure_affinity_score": 0.60,
+    "graph_proximity_score": 0.50,
+    "recent_activity_score": 0.80,
+    "source_context_score": 0.40,
+    "manual_signal_score": 0.00,
+    "final_score": 0.68
+  },
+  "top_evidence": [
+    "你最近 5 天持续编辑该项目",
+    "项目下已有 12 篇相关文档",
+    "内容主题与该项目高度一致"
+  ]
 }
 ```
 
+#### 用户反馈影响
+
+| 反馈 | 影响 |
+| --- | --- |
+| accepted → 更新 documents.primary_project_id，提升该 project 对同类内容的权重 | documents、recommendation_events |
+| rejected → 记录负反馈，该 project 对同类内容降权 | recommendation_events(event_type=rejected) |
+| project_changed → 强正反馈给最终 project | user_behavior_events |
+
 ---
 
+### 13.3 Cluster Recommendation（星群推荐）
 
+#### 输入
 
-### 18.6 Markdown 语法提示接口
+- `subject_type` = `node`（被推荐的 mind_node）
+- `subject_id` = node.id
 
-```http
-POST /api/editor/syntax-hints
-```
+#### 候选来源
+
+| 来源 | 说明 | 依赖表 |
+| --- | --- | --- |
+| 关键词与 cluster 签名匹配 | subject 节点关键词与 cluster.keyword_signature 匹配 | clusters |
+| 标签与 cluster 签名匹配 | subject 关联的 tags 与 cluster.tag_signature 匹配 | clusters、document_tags |
+| 图谱邻近 cluster | 与 subject node 有 edge 关系的 node 所属的 cluster | mind_edges、mind_nodes.cluster_id |
+| 来源一致 cluster | 同 source_type 的 nodes 集中分布的 cluster | mind_nodes.source_type、clusters |
+
+#### 关键评分因子
+
+- cluster.keyword_signature 与 subject 的匹配度
+- cluster 的 coherence_score（星群内聚度）
+- subject 与 cluster 内节点的 graph distance
+- cluster 的 activity_score（近期活跃度）
+
+#### 输出到 recommendations
+
+| 字段 | 值 |
+| --- | --- |
+| `subject_type` | `node` |
+| `subject_id` | node.id |
+| `recommendation_type` | `cluster` |
+| `candidate_type` | `cluster` |
+| `candidate_id` | cluster.id |
+| `confidence_score` | 排序得分 |
+| `reason_json` | score_breakdown |
+
+#### reason_json 示例
 
 ```json
 {
-  "documentId":"doc_001",
-  "prefix":"[[",
-  "cursorLine":"[[Pro"
+  "score_breakdown": {
+    "content_similarity_score": 0.70,
+    "structure_affinity_score": 0.55,
+    "graph_proximity_score": 0.80,
+    "recent_activity_score": 0.60,
+    "source_context_score": 0.35,
+    "manual_signal_score": 0.00,
+    "final_score": 0.66
+  },
+  "top_evidence": [
+    "该节点与星群「产品迭代」内 4 个节点有直接连线",
+    "节点的 3 个标签与星群标签签名高度重叠",
+    "星群内聚度高（coherence_score=0.82），说明主题明确"
+  ]
 }
 ```
 
-### 18.7 Slash Command 推荐接口
+#### 用户反馈影响
 
-```http
-POST /api/editor/slash-commands
+| 反馈 | 影响 |
+| --- | --- |
+| accepted → 更新 mind_nodes.cluster_id，可能触发星群重算 | mind_nodes、clusters |
+| node_landed（用户拖动到 cluster）→ 强正反馈 | user_behavior_events、mind_nodes |
+| rejected → 记录负反馈，降低该 cluster 对同类节点权重 | recommendation_events |
+
+---
+
+## 14. 链接推荐算法
+
+### 14.1 算法目标
+
+链接推荐为 subject（document / node）推荐有意义的 `mind_edge` 连接。推荐的是**边建议**，不是直接创建边。
+
+> MVP 约束：只做 Top-3 链接建议，不自动创建边。自动创建边属于 NEXT 或 RESERVED。
+
+### 14.2 输入
+
+- `subject_type` = `document` 或 `node`
+- `subject_id` = document.id 或 node.id
+
+### 14.3 候选召回来源
+
+| 来源 | 说明 | 召回方式 |
+| --- | --- | --- |
+| 相似文档 | 与 subject 内容最相似的 Top-N 文档对应节点 | plain_text 关键词匹配 |
+| 同 tag 文档 | 与 subject 共享 tag 的文档对应节点 | document_tags 交集 |
+| 同 project 文档 | 与 subject 同 primary_project_id 的文档对应节点 | documents.primary_project_id |
+| 同 cluster 节点 | 与 subject 同 cluster_id 的 mind_nodes | mind_nodes.cluster_id |
+| 最近共同编辑 | 与 subject 在同一次编辑会话中被操作过的文档 | user_behavior_events 时间窗口 |
+| 图谱邻近 | 与 subject 在图上距离为 2 跳（朋友的朋友）的节点 | mind_edges 二级遍历 |
+
+### 14.4 评分因子
+
+| 因子 | 权重 | 说明 |
+| --- | --- | --- |
+| 内容相似度 | 0.25 | subject 与 candidate 的 plain_text 关键词匹配 |
+| tag 重叠度 | 0.15 | 共享 tag 数量 / 各自 tag 总数 |
+| 项目一致性 | 0.10 | 是否同 primary_project_id |
+| 图谱距离 | 0.20 | 图上最短路径距离的倒数 |
+| 时间接近 | 0.10 | created_at 或 updated_at 的时间差 |
+| 用户连线习惯 | 0.15 | 用户历史上手动连线的频率模式（NEXT） |
+| 负反馈惩罚 | 0.05 | candidate 对应 edge 曾被用户拒绝过 |
+
+### 14.5 输出到 recommendations
+
+| 字段 | 值 |
+| --- | --- |
+| `subject_type` | `document` 或 `node` |
+| `subject_id` | 对应 ID |
+| `recommendation_type` | `link` |
+| `candidate_type` | `node`（作为 edge target） |
+| `candidate_id` | mind_node.id（推荐连线到的目标节点） |
+| `confidence_score` | 排序得分 |
+| `reason_json` | score_breakdown + 推荐关系类型 |
+
+### 14.6 reason_json 示例
+
+```json
+{
+  "score_breakdown": {
+    "content_similarity_score": 0.78,
+    "structure_affinity_score": 0.40,
+    "graph_proximity_score": 0.65,
+    "recent_activity_score": 0.45,
+    "source_context_score": 0.30,
+    "manual_signal_score": 0.00,
+    "final_score": 0.62
+  },
+  "suggested_relation_type": "reference",
+  "top_evidence": [
+    "两篇文档标题关键词高度重叠",
+    "共享 3 个标签",
+    "同属项目「Atlax 产品设计」"
+  ]
+}
 ```
 
-### 18.8 推荐反馈接口
+### 14.7 推荐数量控制
 
-```http
-POST /api/editor/suggestion-feedback
+| 场景 | 最大推荐数 |
+| --- | --- |
+| 新建文档 | 3 |
+| 新建碎片 | 2 |
+| Mind 节点详情 | 3 |
+| Dock 批量整理 | 每条最多 2 |
+
+### 14.8 显示原则
+
+- 系统推荐链接在 Mind 中使用**虚线**展示
+- 用户确认后转为**实线**
+- 用户拒绝过的链接**不重复推荐**
+- 用户 ignore 的链接**7天内冷却**
+- 跨 cluster 链接**优先用于洞察推荐**，不直接污染主结构
+
+### 14.9 用户反馈处理
+
+| 反馈 | 处理 |
+| --- | --- |
+| accepted | 创建 mind_edges(status=confirmed, created_by=system)，写入 user_behavior_events |
+| rejected | 记录负反馈，写入 mind_edges(status=rejected)，降低该类 link recommendation 权重 |
+| edge_created（用户手动创建）| 强正反馈，标记 mind_edges(created_by=user)，提升该类连线模式 |
+| delete_suggested_edge | 强负反馈，记录被删边类型，长期降低同类推荐 |
+
+---
+
+## 15. 反馈学习机制
+
+### 15.1 设计原则
+
+> **MVP 阶段只必须记录事件，不强制实时更新 preference_profiles。NEXT 阶段再做批量权重更新。**
+
+反馈闭环分两层：
+1. **事件记录层** [MVP]：所有反馈写入 `recommendation_events` + `user_behavior_events`
+2. **权重更新层** [NEXT]：定期从事件表批量更新 `preference_profiles`
+
+### 15.2 反馈类型与含义
+
+#### 推荐反馈（写入 recommendation_events）
+
+| event_type | 含义 | 信号强度 | 对算法的影响 |
+| --- | --- | --- | --- |
+| `accepted` | 用户直接接受推荐 | +1.0 | 强正反馈：提升相关 candidate_type、tag/project/cluster 的权重 |
+| `modified` | 用户修改推荐后接受 | +0.5 | 半正反馈：降低原候选权重，提升用户最终选择的候选权重 |
+| `rejected` | 用户明确拒绝推荐 | -1.0 | 强负反馈：降低相似推荐，记录拒绝模式 |
+| `ignored` | 推荐展示后用户未操作超时 / 同类其他候选被接受 | -0.2 | 弱负反馈：不等同于拒绝，只是用户未关注 |
+| `cooled_down` | 同类推荐进入冷却期 | 中性 | 用于频率控制，不直接调整权重 |
+
+#### 行为反馈（写入 user_behavior_events）
+
+| event_type | 含义 | 信号强度 | 对算法的影响 |
+| --- | --- | --- | --- |
+| `tag_added` | 用户手动添加标签 | +1.2 | 强正反馈：提升该 tag 与当前 document topic 的相关性 |
+| `tag_removed` | 用户移除标签 | -0.8 | 强负反馈：降低该 tag 推荐权重 |
+| `project_changed` | 用户修改 primary_project_id | +1.0 | 强正反馈：提升最终 project，降低原 project |
+| `edge_created`（手动）| 用户手动创建连线 | +1.5 | 最强正反馈：记录连线模式，未来自动推荐同模式连线 |
+| `delete_suggested_edge` | 用户删除系统建议的连线 | -1.2 | 强负反馈：降低该类 link recommendation |
+| `edge_rejected` | 用户拒绝系统建议连线 | -1.0 | 强负反馈 |
+| `node_moved` | 用户拖拽节点 | +0.6 | 弱正反馈：更新布局偏好 |
+| `node_landed` | 用户确认节点落点 | +1.0 | 强正反馈：提升最终 cluster/position |
+
+### 15.3 权重更新公式
+
+```
+weight_new = weight_old * decay + signal * learning_rate
 ```
 
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `decay` | 0.96 | 旧权重衰减因子。用户偏好会变化，旧偏好随时间自然衰减 |
+| `learning_rate` | 0.08 | 单次反馈对权重的影响幅度。一次行为不能过度影响算法 |
 
-## 19. 付费功能预留
+**使用示例**：
 
-### 19.1 免费版应保留的能力
+```
+某 tag 被用户接受 3 次，初始权重 0.50：
 
-免费版必须能体现产品核心价值，否则用户不会信任。
+第 1 次：0.50 * 0.96 + 1.0 * 0.08 = 0.56
+第 2 次：0.56 * 0.96 + 1.0 * 0.08 = 0.62
+第 3 次：0.62 * 0.96 + 1.0 * 0.08 = 0.68
 
-建议免费版支持：
+同一 tag 后续被拒绝 1 次：
+第 4 次：0.68 * 0.96 + (-1.0) * 0.08 = 0.57
+```
 
-1. 基础 Editor。
-2. 基础 Mind 星云树。
-3. 基础 Dock。
-4. 本地自动落库。
-5. 基础标签推荐。
-6. 基础链接推荐。
-7. 本地全文搜索。
-8. 少量导入。
-9. 基础周 Review。
+### 15.4 MVP 阶段的反馈规则
 
-### 19.2 可作为 Pro 的能力
+#### 必须同时写入两表
 
-| 功能         | 付费理由                        |
-| ---------- | --------------------------- |
-| 高级自动落库     | 更强候选召回与排序                   |
-| 高级链接推荐     | 跨星群洞察、旧知识激活                 |
-| 高级周 Review | 趋势、项目健康、长期复盘                |
-| 高级导入       | 微信 / 小红书 / 抖音 / B站批量导入      |
-| 高级 Dock 视图 | Finder 分栏、关系视图、Review Queue |
-| 高级星云布局     | 多主题宇宙、历史快照、Time Machine     |
-| 本地智能 Chat  | 更丰富的推送策略与个性化语气              |
-| 图谱健康检测     | 孤立节点、混乱度、重复内容、沉没知识          |
-| 跨设备同步      | 多端知识库                       |
-| LLM 增强     | 智能摘要、语义问答、自动写作辅助            |
+| 反馈场景 | recommendation_events | user_behavior_events |
+| --- | --- | --- |
+| 用户接受推荐 | ✅ event_type=accepted | ✅ 记录操作上下文 |
+| 用户拒绝推荐 | ✅ event_type=rejected | ✅ 记录操作上下文 |
+| 用户修改推荐 | ✅ event_type=modified，event_payload 记录修改细节 | ✅ 记录修改前后 |
+| 推荐 ignored | ✅ event_type=ignored | ❌ 无需单独写（无用户操作） |
+| 用户手动 add tag | ❌ 非推荐触发，不写此表 | ✅ event_type=tag_added |
+| 用户修改 project | ❌ 非推荐触发，不写此表 | ✅ event_type=project_changed |
+| 用户拖拽节点 | ❌ 非推荐触发，不写此表 | ✅ event_type=node_moved |
+| 用户确认节点落点 | 见下方双路径规则 | 见下方双路径规则 |
 
-### 19.3 付费设计原则
+#### node_landed 双路径写入规则
 
-不能把“产品能不能用”放到付费后。
-可以把“产品是否更聪明、更省时间、更高级”放到付费后。
+`node_landed` 事件存在两种触发来源，需区分处理：
 
-基础版解决：
+| 来源 | 判断条件 | recommendation_events | user_behavior_events |
+| --- | --- | --- | --- |
+| 推荐驱动 | `node_landed` 来源于某条 `recommendation`（存在 `recommendation_id`） | ✅ `event_type=accepted`，关联该 `recommendation_id` | ✅ `event_type=node_landed` |
+| 纯手动行为 | `node_landed` 为用户纯手动行为，**不存在** `recommendation_id` | ❌ 不写此表（避免误记为"接受推荐"） | ✅ `event_type=node_landed` |
 
-> 我能记录、自动落库、看到结构。
+> **设计意图**：避免将用户纯手动行为误记为"接受推荐"，防止 feedback loop 虚假正反馈污染偏好信号。
 
-Pro 版解决：
+#### 事务性要求
 
-> 系统更懂我，能帮我节省大量整理和复盘时间。
+- `recommendations.status` 更新 + `recommendation_events` 追加必须在同一事务内
+- `user_behavior_events` 可以非事务写入（不阻塞主路径），但必须标记 `sync_status`
 
----
+### 15.5 NEXT 阶段的批量更新
 
-## 20. 开发落地步骤
+NEXT 阶段通过后台 Job 定期执行：
 
-### Phase A：基础数据闭环
-
-目标：保证所有输入都能落到统一数据结构。
-
-任务：
-
-1. 建立 documents / blocks / captures。
-2. 建立 mind_nodes / mind_edges / clusters。
-3. 建立 recommendation_events / behavior_events。
-4. Editor 保存后自动生成或更新 MindNode。
-5. Mind 输入框创建 Capture 和临时节点。
-6. Dock 展示全部文档、碎片、待确认项。
-7. 用户确认推荐后更新结构。
-
-验收标准：
-
-1. Editor 输入能出现在 Dock。
-2. Mind 输入能出现在 Dock。
-3. Dock 文档能在 Mind 中定位。
-4. Mind 节点能打开 Editor。
-5. 推荐接受 / 拒绝能被记录。
+1. 每日：聚合昨日所有 `recommendation_events` + `user_behavior_events`
+2. 应用 `weight_new = weight_old * decay + signal * learning_rate` 批量更新 `preference_profiles`
+3. 更新 `rhythm_profiles`（活跃时段、输入频率等统计）
+4. 若连续出现同类推荐高拒绝率（> 60%），自动提升 `confidence_threshold`（即更保守）
 
 ---
 
-### Phase B：基础推荐算法
+## 16. 冷启动与置信度策略
 
-目标：不接 LLM，实现可用自动落库。
+### 16.1 设计原则
 
-任务：
+> **冷启动不承诺高精准。冷启动优先使用内容相似度、标题关键词、最近活跃项目。成熟阶段才使用用户历史偏好加权。**
 
-1. 实现关键词提取。
-2. 实现中文分词与 n-gram。
-3. 实现 tag 相似度。
-4. 实现时间上下文评分。
-5. 实现用户历史偏好权重。
-6. 实现候选项目 / 主题 / 星群召回。
-7. 实现推荐解释。
-8. 实现反馈学习。
+冷启动不是算法的缺陷，而是诚实。冷启动阶段的目标是：合理、低打扰、可修正。
 
-验收标准：
+### 16.2 用户数据阶段划分
 
-1. 新 capture 能推荐落库位置。
-2. 推荐结果能解释。
-3. 用户修改后，下次同类内容推荐变化。
-4. Top-3 推荐在测试集上达到 70%+。
+| 阶段 | 条件 | 策略 |
+| --- | --- | --- |
+| **Cold Start（冷启动）** | documents < 30 条 或 推荐反馈 < 10 条 | 保守推荐，降低自动锚定比例 |
+| **Early Learning（初步学习）** | documents 30-150 条 | 允许 Top-K 推荐，少量自动锚定 |
+| **Mature（成熟）** | documents 150+ 条且反馈稳定 | 提高 user_history_score 权重，提高自动落库比例 |
 
----
+### 16.3 Cold Start 策略
 
-### Phase C：链接推荐与星云树优化
+#### 可用信号
 
-目标：让 Mind 结构更清晰、更美观。
+| 信号 | 用途 |
+| --- | --- |
+| content_similarity_score | 内容关键词与已有文档的匹配 |
+| 标题关键词 | 快速判断主题方向 |
+| 最近活跃项目 | 按最近编辑时间排序的 projects |
+| source_context_score | 同来源类型的内容归类到一起 |
+| 标签重叠 | 如果用户已手动添加了一些标签 |
 
-任务：
+#### 禁用信号
 
-1. 实现节点连接度计算。
-2. 实现边权重。
-3. 实现链接推荐。
-4. 实现孤立节点检测。
-5. 实现星群聚合。
-6. 实现弱边隐藏。
-7. 实现聚焦节点一跳/二跳展示。
-8. 实现图混乱度评分。
+| 信号 | 原因 |
+| --- | --- |
+| user_history_score | 数据不足，不可信 |
+| rhythm_match_score | 节律画像未建立 |
+| preference_profiles | NEXT 才建表 |
 
-验收标准：
+#### 自动锚定阈值调整
 
-1. 默认 Mind 不乱。
-2. 点击节点时能显示相关关系。
-3. 弱边不会污染全局视图。
-4. 孤立节点可在 Dock 中集中处理。
+```
+冷启动：auto_anchor_threshold = 0.90（极保守）
+初步学习：auto_anchor_threshold = 0.85
+成熟：auto_anchor_threshold = 0.80
+```
 
----
+### 16.4 Early Learning 策略
 
-### Phase D：Editor 辅助与 Chat Nudge
+- 允许 Top-3 推荐（中置信 0.55-0.85）
+- 少量自动锚定（high >= 0.85）
+- 推荐频率：同类推荐至少间隔 24 小时
+- 重点收集反馈数据，不急于优化精准度
 
-目标：让算法开始“像人一样懂节奏”。
+### 16.5 Mature 策略
 
-任务：
+- 启用 `user_history_score`（接入 preference_profiles）
+- 启用 `rhythm_match_score`（接入 rhythm_profiles）
+- 提高自动落库比例（降低 threshold 到 0.80）
+- 参考正反馈/负反馈历史调整权重
+- 支持跨星群洞察推荐
 
-1. 实现编辑上下文分析。
-2. 实现卡住识别。
-3. 实现相关节点推荐。
-4. 实现 Chat Nudge 触发器。
-5. 实现语气模板库。
-6. 实现推送冷却机制。
-7. 实现用户反馈降权。
-8. 实现生活/工作/灵感类型比例分析。
-9. 实现 Markdown 语法提示。
-10. 实现 Slash Command 推荐。
-11. 实现用户编辑习惯学习。
+### 16.6 连续错误保护
 
-验收标准：
+如果系统检测到连续错误：
 
-1. Chat 不打扰。
-2. 推送内容和用户上下文有关。
-3. 用户关闭后不会反复出现。
-4. 周期性提示明显比机械提醒自然。
+| 条件 | 保护策略 |
+| --- | --- |
+| 同类推荐连续 3 次被拒绝 | 该推荐类型进入冷却（7 天），confidence_threshold + 0.10 |
+| 5 分钟内拒绝 2 次同类推荐 | 当前会话中不再展示同类推荐 |
+| 用户手动 undo 推荐结果 | 该 candidate 长期降权，标记为 learned negative |
+| 周内某类推荐拒绝率 > 50% | 降低该类推荐的 confidence 上限，减少推荐数量 |
 
----
+### 16.7 各阶段期望指标（不承诺，仅参考）
 
-### Phase E：导入与 Review
+| 阶段 | Top-1 Accept | Top-3 Accept | Silent Success（自动落库不修改） |
+| --- | --- | --- | --- |
+| Cold Start | 35%+ | 55%+ | 40%+ |
+| Early Learning | 45%+ | 65%+ | 50%+ |
+| Mature | 60%+ | 85%+ | 70%+ |
 
-目标：让产品不只是笔记软件，而是个人信息流结构化入口。
-
-任务：
-
-1. 建立 ImportJob。
-2. 建立 SourceItem。
-3. 实现 Obsidian / Notion / Markdown 导入。
-4. 设计微信 / 小红书 / 抖音 / B站字段映射。
-5. 实现导入预览和批量确认。
-6. 实现周 Review。
-7. 实现沉没内容检测。
-8. 实现主题趋势分析。
-
-验收标准：
-
-1. 导入内容不会直接污染 Mind。
-2. Dock 能处理导入队列。
-3. Mind 能分批展示导入星辰。
-4. 周 Review 能给出有价值的下一步建议。
+> 以上为稳定后的预期值，实际效果取决于用户数据质量和行为一致性。
 
 ---
 
-## 21. 风险与边界
-
-### 21.1 最大风险
-
-| 风险          | 解决方式                  |
-| ----------- | --------------------- |
-| 算法过度自信      | 所有推荐可解释、可撤销           |
-| Mind 视图混乱   | LOD、弱边隐藏、星群折叠         |
-| Chat 像模板机器人 | 场景触发 + 多模板 + 冷却 + 反馈  |
-| 用户数据太少      | 冷启动只做低风险建议            |
-| 性能下降        | 增量计算 + 缓存 + 异步任务      |
-| 导入污染知识库     | 先进入 Dock Import Queue |
-| 推荐重复错误      | 记录负反馈并长期降权            |
-| 过度心理化       | 只描述行为，不诊断用户           |
-
-### 21.2 不能做的事
-
-1. 不能假装没有 LLM 也能完全理解复杂语义。
-2. 不能在冷启动时强行自动归类。
-3. 不能把用户所有内容都连成线。
-4. 不能把 Chat 做成鸡汤推送器。
-5. 不能用算法剥夺用户最终决定权。
-6. 不能为了视觉酷炫牺牲结构清晰。
-7. 不能让 Dock 和 Mind 变成两套系统。
-8. 不能让 Editor 只保存文本而不更新结构。
-
----
-
-## 22. 最终算法原则
-
-Atlax 的本地算法不是为了炫技，而是为了让用户感觉：
-
-1. 我随手记录，系统能接住。
-2. 我不用马上整理，也不会丢。
-3. 我的内容会自然长出结构。
-4. 系统知道我最近在关注什么。
-5. 系统不会乱打扰我。
-6. 推荐错了，我能改。
-7. 我改过之后，系统会记住。
-8. 时间越久，星云树越像我自己的知识宇宙。
-
-最终判断标准：
-
-> 用户不是因为算法“看起来智能”而留下，而是因为系统真的降低了整理成本、提升了复用率，并且让知识结构变得越来越清晰。
-
-这就是 Atlax MindDock 在不接入 LLM 阶段必须打牢的算法地基。
+**Round 2 到此结束。第10章中已标记的内容为本轮完成项，剩余 ⬜ 条目为后续轮次待补充内容。**
