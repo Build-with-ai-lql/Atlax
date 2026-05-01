@@ -49,7 +49,7 @@ export default function HomeView({ userId, userName: _userName, onOpenEditor, on
 
   const entryCards = [
     { id: 'new-document', icon: <FilePlus2 size={22} />, title: 'New Document', desc: 'Structured markdown workspace', iconColor: 'text-indigo-400', onClick: onNewNote },
-    { id: 'process-inbox', icon: <Import size={22} />, title: 'Process Inbox', desc: 'Organize unlinked fragments', iconColor: 'text-emerald-400', onClick: onSwitchToDock },
+    { id: 'process-dock', icon: <Import size={22} />, title: 'Process Dock', desc: 'Organize unlinked fragments', iconColor: 'text-emerald-400', onClick: onSwitchToDock },
     { id: 'graph-explorer', icon: <Network size={22} />, title: 'Graph Explorer', desc: 'Navigate your knowledge base', iconColor: 'text-blue-400', onClick: onSwitchToMind },
   ]
 

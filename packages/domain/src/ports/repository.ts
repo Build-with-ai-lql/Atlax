@@ -1,8 +1,7 @@
 import type { EntryStatus, SourceType, SuggestionItem } from '../types'
 import type { Entry as DomainEntry, Tag as DomainTag } from '../types'
 import type { Document, DocumentType, DocumentUpdateInput } from '../document/types'
-import type { Capture, CaptureStatus, CaptureSource } from '../capture/types'
-import type { MindNode, MindEdge, MindNodeType, MindEdgeType } from '../mind/types'
+import type { MindNode, MindEdge, MindNodeType } from '../mind/types'
 
 export type DockItemId = number
 export type UserId = string

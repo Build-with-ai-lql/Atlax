@@ -5,7 +5,6 @@ import {
   addTagToItem,
   suggestItem,
   archiveItem,
-  listDockItems,
   listArchivedEntries,
 } from '@/lib/repository'
 import {
@@ -77,12 +76,15 @@ describe('handleSearch', () => {
 
     const result = await handleSearch(USER_A, '搜索 技术')
     expect(result.intent).toBe('search')
-    expect(result.data?.searchResults).toBeDefined()
-    expect(result.data!.searchResults!.length).toBeGreaterThanOrEqual(1)
+    const searchResults = result.data?.searchResults
+    expect(searchResults).toBeDefined()
+    if (!searchResults) return
+    expect(searchResults.length).toBeGreaterThanOrEqual(1)
 
-    const found = result.data!.searchResults!.find(r => r.id === id)
+    const found = searchResults.find(r => r.id === id)
     expect(found).toBeDefined()
-    expect(found!.matchedField).toBe('tag')
+    if (!found) return
+    expect(found.matchedField).toBe('tag')
     expect(result.content).toContain('标签匹配')
   })
 
@@ -96,15 +98,17 @@ describe('handleSearch', () => {
     expect(entry).toBeDefined()
 
     const result = await handleSearch(USER_A, '搜索 技术')
-    expect(result.data?.searchResults).toBeDefined()
+    const searchResults = result.data?.searchResults
+    expect(searchResults).toBeDefined()
 
     const archivedEntry = entries.find(e =>
       e.tags.some(t => t.toLowerCase().includes('技术'))
     )
-    if (archivedEntry) {
-      const found = result.data!.searchResults!.find(r => r.id === archivedEntry.id && r.source === 'entry')
+    if (archivedEntry && searchResults) {
+      const found = searchResults.find(r => r.id === archivedEntry.id && r.source === 'entry')
       expect(found).toBeDefined()
-      expect(found!.matchedField).toBe('tag')
+      if (!found) return
+      expect(found.matchedField).toBe('tag')
     }
   })
 
@@ -113,12 +117,15 @@ describe('handleSearch', () => {
 
     const result = await handleSearch(USER_A, '搜索 产品设计专题')
     expect(result.intent).toBe('search')
-    expect(result.data?.searchResults).toBeDefined()
-    expect(result.data!.searchResults!.length).toBeGreaterThanOrEqual(1)
+    const searchResults = result.data?.searchResults
+    expect(searchResults).toBeDefined()
+    if (!searchResults) return
+    expect(searchResults.length).toBeGreaterThanOrEqual(1)
 
-    const found = result.data!.searchResults!.find(r => r.id === id)
+    const found = searchResults.find(r => r.id === id)
     expect(found).toBeDefined()
-    expect(found!.matchedField).toBe('topic')
+    if (!found) return
+    expect(found.matchedField).toBe('topic')
     expect(result.content).toContain('主题匹配')
   })
 

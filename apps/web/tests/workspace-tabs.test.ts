@@ -62,8 +62,9 @@ describe('Workspace Tabs - open / activate / close / pin', () => {
     const restored = await restoreWorkspaceTabs(USER)
     const mindTab = restored.find((t) => t.id === tab1.id)
     const dockTab = restored.find((t) => t.id === tab2.id)
-    expect(mindTab!.isActive).toBe(false)
-    expect(dockTab!.isActive).toBe(true)
+    if (!mindTab || !dockTab) return
+    expect(mindTab.isActive).toBe(false)
+    expect(dockTab.isActive).toBe(true)
   })
 
   it('activates a tab and deactivates others', async () => {
@@ -73,8 +74,11 @@ describe('Workspace Tabs - open / activate / close / pin', () => {
     await activateWorkspaceTab(USER, tab1.id)
 
     const restored = await restoreWorkspaceTabs(USER)
-    expect(restored.find((t) => t.id === tab1.id)!.isActive).toBe(true)
-    expect(restored.find((t) => t.id === tab2.id)!.isActive).toBe(false)
+    const t1 = restored.find((t) => t.id === tab1.id)
+    const t2 = restored.find((t) => t.id === tab2.id)
+    if (!t1 || !t2) return
+    expect(t1.isActive).toBe(true)
+    expect(t2.isActive).toBe(false)
   })
 
   it('closes a tab and activates the last remaining', async () => {
@@ -90,7 +94,7 @@ describe('Workspace Tabs - open / activate / close / pin', () => {
   })
 
   it('closes active tab and activates last remaining by sortOrder', async () => {
-    const tab1 = await openWorkspaceTab({ userId: USER, tabType: 'mind', title: 'Mind', path: '/mind' })
+    await openWorkspaceTab({ userId: USER, tabType: 'mind', title: 'Mind', path: '/mind' })
     const tab2 = await openWorkspaceTab({ userId: USER, tabType: 'dock', title: 'Dock', path: '/dock' })
     const tab3 = await openWorkspaceTab({ userId: USER, tabType: 'home', title: 'Home', path: '/home' })
 
@@ -98,7 +102,9 @@ describe('Workspace Tabs - open / activate / close / pin', () => {
 
     const restored = await restoreWorkspaceTabs(USER)
     expect(restored).toHaveLength(2)
-    expect(restored.find((t) => t.isActive)!.id).toBe(tab2.id)
+    const active = restored.find((t) => t.isActive)
+    if (!active) return
+    expect(active.id).toBe(tab2.id)
   })
 
   it('closes all tabs and session activeTabId becomes null', async () => {
@@ -116,20 +122,24 @@ describe('Workspace Tabs - open / activate / close / pin', () => {
     const tab = await openWorkspaceTab({ userId: USER, tabType: 'mind', title: 'Mind', path: '/mind' })
 
     const pinned = await pinWorkspaceTab(USER, tab.id)
-    expect(pinned!.isPinned).toBe(true)
+    if (!pinned) return
+    expect(pinned.isPinned).toBe(true)
 
     const unpinned = await pinWorkspaceTab(USER, tab.id)
-    expect(unpinned!.isPinned).toBe(false)
+    if (!unpinned) return
+    expect(unpinned.isPinned).toBe(false)
   })
 
   it('pins a tab with explicit pinned=true', async () => {
     const tab = await openWorkspaceTab({ userId: USER, tabType: 'mind', title: 'Mind', path: '/mind' })
 
     const pinned = await pinWorkspaceTab(USER, tab.id, true)
-    expect(pinned!.isPinned).toBe(true)
+    if (!pinned) return
+    expect(pinned.isPinned).toBe(true)
 
     const stillPinned = await pinWorkspaceTab(USER, tab.id, true)
-    expect(stillPinned!.isPinned).toBe(true)
+    if (!stillPinned) return
+    expect(stillPinned.isPinned).toBe(true)
   })
 
   it('returns false when closing non-existent tab', async () => {

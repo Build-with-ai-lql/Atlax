@@ -41,7 +41,7 @@ function inferProjectGroup(title: string): string {
   if (lower.includes('design') || lower.includes('token') || lower.includes('component') || lower.includes('color') || lower.includes('typography') || lower.includes('motion') || lower.includes('accessibility') || lower.includes('dark mode') || lower.includes('responsive') || lower.includes('keyboard') || lower.includes('drag') || lower.includes('emoji') || lower.includes('tag editor') || lower.includes('typewriter') || lower.includes('markdown') || lower.includes('dock') || lower.includes('card') || lower.includes('chat') || lower.includes('batch') || lower.includes('voice') || lower.includes('bidirectional') || lower.includes('daily review') || lower.includes('smart group') || lower.includes('local-first') || lower.includes('data export') || lower.includes('knowledge map') || lower.includes('related') || lower.includes('browser import') || lower.includes('custom rules') || lower.includes('wechat')) return 'Product Design'
   if (lower.includes('reading') || lower.includes('笔记') || lower.includes('book') || lower.includes('thinking') || lower.includes('hackers') || lower.includes('psychology') || lower.includes('edge computing') || lower.includes('open source') || lower.includes('ai meetup') || lower.includes('code review')) return 'Reading & Research'
   if (lower.includes('meeting') || lower.includes('会议') || lower.includes('review') || lower.includes('discussion') || lower.includes('alignment') || lower.includes('priority')) return 'Meetings'
-  return 'Inbox'
+  return 'Dock'
 }
 
 export function toDockTreeViewModel(items: DockItem[]): DockTreeViewModel {

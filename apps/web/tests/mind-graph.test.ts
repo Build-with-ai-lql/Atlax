@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { db, mindNodesTable, mindEdgesTable, documentsTable, entriesTable } from '../lib/db'
+import { db, documentsTable, entriesTable } from '../lib/db'
 import {
   upsertMindNode,
   upsertMindEdge,
@@ -39,7 +39,8 @@ describe('Mind Graph CRUD', () => {
 
       const fetched = await getMindNode(USER, node.id)
       expect(fetched).toBeTruthy()
-      expect(fetched!.id).toBe(node.id)
+      if (!fetched) return
+      expect(fetched.id).toBe(node.id)
     })
 
     it('updates existing node on upsert', async () => {
@@ -123,7 +124,8 @@ describe('Mind Graph CRUD', () => {
 
       const fetched = await getMindEdge(USER, edge.id)
       expect(fetched).toBeTruthy()
-      expect(fetched!.id).toBe(edge.id)
+      if (!fetched) return
+      expect(fetched.id).toBe(edge.id)
     })
 
     it('updates existing edge on upsert', async () => {
@@ -258,7 +260,8 @@ describe('Document / Entry table alias', () => {
 
     expect(fromEntries).toBeTruthy()
     expect(fromDocuments).toBeTruthy()
-    expect(fromEntries!.title).toBe('Test Entry')
-    expect(fromDocuments!.title).toBe('Test Entry')
+    if (!fromEntries || !fromDocuments) return
+    expect(fromEntries.title).toBe('Test Entry')
+    expect(fromDocuments.title).toBe('Test Entry')
   })
 })

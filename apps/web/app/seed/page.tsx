@@ -1,5 +1,24 @@
 'use client'
 
+/*
+ * ============================================================================
+ * DEV-TOOL EXCEPTION: 本文件是开发辅助工具，用于填充 Demo 数据和清除数据。
+ *
+ * 本文件中的 direct db access（db.table().add / db.table().bulkDelete 等）
+ * 是经过允许的例外情况，原因如下：
+ *
+ * 1. Seed 数据需要设置特定的 status、suggestions、processedAt 等字段，
+ *    这些字段在 repository API 的 create 方法中不可配置。
+ * 2. 批量清除数据（handleClear）没有对应的 repository API，且清除操作
+ *    本身就是 dev-tool 专用能力。
+ *
+ * 这些 direct db access ：
+ * - 不会进入正式产品路径（RB-4 确保 production 环境不可用）
+ * - 不应被其他模块当作参考模式
+ * - 后续如果需要持久化 dev-tool 能力，应扩展 repository API 而非模仿此文件
+ * ============================================================================
+ */
+
 import { useState } from 'react'
 import Link from 'next/link'
 import { Loader2, Database, Trash2, ArrowRight } from 'lucide-react'
@@ -1698,9 +1717,24 @@ const SEED_DOCUMENT_TO_ENTRY: Record<string, string> = {
 }
 
 export default function SeedPage() {
+  const isProduction = typeof window !== 'undefined' && process.env.NODE_ENV === 'production'
   const [result, setResult] = useState<SeedResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [seeding, setSeeding] = useState(false)
+
+  if (isProduction) {
+    return (
+      <div className="flex min-h-screen atlax-page-bg items-center justify-center p-8 selection:bg-blue-200 dark:selection:bg-blue-900">
+        <div className="w-full max-w-lg text-center">
+          <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-amber-100 dark:bg-amber-500/10 flex items-center justify-center">
+            <Database size={24} className="text-amber-600 dark:text-amber-400" />
+          </div>
+          <h1 className="text-xl font-semibold text-slate-800 dark:text-slate-100 mb-2">开发工具不可用</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Seed 数据填充工具仅在开发环境中可用，生产环境下已禁用。</p>
+        </div>
+      </div>
+    )
+  }
 
   const handleSeed = async () => {
     const user = getCurrentUser()

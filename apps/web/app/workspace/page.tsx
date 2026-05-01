@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Send, Minimize2, Sparkles, Loader2, MoreHorizontal, LayoutList, FileCode2, Pencil, FolderOutput, Download, Trash2, Check, Inbox, Archive, FileText, LayoutGrid, List, Columns, Search, Folder, Plus, PenTool, Circle, RotateCcw, Lightbulb, ChevronRight } from 'lucide-react'
+import { Send, Minimize2, Sparkles, Loader2, MoreHorizontal, LayoutList, FileCode2, Pencil, FolderOutput, Download, Trash2, Check, Package, Archive, FileText, LayoutGrid, List, Columns, Search, Folder, Plus, PenTool, Circle, RotateCcw, Lightbulb, ChevronRight } from 'lucide-react'
 
 import { getCurrentUser, registerUser, logoutUser, type LocalUser } from '@/lib/auth'
 import GoldenTopNav from './_components/GoldenTopNav'
@@ -1585,7 +1585,7 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
           <div className="px-4 text-[10px] font-bold text-[var(--text-muted)] tracking-wider mb-2">SHORTCUTS</div>
           <div className="space-y-0.5 px-2">
             <div onClick={() => handleSelectFilter(null)} className={`finder-item ${filterStatus === null && !selectedProject && !selectedTag ? 'active' : ''}`}>
-              <span className="flex items-center gap-2"><Inbox size={16} /> Inbox</span>
+              <span className="flex items-center gap-2"><Package size={16} /> Dock</span>
             </div>
             <div onClick={() => handleSelectFilter('archived')} className={`finder-item ${filterStatus === 'archived' ? 'active' : ''}`}>
               <span className="flex items-center gap-2"><Archive size={16} /> Archive</span>
@@ -1637,7 +1637,7 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
               </div>
               {searchFiltered.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-slate-500">
-                  <Inbox size={24} className="opacity-30 mb-3" /><p className="text-sm">暂无条目</p>
+                  <Package size={24} className="opacity-30 mb-3" /><p className="text-sm">暂无条目</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
@@ -1684,7 +1684,7 @@ function DockFinderView({ items, selectedItemId, loading, error, onSelectItem, o
               </div>
               {searchFiltered.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-slate-500">
-                  <Inbox size={24} className="opacity-30 mb-3" /><p className="text-sm">暂无条目</p>
+                  <Package size={24} className="opacity-30 mb-3" /><p className="text-sm">暂无条目</p>
                 </div>
               ) : (searchFiltered.map((item) => {
                 const isActive = selectedItemId === item.id
