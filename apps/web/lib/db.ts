@@ -30,7 +30,7 @@ import type {
   RecommendationCandidateType,
   RecommendationEventType,
   UserBehaviorEventType,
-  UserBehaviorTargetType,
+  UserBehaviorSubjectType,
 } from '@atlax/domain'
 
 export interface DockItemRecord {
@@ -347,10 +347,8 @@ export interface UserBehaviorEventRecord {
   id?: string
   userId: string
   eventType: UserBehaviorEventType
-  targetType: UserBehaviorTargetType
-  targetId: string | null
-  fromContext: string | null
-  toContext: string | null
+  subjectType: UserBehaviorSubjectType
+  subjectId: string | null
   metadata: Record<string, unknown> | null
   createdAt: Date
 }
@@ -598,6 +596,37 @@ db.version(17).stores({
   recommendations: 'id, userId, subjectType, status, [userId+status], [userId+subjectType], createdAt, updatedAt',
   recommendationEvents: 'id, userId, recommendationId, eventType, [userId+recommendationId], [userId+eventType], createdAt',
   userBehaviorEvents: 'id, userId, eventType, targetType, [userId+eventType], [userId+targetType], createdAt',
+})
+
+db.version(18).stores({
+  dockItems: '++id, userId, rawText, topic, sourceType, status, createdAt',
+  tags: 'id, userId, name, [userId+name]',
+  entries: '++id, userId, sourceDockItemId, type, archivedAt',
+  chatSessions: '++id, userId, status, pinned, dockItemId, createdAt, updatedAt',
+  widgets: '++id, userId, widgetType, active, createdAt, updatedAt',
+  collections: 'id, userId, collectionType, parentId, createdAt, updatedAt',
+  entryTagRelations: 'id, userId, entryId, tagId, [userId+entryId], [userId+tagId], createdAt',
+  entryRelations: 'id, userId, sourceEntryId, targetEntryId, relationType, [userId+sourceEntryId], [userId+targetEntryId], createdAt',
+  knowledgeEvents: 'id, userId, eventType, targetType, createdAt',
+  temporalActivities: 'id, userId, type, occurredAt, dayKey, weekKey, monthKey, [userId+dayKey], [userId+monthKey], createdAt',
+  mindNodes: 'id, userId, nodeType, state, label, [userId+nodeType], [userId+state], createdAt, updatedAt',
+  mindEdges: 'id, userId, sourceNodeId, targetNodeId, edgeType, [userId+sourceNodeId], [userId+targetNodeId], [userId+edgeType], createdAt, updatedAt',
+  workspaceSessions: 'id, userId, createdAt, updatedAt',
+  workspaceOpenTabs: 'id, userId, sessionId, tabType, documentId, isPinned, isActive, sortOrder, [userId+sessionId], [userId+tabType], [userId+documentId], openedAt, updatedAt',
+  recentDocuments: 'id, userId, documentId, [userId+documentId], lastOpenedAt, openCount, createdAt, updatedAt',
+  editorDrafts: '++id, userId, draftKey, [userId+draftKey], updatedAt',
+  recommendations: 'id, userId, subjectType, status, [userId+status], [userId+subjectType], createdAt, updatedAt',
+  recommendationEvents: 'id, userId, recommendationId, eventType, [userId+recommendationId], [userId+eventType], createdAt',
+  userBehaviorEvents: 'id, userId, eventType, subjectType, [userId+eventType], [userId+subjectType], createdAt',
+}).upgrade((tx) => {
+  tx.table('userBehaviorEvents').toCollection().modify((event: Record<string, unknown>) => {
+    if (!event.subjectType) event.subjectType = event.targetType ?? 'recommendation'
+    if (event.subjectId === undefined) event.subjectId = event.targetId ?? null
+    delete event.targetType
+    delete event.targetId
+    delete event.fromContext
+    delete event.toContext
+  })
 })
 
 export { db }

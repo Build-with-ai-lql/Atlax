@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { db, recommendationEventsTable, recommendationsTable } from '@/lib/db'
+import { db, recommendationEventsTable, recommendationsTable, userBehaviorEventsTable } from '@/lib/db'
 import {
   createCaptureToDocumentFlow,
   getDocumentByCaptureId,
   getMindNode,
   listRecommendations,
   listRecommendationEvents,
+  listUserBehaviorEvents,
   markRecommendationShown,
   recordRecommendationFeedback,
 } from '@/lib/repository'
@@ -21,6 +22,7 @@ async function cleanAll() {
   await db.table('mindNodes').clear()
   await db.table('recommendations').clear()
   await db.table('recommendationEvents').clear()
+  await db.table('userBehaviorEvents').clear()
 }
 
 function unwrap<T>(value: T | null): T {
@@ -532,6 +534,46 @@ describe('capture → document → mindNode flow', () => {
       expect(unwrap(feedbackEvent ?? null).recommendationId).toBe(result.recommendation.id)
     })
 
+    it.each(['accepted', 'rejected', 'modified', 'ignored'] as const)(
+      'records %s feedback as a user behavior signal',
+      async (feedbackType) => {
+        const result = await createCaptureToDocumentFlow({
+          userId: USER_A,
+          rawText: `${feedbackType} behavior signal 测试`,
+        })
+        const feedbackPayload = feedbackType === 'modified'
+          ? { originalCandidateId: result.recommendation.candidateId, modifiedCandidateId: 'node_modified' }
+          : undefined
+
+        await recordRecommendationFeedback({
+          recommendationId: result.recommendation.id,
+          userId: USER_A,
+          feedbackType,
+          feedbackPayload,
+        })
+
+        const behaviorEvents = await listUserBehaviorEvents(USER_A, {
+          eventType: `recommendation_${feedbackType}`,
+        })
+        expect(behaviorEvents).toHaveLength(1)
+        expect(behaviorEvents[0].subjectType).toBe(result.recommendation.subjectType)
+        expect(behaviorEvents[0].subjectId).toBe(String(result.recommendation.subjectId))
+
+        const meta = behaviorEvents[0].metadata as Record<string, unknown>
+        expect(meta.recommendationId).toBe(result.recommendation.id)
+        expect(meta.recommendationType).toBe(result.recommendation.recommendationType)
+        expect(meta.subjectType).toBe(result.recommendation.subjectType)
+        expect(meta.subjectId).toBe(result.recommendation.subjectId)
+        expect(meta.candidateType).toBe(result.recommendation.candidateType)
+        expect(meta.candidateId).toBe(result.recommendation.candidateId)
+        expect(meta.source).toBe('recommendation_feedback')
+        expect(meta.feedbackType).toBe(feedbackType)
+        if (feedbackType === 'modified') {
+          expect(meta.feedbackPayload).toEqual(feedbackPayload)
+        }
+      },
+    )
+
     it('records rejected feedback', async () => {
       const result = await createCaptureToDocumentFlow({
         userId: USER_A,
@@ -695,6 +737,34 @@ describe('capture → document → mindNode flow', () => {
       expect(shownEvent).toBeDefined()
       expect(unwrap(shownEvent ?? null).recommendationId).toBe(result.recommendation.id)
       expect(unwrap(shownEvent ?? null).userId).toBe(USER_A)
+    })
+
+    it('records recommendation_shown as a user behavior signal', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'shown behavior signal 测试',
+      })
+
+      await markRecommendationShown({
+        recommendationId: result.recommendation.id,
+        userId: USER_A,
+      })
+
+      const behaviorEvents = await listUserBehaviorEvents(USER_A, {
+        eventType: 'recommendation_shown',
+      })
+      expect(behaviorEvents).toHaveLength(1)
+      expect(behaviorEvents[0].subjectType).toBe(result.recommendation.subjectType)
+      expect(behaviorEvents[0].subjectId).toBe(String(result.recommendation.subjectId))
+
+      const meta = behaviorEvents[0].metadata as Record<string, unknown>
+      expect(meta.recommendationId).toBe(result.recommendation.id)
+      expect(meta.recommendationType).toBe(result.recommendation.recommendationType)
+      expect(meta.subjectType).toBe(result.recommendation.subjectType)
+      expect(meta.subjectId).toBe(result.recommendation.subjectId)
+      expect(meta.candidateType).toBe(result.recommendation.candidateType)
+      expect(meta.candidateId).toBe(result.recommendation.candidateId)
+      expect(meta.source).toBe('recommendation_shown')
     })
 
     it('shown event preserves userId', async () => {
@@ -948,6 +1018,33 @@ describe('capture → document → mindNode flow', () => {
       expect(events[0].eventType).toBe('recommendation_generated')
     })
 
+    it('rolls back shown status and recommendation_event when behavior signal write fails', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'shown behavior failure consistency 测试',
+      })
+      vi.spyOn(userBehaviorEventsTable, 'add').mockRejectedValueOnce(new Error('behavior event write failed'))
+
+      await expect(
+        markRecommendationShown({
+          recommendationId: result.recommendation.id,
+          userId: USER_A,
+        }),
+      ).rejects.toThrow('behavior event write failed')
+
+      const recs = await listRecommendations(USER_A)
+      expect(recs[0].status).toBe('generated')
+
+      const recommendationEvents = await listRecommendationEvents(USER_A, {
+        recommendationId: result.recommendation.id,
+      })
+      expect(recommendationEvents).toHaveLength(1)
+      expect(recommendationEvents[0].eventType).toBe('recommendation_generated')
+
+      const behaviorEvents = await listUserBehaviorEvents(USER_A)
+      expect(behaviorEvents).toHaveLength(0)
+    })
+
     it.each(['accepted', 'rejected', 'modified', 'ignored'] as const)(
       'rolls back %s feedback status update when feedback event write fails',
       async (feedbackType) => {
@@ -1002,6 +1099,34 @@ describe('capture → document → mindNode flow', () => {
       })
       expect(events).toHaveLength(1)
       expect(events[0].eventType).toBe('recommendation_generated')
+    })
+
+    it('rolls back feedback status and recommendation_event when behavior signal write fails', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'feedback behavior failure consistency 测试',
+      })
+      vi.spyOn(userBehaviorEventsTable, 'add').mockRejectedValueOnce(new Error('behavior event write failed'))
+
+      await expect(
+        recordRecommendationFeedback({
+          recommendationId: result.recommendation.id,
+          userId: USER_A,
+          feedbackType: 'accepted',
+        }),
+      ).rejects.toThrow('behavior event write failed')
+
+      const recs = await listRecommendations(USER_A)
+      expect(recs[0].status).toBe('generated')
+
+      const recommendationEvents = await listRecommendationEvents(USER_A, {
+        recommendationId: result.recommendation.id,
+      })
+      expect(recommendationEvents).toHaveLength(1)
+      expect(recommendationEvents[0].eventType).toBe('recommendation_generated')
+
+      const behaviorEvents = await listUserBehaviorEvents(USER_A)
+      expect(behaviorEvents).toHaveLength(0)
     })
 
     it('regression: empty content rejection still does not generate recommendation or event', async () => {

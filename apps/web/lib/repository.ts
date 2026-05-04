@@ -56,7 +56,7 @@ import {
   type RecommendationEventType,
   type RecommendationEventInput,
   type UserBehaviorEventType,
-  type UserBehaviorTargetType,
+  type UserBehaviorSubjectType,
   type UserBehaviorEventInput,
   feedbackTypeToStatus,
   feedbackTypeToEventType,
@@ -1919,9 +1919,7 @@ function toPersistedUserBehaviorEvent(evt: UserBehaviorEventRecord | undefined):
   return {
     ...evt,
     id: evt.id,
-    targetId: evt.targetId ?? null,
-    fromContext: evt.fromContext ?? null,
-    toContext: evt.toContext ?? null,
+    subjectId: evt.subjectId ?? null,
     metadata: evt.metadata ?? null,
   }
 }
@@ -2003,8 +2001,9 @@ export async function recordRecommendationFeedback(
     'rw',
     recommendationsTable,
     recommendationEventsTable,
+    userBehaviorEventsTable,
     async () => {
-      await getRecommendationRecordForLifecycleWrite(input.userId, input.recommendationId)
+      const recommendation = await getRecommendationRecordForLifecycleWrite(input.userId, input.recommendationId)
 
       await recommendationsTable.update(input.recommendationId, {
         status,
@@ -2016,6 +2015,14 @@ export async function recordRecommendationFeedback(
         userId: input.userId,
         eventType,
         metadata,
+      })
+
+      await recordUserBehaviorEvent({
+        userId: input.userId,
+        eventType,
+        subjectType: recommendation.subjectType,
+        subjectId: String(recommendation.subjectId),
+        metadata: buildRecommendationBehaviorMetadata(recommendation, metadata),
       })
 
       const updated = await recommendationsTable.get(input.recommendationId)
@@ -2049,8 +2056,9 @@ export async function markRecommendationShown(
     'rw',
     recommendationsTable,
     recommendationEventsTable,
+    userBehaviorEventsTable,
     async () => {
-      await getRecommendationRecordForLifecycleWrite(input.userId, input.recommendationId)
+      const recommendation = await getRecommendationRecordForLifecycleWrite(input.userId, input.recommendationId)
 
       await recommendationsTable.update(input.recommendationId, {
         status: 'shown',
@@ -2064,6 +2072,16 @@ export async function markRecommendationShown(
         metadata: {
           source: 'recommendation_shown',
         },
+      })
+
+      await recordUserBehaviorEvent({
+        userId: input.userId,
+        eventType: 'recommendation_shown',
+        subjectType: recommendation.subjectType,
+        subjectId: String(recommendation.subjectId),
+        metadata: buildRecommendationBehaviorMetadata(recommendation, {
+          source: 'recommendation_shown',
+        }),
       })
 
       const updated = await recommendationsTable.get(input.recommendationId)
@@ -2121,6 +2139,21 @@ export async function recordRecommendationEvent(input: RecommendationEventInput)
   return toPersistedRecommendationEvent(await recommendationEventsTable.get(id)) as PersistedRecommendationEvent
 }
 
+function buildRecommendationBehaviorMetadata(
+  recommendation: RecommendationRecord,
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    recommendationId: recommendation.id,
+    recommendationType: recommendation.recommendationType,
+    subjectType: recommendation.subjectType,
+    subjectId: recommendation.subjectId,
+    candidateType: recommendation.candidateType,
+    candidateId: recommendation.candidateId,
+    ...metadata,
+  }
+}
+
 export async function listRecommendationEvents(
   userId: string,
   filters?: { recommendationId?: string; eventType?: RecommendationEventType },
@@ -2145,10 +2178,8 @@ export async function recordUserBehaviorEvent(input: UserBehaviorEventInput): Pr
     id,
     userId: input.userId,
     eventType: input.eventType,
-    targetType: input.targetType,
-    targetId: input.targetId ?? null,
-    fromContext: input.fromContext ?? null,
-    toContext: input.toContext ?? null,
+    subjectType: input.subjectType,
+    subjectId: input.subjectId ?? null,
     metadata: input.metadata ?? null,
     createdAt: now,
   }
@@ -2158,15 +2189,15 @@ export async function recordUserBehaviorEvent(input: UserBehaviorEventInput): Pr
 
 export async function listUserBehaviorEvents(
   userId: string,
-  filters?: { eventType?: UserBehaviorEventType; targetType?: UserBehaviorTargetType },
+  filters?: { eventType?: UserBehaviorEventType; subjectType?: UserBehaviorSubjectType },
 ): Promise<PersistedUserBehaviorEvent[]> {
   let collection = userBehaviorEventsTable.where('userId').equals(userId)
 
   if (filters?.eventType) {
     collection = collection.and((e) => e.eventType === filters.eventType)
   }
-  if (filters?.targetType) {
-    collection = collection.and((e) => e.targetType === filters.targetType)
+  if (filters?.subjectType) {
+    collection = collection.and((e) => e.subjectType === filters.subjectType)
   }
 
   const events = await collection.reverse().sortBy('createdAt')

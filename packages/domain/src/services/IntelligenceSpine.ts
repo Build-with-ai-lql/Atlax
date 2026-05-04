@@ -74,17 +74,16 @@ export type UserBehaviorEventType =
   | 'delete'
   | 'archive'
   | 'reopen'
+  | RecommendationEventType
 
-export type UserBehaviorTargetType = 'dockItem' | 'entry' | 'document' | 'mindNode' | 'tag' | 'project' | 'recommendation' | 'widget' | 'tab'
+export type UserBehaviorSubjectType = 'dockItem' | 'entry' | 'document' | 'mindNode' | 'tag' | 'project' | 'recommendation' | 'widget' | 'tab'
 
 export interface UserBehaviorEvent {
   id: string
   userId: string
   eventType: UserBehaviorEventType
-  targetType: UserBehaviorTargetType
-  targetId: string | null
-  fromContext: string | null
-  toContext: string | null
+  subjectType: UserBehaviorSubjectType
+  subjectId: string | null
   metadata: Record<string, unknown> | null
   createdAt: Date
 }
@@ -92,10 +91,8 @@ export interface UserBehaviorEvent {
 export interface UserBehaviorEventInput {
   userId: string
   eventType: UserBehaviorEventType
-  targetType: UserBehaviorTargetType
-  targetId?: string | null
-  fromContext?: string | null
-  toContext?: string | null
+  subjectType: UserBehaviorSubjectType
+  subjectId?: string | null
   metadata?: Record<string, unknown> | null
 }
 

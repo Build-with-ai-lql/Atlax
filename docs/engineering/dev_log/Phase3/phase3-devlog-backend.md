@@ -9,6 +9,87 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Phase 3 Round 22 (LC-008) -->
+<!-- ============================================ -->
+
+## Phase 3 Round 22 devlog -- LC-008 Local Event Spine 最小行为事件与推荐信号闭环
+
+**时间戳**: 2026-05-05
+
+**任务起止时间**: 05:45 - 06:05 CST
+
+**工时**: 20 分钟
+
+**Notion 卡片**: LC-008 Local Event Spine 最小行为事件与推荐信号闭环
+
+**任务目标**: 建立最小 `user_behavior_events` 行为信号闭环，让 recommendation shown 与 accepted / rejected / modified / ignored feedback 在保留 `recommendation_events` 主日志的同时，同步沉淀可按 userId / eventType 查询的用户行为事件。
+
+**改动文件及行数**:
+- `packages/domain/src/services/IntelligenceSpine.ts` | M（将 UserBehaviorEvent 收口为 userId / eventType / subjectType / subjectId / metadata / createdAt，并允许 recommendation lifecycle eventType 作为行为信号）
+- `apps/web/lib/db.ts` | M（新增 Dexie v18 userBehaviorEvents subjectType / subjectId 索引结构，并迁移 v17 target 字段）
+- `apps/web/lib/repository.ts` | M（recordUserBehaviorEvent / listUserBehaviorEvents 使用 subject 语义；shown 与 feedback transaction 同步写入 behavior event）
+- `apps/web/tests/intelligence-spine.test.ts` | M（更新最小 behavior event API 写入、userId 查询、eventType 查询、subjectType 查询、userId isolation 测试）
+- `apps/web/tests/capture-document-flow.test.ts` | M（补充 shown 与四类 feedback 写 behavior signal、metadata 上下文、LC-007 回滚保护测试）
+- `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M（本轮日志）
+
+**变更摘要**:
+- **最小行为事件 API**: `recordUserBehaviorEvent(input)` 写入 `user_behavior_events` 等价本地表，字段为 `userId`、`eventType`、`subjectType`、`subjectId`、`metadata`、`createdAt`；`listUserBehaviorEvents(userId, filters)` 支持按 userId 查询，并支持 `eventType` / `subjectType` 过滤。
+- **userId isolation**: `listUserBehaviorEvents` 仍从 `where('userId').equals(userId)` 起步，跨用户数据不会混入；测试覆盖 user A / user B 隔离。
+- **shown 行为信号**: `markRecommendationShown` 在同一个 Dexie transaction 中继续写 `recommendation_shown` 到 `recommendation_events`，并同步写一条 `user_behavior_events`，eventType 同为 `recommendation_shown`。
+- **feedback 行为信号**: `recordRecommendationFeedback` 在 accepted / rejected / modified / ignored 四类 feedback 中继续写 `recommendation_{feedbackType}` 到 `recommendation_events`，并同步写同名 behavior event；modified 保留 `feedbackPayload` 修改上下文。
+- **metadata 最小上下文**: behavior event metadata 保留 `recommendationId`、`recommendationType`、`subjectType`、`subjectId`、`candidateType`、`candidateId`、`source`，feedback 额外保留 `feedbackType` / `feedbackPayload`。
+- **日志关系**: `recommendation_events` 仍是 Recommendation 生命周期主日志；`user_behavior_events` 是用户行为信号日志，随 shown / feedback 同步沉淀，不替代、不改名、不改变原 recommendation_event 语义。
+- **范围控制**: 未做 UI；未做真实前端操作流；未做 preference_profiles / rhythm_profiles；未做 ranking / learning；未做 Top-K / tag / project / cluster recommendation；未引入 workspaceId 一次性补丁；未重构 LC-004 / LC-005 / LC-006 / LC-007 主链路。
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 | 是否解决 |
+|------|---------|---------|
+| 代码中已有早期 `userBehaviorEvents` 雏形，但字段是 target/from/to 语义，不符合 LC-008 subject 最小字段 | 将领域类型、DB record、repository API 和测试统一为 `subjectType` / `subjectId`；Dexie v18 将 v17 旧字段迁移到新字段 | ✅ |
+| shown / feedback 新增 behavior event 后可能破坏 LC-007 一致性保护 | 将 `userBehaviorEventsTable` 纳入 shown / feedback transaction；补充 behavior 写失败时 status 与 recommendation_event 回滚测试 | ✅ |
+| 需要保留 recommendation_event 主日志，不被行为日志替代 | shown / feedback 仍先写原 `recordRecommendationEvent`，behavior event 只作为额外同步信号写入 | ✅ |
+
+**自动验证**:
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm --dir apps/web test -- intelligence-spine.test.ts capture-document-flow.test.ts` | ✅ PASS（实际 Vitest 跑完整 web 17 files / 424 tests） |
+| `pnpm typecheck` | ✅ PASS |
+| `pnpm validate` | ✅ PASS |
+| `pnpm build:web` | ✅ PASS |
+
+**手工验证方式**:
+1. 直接调用 `recordUserBehaviorEvent({ userId, eventType, subjectType, subjectId, metadata })`，期望返回带 id / createdAt 的 behavior event。
+2. 调用 `listUserBehaviorEvents(USER_A)`，期望只返回 USER_A 的 behavior events。
+3. 调用 `listUserBehaviorEvents(USER_A, { eventType: 'recommendation_shown' })`，期望按 eventType 过滤。
+4. 调用 `markRecommendationShown` 后，期望 recommendation status 为 shown、`recommendation_events` 追加 `recommendation_shown`、`user_behavior_events` 追加同名行为信号。
+5. 分别调用 accepted / rejected / modified / ignored feedback 后，期望 recommendation status 与 `recommendation_events` 保持 LC-005 行为，并追加对应 behavior signal。
+6. modified feedback 携带 payload 时，期望 recommendation_event metadata 与 behavior_event metadata 都保留修改上下文。
+7. 注入 `userBehaviorEventsTable.add` 失败，期望 shown / feedback status 与 recommendation_event 回滚，LC-007 一致性不回退。
+
+**验收标准**:
+- 可以成功写入 user_behavior_event
+- 可以按 userId 查询 user_behavior_events
+- 可以按 eventType 查询 user_behavior_events
+- userId isolation 测试通过
+- recommendation_shown 成功后会写入对应用户行为事件
+- accepted / rejected / modified / ignored feedback 成功后会写入对应用户行为事件
+- user_behavior_event metadata 保留 recommendationId 与必要上下文
+- recommendation_events 仍正常写入，不被 user_behavior_events 替代
+- LC-004 / LC-005 / LC-006 / LC-007 回归测试通过
+- `pnpm validate` PASS
+- `pnpm build:web` PASS
+
+**已知风险或未做事项**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| behavior event eventType 复用 recommendation lifecycle eventType | 低 | 这是本卡的等价行为信号表达；recommendation_events 仍是主日志，behavior events 只用于后续偏好蒸馏输入 |
+| generated 不写 behavior event | 按设计 | 本卡验收聚焦曝光 shown 与用户反馈；LC-004 generated 主链路只做回归，不引入额外行为信号 |
+| 不做学习与推荐策略 | 按设计 | 本卡只落 Local Event Spine，不做 ranking / learning / preference profile |
+
+**是否可以进入下一轮**: 否（LC-008 本卡冻结，不进入下一张卡）
+
+---
+
+<!-- ============================================ -->
 <!-- 分割线：Phase 3 Round 21 (LC-007) -->
 <!-- ============================================ -->
 

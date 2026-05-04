@@ -425,53 +425,47 @@ describe('intelligence spine', () => {
       const evt = await recordUserBehaviorEvent({
         userId: USER_A,
         eventType: 'page_view',
-        targetType: 'dockItem',
-        targetId: '1',
-        fromContext: 'dock',
-        toContext: 'editor',
+        subjectType: 'dockItem',
+        subjectId: '1',
         metadata: { duration: 5000 },
       })
 
       expect(evt.id).toBeTruthy()
       expect(evt.userId).toBe(USER_A)
       expect(evt.eventType).toBe('page_view')
-      expect(evt.targetType).toBe('dockItem')
-      expect(evt.targetId).toBe('1')
-      expect(evt.fromContext).toBe('dock')
-      expect(evt.toContext).toBe('editor')
+      expect(evt.subjectType).toBe('dockItem')
+      expect(evt.subjectId).toBe('1')
       expect(evt.metadata).toEqual({ duration: 5000 })
       expect(evt.createdAt).toBeInstanceOf(Date)
     })
 
-    it('records event with null contexts', async () => {
+    it('records event with null subjectId', async () => {
       const evt = await recordUserBehaviorEvent({
         userId: USER_A,
         eventType: 'click',
-        targetType: 'tab',
+        subjectType: 'tab',
       })
 
-      expect(evt.fromContext).toBeNull()
-      expect(evt.toContext).toBeNull()
-      expect(evt.targetId).toBeNull()
+      expect(evt.subjectId).toBeNull()
     })
 
     it('records multiple behavior event types', async () => {
       await recordUserBehaviorEvent({
         userId: USER_A,
         eventType: 'page_view',
-        targetType: 'dockItem',
+        subjectType: 'dockItem',
       })
       await recordUserBehaviorEvent({
         userId: USER_A,
         eventType: 'click',
-        targetType: 'tag',
-        targetId: 'tag_frontend',
+        subjectType: 'tag',
+        subjectId: 'tag_frontend',
       })
       await recordUserBehaviorEvent({
         userId: USER_A,
         eventType: 'edit',
-        targetType: 'entry',
-        targetId: '100',
+        subjectType: 'entry',
+        subjectId: '100',
       })
 
       const events = await listUserBehaviorEvents(USER_A)
@@ -484,7 +478,7 @@ describe('intelligence spine', () => {
       await recordUserBehaviorEvent({
         userId: USER_A,
         eventType: 'page_view',
-        targetType: 'dockItem',
+        subjectType: 'dockItem',
       })
 
       const events = await listUserBehaviorEvents(USER_A)
@@ -496,12 +490,12 @@ describe('intelligence spine', () => {
       await recordUserBehaviorEvent({
         userId: USER_A,
         eventType: 'page_view',
-        targetType: 'dockItem',
+        subjectType: 'dockItem',
       })
       await recordUserBehaviorEvent({
         userId: USER_A,
         eventType: 'click',
-        targetType: 'tag',
+        subjectType: 'tag',
       })
 
       const views = await listUserBehaviorEvents(USER_A, { eventType: 'page_view' })
@@ -513,21 +507,21 @@ describe('intelligence spine', () => {
       expect(clicks[0].eventType).toBe('click')
     })
 
-    it('filters by targetType', async () => {
+    it('filters by subjectType', async () => {
       await recordUserBehaviorEvent({
         userId: USER_A,
         eventType: 'click',
-        targetType: 'dockItem',
+        subjectType: 'dockItem',
       })
       await recordUserBehaviorEvent({
         userId: USER_A,
         eventType: 'click',
-        targetType: 'tag',
+        subjectType: 'tag',
       })
 
-      const dockClicks = await listUserBehaviorEvents(USER_A, { targetType: 'dockItem' })
+      const dockClicks = await listUserBehaviorEvents(USER_A, { subjectType: 'dockItem' })
       expect(dockClicks).toHaveLength(1)
-      expect(dockClicks[0].targetType).toBe('dockItem')
+      expect(dockClicks[0].subjectType).toBe('dockItem')
     })
 
     it('returns empty array for user with no events', async () => {
@@ -613,12 +607,12 @@ describe('intelligence spine', () => {
       await recordUserBehaviorEvent({
         userId: USER_A,
         eventType: 'page_view',
-        targetType: 'dockItem',
+        subjectType: 'dockItem',
       })
       await recordUserBehaviorEvent({
         userId: USER_B,
         eventType: 'click',
-        targetType: 'tag',
+        subjectType: 'tag',
       })
 
       const eventsA = await listUserBehaviorEvents(USER_A)
@@ -646,13 +640,13 @@ describe('intelligence spine', () => {
       await recordUserBehaviorEvent({
         userId: USER_A,
         eventType: 'page_view',
-        targetType: 'dockItem',
+        subjectType: 'dockItem',
       })
       await recordUserBehaviorEvent({
         userId: USER_B,
         eventType: 'edit',
-        targetType: 'entry',
-        targetId: '100',
+        subjectType: 'entry',
+        subjectId: '100',
       })
 
       const recsA = await listRecommendations(USER_A)
