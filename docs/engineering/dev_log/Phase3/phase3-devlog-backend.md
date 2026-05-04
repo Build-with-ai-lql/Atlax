@@ -82,6 +82,92 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Local Core Phase 1 Round 3 (LC-003) -->
+<!-- ============================================ -->
+
+## Local Core Phase 1 Round 3 devlog -- LC-003 状态一致性与结构投影收口
+
+**时间戳**: 2026-05-05
+
+**任务起止时间**: 02:25 - 02:35 CST
+
+**Notion 卡片**: LC-003 Local Core 状态一致性与结构投影收口
+
+**任务目标**: 收紧 Capture → Document → MindNode 最小闭环完成后的状态规则，解决 LC-002 遗留的 Capture 保持 pending 状态的一致性问题。
+
+**改动文件及行数**:
+- `packages/domain/src/services/CaptureToDocumentFlow.ts` | M | +1 行（CaptureToDocumentResult.capture 新增 processedAt 字段）
+- `apps/web/lib/repository.ts` | M | +7 行（createCaptureToDocumentFlow 内部在 Document/MindNode 创建后更新 Capture 状态为 archived + 写入 processedAt，返回结果增加 processedAt）
+- `apps/web/tests/capture-document-flow.test.ts` | M | +60 行（修正旧断言 status=pending→archived，新增 processedAt 断言，新增 5 个 LC-003 状态一致性测试）
+- `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | +50 行（本轮日志）
+
+**变更摘要**:
+- **状态规则收紧**: createCaptureToDocumentFlow 现在在 Document + MindNode 创建成功后，立即将 Capture.status 更新为 `archived`，同时写入 `processedAt = new Date()`。不再允许已形成 Document 的 Capture 继续以 pending 状态停留在 Inbox 语义中
+- **领域类型扩展**: CaptureToDocumentResult.capture 新增 `processedAt: Date | null` 字段，让调用方可以感知 Capture 的处理时间
+- **MindNode.state 决策**: 保持 `drifting` 不变。当前产品在创作阶段无更强语义依据（如是否已 review/是否需合并），强行切 `anchored`/`archived` 可能引入过度承诺。`drifting` 代表"已投影但拓扑待后续确定"，与 Phase 3.1 Local Core 阶段语义一致
+- **不新增状态枚举**: 完全复用已有 `EntryStatus`（archived）和 `MindNodeState`（drifting），不引入 CaptureStatus / MindNodeState 新值
+- **测试覆盖**: 新增 5 个 LC-003 测试（web tests 总数 372 = 367 LC-002 + 5 LC-003），覆盖：
+  - capture status 在 DB 中为 archived
+  - capture processedAt 在 DB 中非空
+  - document.sourceDockItemId 仍稳定指向 capture
+  - mindNode.documentId 仍稳定指向 document
+  - 成功后 capture 不再出现在 pending 列表中
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 | 是否解决 |
+|------|---------|---------|
+| 无 | — | — |
+
+**自动验证**:
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm lint` | ✅ 0 errors（1 pre-existing warning 来自 GoldenTopNav.tsx，非本轮引入） |
+| `pnpm typecheck` | ✅ PASS（domain + web 均通过） |
+| domain tests | ✅ 312 tests / 20 files |
+| web tests | ✅ 372 tests / 17 files（含 LC-003 新增 5 tests） |
+| `pnpm build:web` | ✅ PASS（Next.js 14.2.28 构建成功，7 routes） |
+| `pnpm validate` | ✅ PASS（lint + typecheck + test + terminology 全部通过） |
+
+**手工验证方式**:
+1. 调用 `createCaptureToDocumentFlow({ userId: 'test', rawText: '测试文本' })`，返回 `capture.status === 'archived'`
+2. 返回结果中 `capture.processedAt` 为 Date 实例（非 null）
+3. 查询 `db.table('dockItems').get(captureId)`，`status === 'archived'`，`processedAt` 不为 null
+4. 查询 `db.table('entries').get(documentId)`，`sourceDockItemId === captureId`
+5. 查询 `db.table('mindNodes').get(mindNodeId)`，`documentId === documentId`
+6. 按 userId + `status === 'pending'` 查询 dockItems，不包含此 capture
+7. 空字符串 rawText → `'rawText must not be empty'`
+8. 空 userId → `'userId must not be empty'`
+9. 不同 userId A/B 的 capture/document/mindNode 三层均可交叉查询返回 null
+
+**验收标准**:
+- Capture 已形成 Document 后，Capture.status 为 archived（非 pending）
+- Capture.processedAt 已写入（非 null）
+- Document.sourceDockItemId 稳定指向 Capture
+- MindNode.documentId 稳定指向 Document
+- MindNode.state 保持 drifting（有意识决策，非遗漏）
+- userId 隔离仍然有效
+- 空内容拒绝仍然有效
+- pnpm validate 和 pnpm build:web 通过
+
+**已知风险或未做事项**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| Dexie/repository 层无完整事务保证 | 中 | 当前 createCaptureToDocumentFlow 涉及 3 张表（dockItems/entries/mindNodes），分步写入失败时可能出现部分写入。例如：Document 写入成功但 MindNode 写入失败时，Capture 不会回退。Dexie 支持 transaction() API，但当前 repository 架构未统一封装事务。后续如需强事务一致性，建议将三表写入封装到 `db.transaction('rw', [dockItemsTable, entriesTable, mindNodesTable], async () => {...})` 中 |
+| MindNode.state 为 drifting 的长期影响 | 低 | `drifting` 表示节点已存在但拓扑关系未确定。若后续 MindGraph 可视化需区分"有 document 但未连接"和"真正的孤岛"，可引入 `projected` 状态或通过 degreeScore 过滤。当前决策不阻塞后续轮次 |
+| createDockItem 的 processedAt 先置 null 再覆盖 | 极低 | createDockItem 内部 created_at 初始 processedAt = null，createCaptureToDocumentFlow 随后 update 为当前时间。两次原子写入无逻辑问题，但额外多一次 DB 写入 |
+| 前端 Inbox 列表依赖 pending status | 中 | 若前端 Inbox 视图按 `status === 'pending'` 过滤，LC-003 后已形成 Document 的 Capture 将不再显示在 Inbox 中——这是正确语义（已处理的不应停留在 Inbox）。但前端需确保不会因此出现空 Inbox 导致的 UI 异常 |
+
+**是否可以进入下一轮**: 是
+
+**下一轮风险评估**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| MindEdge 自动连接 | 低 | 当前 MindNode 仍为孤立节点，需后续轮次补齐 parent/child 或 semantic 边 |
+| 事务一致性 | 中 | 如上述，当前无事务封装，多表写入有部分失败风险 |
+
+---
+
+<!-- ============================================ -->
 <!-- 分割线：Local Core Phase 1 Round 1 (LC-001) -->
 <!-- ============================================ -->
 

@@ -1389,6 +1389,11 @@ export async function createCaptureToDocumentFlow(
     state: 'drifting',
   })
 
+  await dockItemsTable.update(captureId, {
+    status: 'archived',
+    processedAt: new Date(),
+  })
+
   const capture = await getPersistedDockItem(captureId)
   if (!capture) {
     throw new Error('Failed to retrieve created capture')
@@ -1404,6 +1409,7 @@ export async function createCaptureToDocumentFlow(
       id: capture.id,
       rawText: capture.rawText,
       status: capture.status,
+      processedAt: capture.processedAt,
       createdAt: capture.createdAt,
     },
     document: {

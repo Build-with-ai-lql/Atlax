@@ -12,6 +12,7 @@ export interface CaptureToDocumentResult {
     id: number
     rawText: string
     status: string
+    processedAt: Date | null
     createdAt: Date
   }
   document: {

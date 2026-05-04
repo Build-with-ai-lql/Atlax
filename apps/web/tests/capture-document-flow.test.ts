@@ -33,7 +33,8 @@ describe('capture → document → mindNode flow', () => {
 
       expect(result.capture.id).toBeGreaterThan(0)
       expect(result.capture.rawText).toBe('今天学习了 TypeScript 泛型\n很有收获')
-      expect(result.capture.status).toBe('pending')
+      expect(result.capture.status).toBe('archived')
+      expect(result.capture.processedAt).toBeInstanceOf(Date)
       expect(result.capture.createdAt).toBeInstanceOf(Date)
 
       expect(result.document.id).toBeGreaterThan(0)
@@ -228,6 +229,64 @@ describe('capture → document → mindNode flow', () => {
       const node = await getMindNode(USER_A, result.mindNode.id)
       expect(unwrap(node).documentId).toBe(result.document.id)
       expect(unwrap(node).label).toBe(result.document.title)
+    })
+  })
+
+  describe('capture status consistency (LC-003)', () => {
+    it('capture status is archived after successful flow', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: '状态一致性测试',
+      })
+
+      const dockItem = await db.table('dockItems').get(result.capture.id)
+      expect(unwrap(dockItem).status).toBe('archived')
+    })
+
+    it('capture processedAt is set after successful flow', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'processedAt 验证',
+      })
+
+      const dockItem = await db.table('dockItems').get(result.capture.id)
+      expect(unwrap(dockItem).processedAt).toBeInstanceOf(Date)
+      expect(unwrap(dockItem).processedAt).not.toBeNull()
+    })
+
+    it('document.sourceDockItemId still points to capture', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: '验证 sourceDockItemId 稳定性',
+      })
+
+      const entry = await db.table('entries').get(result.document.id)
+      expect(unwrap(entry).sourceDockItemId).toBe(result.capture.id)
+    })
+
+    it('mindNode.documentId still points to document', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: '验证 documentId 稳定性',
+      })
+
+      const node = await db.table('mindNodes').get(result.mindNode.id)
+      expect(unwrap(node).documentId).toBe(result.document.id)
+    })
+
+    it('capture no longer appears in pending list after flow', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: '不应出现在 pending 列表',
+      })
+
+      const pendingItems = await db.table('dockItems')
+        .where('userId').equals(USER_A)
+        .and((i: { status: string }) => i.status === 'pending')
+        .toArray()
+
+      const found = pendingItems.find((i: { id: number }) => i.id === result.capture.id)
+      expect(found).toBeUndefined()
     })
   })
 })
