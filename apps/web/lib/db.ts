@@ -1,7 +1,29 @@
 import Dexie, { type EntityTable } from 'dexie'
 
 import type { EntryStatus, SourceType, SuggestionItem } from '@atlax/domain'
-import type { ChatMessage, ChatSessionStatus } from '@atlax/domain/ports'
+import type {
+  ChatMessage,
+  ChatSessionStatus,
+} from '@atlax/domain/ports'
+import type {
+  CollectionType,
+  EntryRelationType,
+  RelationDirection,
+  RelationSource,
+  TagRelationSource,
+  KnowledgeEventType,
+  KnowledgeEventTargetType,
+  TemporalActivityType,
+  TemporalActivityEntityType,
+} from '@atlax/domain'
+import type {
+  MindNodeType,
+  MindNodeState,
+  MindEdgeType,
+} from '@atlax/domain'
+import type {
+  TabType,
+} from '@atlax/domain'
 
 export interface DockItemRecord {
   id?: number
@@ -23,6 +45,9 @@ export interface DockItemRecord {
 export interface PersistedDockItem extends DockItemRecord {
   id: number
 }
+
+export type CaptureRecord = DockItemRecord
+export type PersistedCapture = PersistedDockItem
 
 export interface TagRecord {
   id?: string
@@ -53,6 +78,9 @@ export interface PersistedEntry extends EntryRecord {
   id: number
 }
 
+export type DocumentRecord = EntryRecord
+export type PersistedDocument = PersistedEntry
+
 export interface ChatSessionRecord {
   id?: number
   userId: string
@@ -69,6 +97,209 @@ export interface ChatSessionRecord {
 }
 
 export interface PersistedChatSession extends ChatSessionRecord {
+  id: number
+}
+
+export type WidgetType = 'calendar'
+
+export interface WidgetRecord {
+  id?: number
+  userId: string
+  widgetType: WidgetType
+  active: boolean
+  config: Record<string, unknown>
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface PersistedWidget extends WidgetRecord {
+  id: number
+}
+
+export interface CollectionRecord {
+  id?: string
+  userId: string
+  name: string
+  description: string | null
+  icon: string | null
+  color: string | null
+  parentId: string | null
+  sortOrder: number
+  collectionType: CollectionType
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface PersistedCollection extends CollectionRecord {
+  id: string
+}
+
+export interface EntryTagRelationRecord {
+  id?: string
+  userId: string
+  entryId: number
+  tagId: string
+  source: TagRelationSource
+  confidence: number | null
+  createdAt: Date
+}
+
+export interface PersistedEntryTagRelation extends EntryTagRelationRecord {
+  id: string
+}
+
+export interface EntryRelationRecord {
+  id?: string
+  userId: string
+  sourceEntryId: number
+  targetEntryId: number
+  relationType: EntryRelationType
+  direction: RelationDirection
+  source: RelationSource
+  confidence: number | null
+  reason: string | null
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface PersistedEntryRelation extends EntryRelationRecord {
+  id: string
+}
+
+export interface KnowledgeEventRecord {
+  id?: string
+  userId: string
+  eventType: KnowledgeEventType
+  targetType: KnowledgeEventTargetType
+  targetId: string | null
+  metadata: Record<string, unknown> | null
+  createdAt: Date
+}
+
+export interface PersistedKnowledgeEvent extends KnowledgeEventRecord {
+  id: string
+}
+
+export interface TemporalActivityRecord {
+  id?: string
+  userId: string
+  type: TemporalActivityType
+  entityType: TemporalActivityEntityType
+  entityId: string
+  occurredAt: Date
+  dayKey: string
+  weekKey: string
+  monthKey: string
+  title: string
+  summary: string | null
+  tagIds: string[]
+  projectIds: string[]
+  metadata: Record<string, unknown> | null
+}
+
+export interface PersistedTemporalActivity extends TemporalActivityRecord {
+  id: string
+}
+
+export interface MindNodeRecord {
+  id?: string
+  userId: string
+  nodeType: MindNodeType
+  label: string
+  state: MindNodeState
+  documentId: number | null
+  degreeScore: number
+  recentActivityScore: number
+  documentWeightScore: number
+  userPinScore: number
+  clusterCenterScore: number
+  positionX: number | null
+  positionY: number | null
+  metadata: Record<string, unknown> | null
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface PersistedMindNode extends MindNodeRecord {
+  id: string
+}
+
+export interface MindEdgeRecord {
+  id?: string
+  userId: string
+  sourceNodeId: string
+  targetNodeId: string
+  edgeType: MindEdgeType
+  strength: number
+  source: 'user' | 'system' | 'import'
+  confidence: number | null
+  reason: string | null
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface PersistedMindEdge extends MindEdgeRecord {
+  id: string
+}
+
+export interface WorkspaceSessionRecord {
+  id?: string
+  userId: string
+  activeTabId: string | null
+  lastActivityAt: Date
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface PersistedWorkspaceSession extends WorkspaceSessionRecord {
+  id: string
+}
+
+export interface WorkspaceOpenTabRecord {
+  id?: string
+  userId: string
+  sessionId: string
+  tabType: TabType
+  title: string
+  path: string
+  documentId: number | null
+  isPinned: boolean
+  isActive: boolean
+  sortOrder: number
+  openedAt: Date
+  updatedAt: Date
+}
+
+export interface PersistedWorkspaceOpenTab extends WorkspaceOpenTabRecord {
+  id: string
+}
+
+export interface RecentDocumentRecord {
+  id?: string
+  userId: string
+  documentId: number
+  title: string
+  openCount: number
+  lastOpenedAt: Date
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface PersistedRecentDocument extends RecentDocumentRecord {
+  id: string
+}
+
+export interface EditorDraftRecord {
+  id?: number
+  userId: string
+  draftKey: number
+  title: string
+  content: string
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface PersistedEditorDraft extends EditorDraftRecord {
   id: number
 }
 
@@ -108,6 +339,18 @@ const db = new Dexie('AtlaxDB') as Dexie & {
   tags: EntityTable<TagRecord, 'id'>
   entries: EntityTable<EntryRecord, 'id'>
   chatSessions: EntityTable<ChatSessionRecord, 'id'>
+  widgets: EntityTable<WidgetRecord, 'id'>
+  collections: EntityTable<CollectionRecord, 'id'>
+  entryTagRelations: EntityTable<EntryTagRelationRecord, 'id'>
+  entryRelations: EntityTable<EntryRelationRecord, 'id'>
+  knowledgeEvents: EntityTable<KnowledgeEventRecord, 'id'>
+  temporalActivities: EntityTable<TemporalActivityRecord, 'id'>
+  mindNodes: EntityTable<MindNodeRecord, 'id'>
+  mindEdges: EntityTable<MindEdgeRecord, 'id'>
+  workspaceSessions: EntityTable<WorkspaceSessionRecord, 'id'>
+  workspaceOpenTabs: EntityTable<WorkspaceOpenTabRecord, 'id'>
+  recentDocuments: EntityTable<RecentDocumentRecord, 'id'>
+  editorDrafts: EntityTable<EditorDraftRecord, 'id'>
 }
 
 db.version(1).stores({
@@ -203,8 +446,95 @@ db.version(11).stores({
   })
 })
 
+db.version(12).stores({
+  dockItems: '++id, userId, rawText, topic, sourceType, status, createdAt',
+  tags: 'id, userId, name, [userId+name]',
+  entries: '++id, userId, sourceDockItemId, type, archivedAt',
+  chatSessions: '++id, userId, status, pinned, dockItemId, createdAt, updatedAt',
+  widgets: '++id, userId, widgetType, active, createdAt, updatedAt',
+})
+
+db.version(13).stores({
+  dockItems: '++id, userId, rawText, topic, sourceType, status, createdAt',
+  tags: 'id, userId, name, [userId+name]',
+  entries: '++id, userId, sourceDockItemId, type, archivedAt',
+  chatSessions: '++id, userId, status, pinned, dockItemId, createdAt, updatedAt',
+  widgets: '++id, userId, widgetType, active, createdAt, updatedAt',
+  collections: 'id, userId, collectionType, parentId, createdAt, updatedAt',
+  entryTagRelations: 'id, userId, entryId, tagId, [userId+entryId], [userId+tagId], createdAt',
+  entryRelations: 'id, userId, sourceEntryId, targetEntryId, relationType, [userId+sourceEntryId], [userId+targetEntryId], createdAt',
+  knowledgeEvents: 'id, userId, eventType, targetType, createdAt',
+  temporalActivities: 'id, userId, type, occurredAt, dayKey, weekKey, monthKey, [userId+dayKey], [userId+monthKey], createdAt',
+})
+
+db.version(14).stores({
+  dockItems: '++id, userId, rawText, topic, sourceType, status, createdAt',
+  tags: 'id, userId, name, [userId+name]',
+  entries: '++id, userId, sourceDockItemId, type, archivedAt',
+  chatSessions: '++id, userId, status, pinned, dockItemId, createdAt, updatedAt',
+  widgets: '++id, userId, widgetType, active, createdAt, updatedAt',
+  collections: 'id, userId, collectionType, parentId, createdAt, updatedAt',
+  entryTagRelations: 'id, userId, entryId, tagId, [userId+entryId], [userId+tagId], createdAt',
+  entryRelations: 'id, userId, sourceEntryId, targetEntryId, relationType, [userId+sourceEntryId], [userId+targetEntryId], createdAt',
+  knowledgeEvents: 'id, userId, eventType, targetType, createdAt',
+  temporalActivities: 'id, userId, type, occurredAt, dayKey, weekKey, monthKey, [userId+dayKey], [userId+monthKey], createdAt',
+  mindNodes: 'id, userId, nodeType, state, label, [userId+nodeType], [userId+state], createdAt, updatedAt',
+  mindEdges: 'id, userId, sourceNodeId, targetNodeId, edgeType, [userId+sourceNodeId], [userId+targetNodeId], [userId+edgeType], createdAt, updatedAt',
+})
+
+db.version(15).stores({
+  dockItems: '++id, userId, rawText, topic, sourceType, status, createdAt',
+  tags: 'id, userId, name, [userId+name]',
+  entries: '++id, userId, sourceDockItemId, type, archivedAt',
+  chatSessions: '++id, userId, status, pinned, dockItemId, createdAt, updatedAt',
+  widgets: '++id, userId, widgetType, active, createdAt, updatedAt',
+  collections: 'id, userId, collectionType, parentId, createdAt, updatedAt',
+  entryTagRelations: 'id, userId, entryId, tagId, [userId+entryId], [userId+tagId], createdAt',
+  entryRelations: 'id, userId, sourceEntryId, targetEntryId, relationType, [userId+sourceEntryId], [userId+targetEntryId], createdAt',
+  knowledgeEvents: 'id, userId, eventType, targetType, createdAt',
+  temporalActivities: 'id, userId, type, occurredAt, dayKey, weekKey, monthKey, [userId+dayKey], [userId+monthKey], createdAt',
+  mindNodes: 'id, userId, nodeType, state, label, [userId+nodeType], [userId+state], createdAt, updatedAt',
+  mindEdges: 'id, userId, sourceNodeId, targetNodeId, edgeType, [userId+sourceNodeId], [userId+targetNodeId], [userId+edgeType], createdAt, updatedAt',
+  workspaceSessions: 'id, userId, createdAt, updatedAt',
+  workspaceOpenTabs: 'id, userId, sessionId, tabType, documentId, isPinned, isActive, sortOrder, [userId+sessionId], [userId+tabType], [userId+documentId], openedAt, updatedAt',
+  recentDocuments: 'id, userId, documentId, [userId+documentId], lastOpenedAt, openCount, createdAt, updatedAt',
+})
+
+db.version(16).stores({
+  dockItems: '++id, userId, rawText, topic, sourceType, status, createdAt',
+  tags: 'id, userId, name, [userId+name]',
+  entries: '++id, userId, sourceDockItemId, type, archivedAt',
+  chatSessions: '++id, userId, status, pinned, dockItemId, createdAt, updatedAt',
+  widgets: '++id, userId, widgetType, active, createdAt, updatedAt',
+  collections: 'id, userId, collectionType, parentId, createdAt, updatedAt',
+  entryTagRelations: 'id, userId, entryId, tagId, [userId+entryId], [userId+tagId], createdAt',
+  entryRelations: 'id, userId, sourceEntryId, targetEntryId, relationType, [userId+sourceEntryId], [userId+targetEntryId], createdAt',
+  knowledgeEvents: 'id, userId, eventType, targetType, createdAt',
+  temporalActivities: 'id, userId, type, occurredAt, dayKey, weekKey, monthKey, [userId+dayKey], [userId+monthKey], createdAt',
+  mindNodes: 'id, userId, nodeType, state, label, [userId+nodeType], [userId+state], createdAt, updatedAt',
+  mindEdges: 'id, userId, sourceNodeId, targetNodeId, edgeType, [userId+sourceNodeId], [userId+targetNodeId], [userId+edgeType], createdAt, updatedAt',
+  workspaceSessions: 'id, userId, createdAt, updatedAt',
+  workspaceOpenTabs: 'id, userId, sessionId, tabType, documentId, isPinned, isActive, sortOrder, [userId+sessionId], [userId+tabType], [userId+documentId], openedAt, updatedAt',
+  recentDocuments: 'id, userId, documentId, [userId+documentId], lastOpenedAt, openCount, createdAt, updatedAt',
+  editorDrafts: '++id, userId, draftKey, [userId+draftKey], updatedAt',
+})
+
 export { db }
 export const dockItemsTable = db.table('dockItems')
+export const capturesTable = dockItemsTable
 export const tagsTable = db.table('tags')
 export const entriesTable = db.table('entries')
+export const documentsTable = entriesTable
 export const chatSessionsTable = db.table('chatSessions')
+export const widgetsTable = db.table('widgets')
+export const collectionsTable = db.table('collections')
+export const entryTagRelationsTable = db.table('entryTagRelations')
+export const entryRelationsTable = db.table('entryRelations')
+export const knowledgeEventsTable = db.table('knowledgeEvents')
+export const temporalActivitiesTable = db.table('temporalActivities')
+export const mindNodesTable = db.table('mindNodes')
+export const mindEdgesTable = db.table('mindEdges')
+export const workspaceSessionsTable = db.table('workspaceSessions')
+export const workspaceOpenTabsTable = db.table('workspaceOpenTabs')
+export const recentDocumentsTable = db.table('recentDocuments')
+export const editorDraftsTable = db.table('editorDrafts')

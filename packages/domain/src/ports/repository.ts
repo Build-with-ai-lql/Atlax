@@ -1,9 +1,14 @@
 import type { EntryStatus, SourceType, SuggestionItem } from '../types'
 import type { Entry as DomainEntry, Tag as DomainTag } from '../types'
+import type { Document, DocumentType, DocumentUpdateInput } from '../document/types'
+import type { MindNode, MindEdge, MindNodeType } from '../mind/types'
 
 export type DockItemId = number
 export type UserId = string
 export type ChatSessionId = number
+export type DocumentId = number
+export type MindNodeId = string
+export type MindEdgeId = string
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
@@ -68,6 +73,7 @@ export interface DockItem {
 }
 
 export type PersistedEntry = DomainEntry & { userId: string }
+export type PersistedDocument = Document & { userId: string }
 export type PersistedTag = DomainTag & { userId: string }
 
 export interface WorkspaceStats {
@@ -117,6 +123,16 @@ export interface EntryRepository {
   update(userId: string, entryId: number, updates: EntryUpdate): Promise<DomainEntry | null>
 }
 
+export interface DocumentRepository {
+  findById(userId: string, id: number): Promise<Document | null>
+  findByCaptureId(userId: string, captureId: number): Promise<Document | null>
+  listByUser(userId: string): Promise<Document[]>
+  listByType(userId: string, type: DocumentType): Promise<Document[]>
+  listByTag(userId: string, tag: string): Promise<Document[]>
+  listByProject(userId: string, project: string): Promise<Document[]>
+  update(userId: string, documentId: number, updates: DocumentUpdateInput): Promise<Document | null>
+}
+
 export interface TagRepository {
   findById(userId: string, id: string): Promise<DomainTag | null>
   findByName(userId: string, name: string): Promise<DomainTag | null>
@@ -137,6 +153,23 @@ export interface ChatSessionRepository {
   update(userId: string, id: ChatSessionId, updates: ChatSessionUpdateInput): Promise<ChatSession | null>
   delete(userId: string, id: ChatSessionId): Promise<boolean>
   addMessage(userId: string, id: ChatSessionId, message: ChatMessage): Promise<ChatSession | null>
+}
+
+export interface MindNodeRepository {
+  findById(userId: string, id: MindNodeId): Promise<MindNode | null>
+  listByUser(userId: string): Promise<MindNode[]>
+  listByType(userId: string, nodeType: MindNodeType): Promise<MindNode[]>
+  upsert(node: MindNode): Promise<MindNode>
+  delete(userId: string, id: MindNodeId): Promise<boolean>
+}
+
+export interface MindEdgeRepository {
+  findById(userId: string, id: MindEdgeId): Promise<MindEdge | null>
+  listByUser(userId: string): Promise<MindEdge[]>
+  listBySourceNode(userId: string, sourceNodeId: MindNodeId): Promise<MindEdge[]>
+  listByTargetNode(userId: string, targetNodeId: MindNodeId): Promise<MindEdge[]>
+  upsert(edge: MindEdge): Promise<MindEdge>
+  delete(userId: string, id: MindEdgeId): Promise<boolean>
 }
 
 export function isValidChatSessionInput(input: ChatSessionCreateInput): boolean {

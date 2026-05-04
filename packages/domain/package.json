@@ -5,7 +5,11 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./ports": "./src/ports/index.ts"
+    "./ports": "./src/ports/index.ts",
+    "./document": "./src/document/index.ts",
+    "./capture": "./src/capture/index.ts",
+    "./mind": "./src/mind/index.ts",
+    "./workspace": "./src/workspace/index.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
