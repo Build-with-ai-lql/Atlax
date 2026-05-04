@@ -131,6 +131,24 @@ export interface RecommendationFeedbackResult {
   }
 }
 
+export interface RecommendationShownInput {
+  recommendationId: string
+  userId: string
+}
+
+export interface RecommendationShownResult {
+  recommendation: {
+    id: string
+    status: RecommendationStatus
+    updatedAt: Date
+  }
+  shownEvent: {
+    id: string
+    eventType: RecommendationEventType
+    recommendationId: string
+  }
+}
+
 export function feedbackTypeToStatus(feedbackType: RecommendationFeedbackType): RecommendationStatus {
   return feedbackType
 }

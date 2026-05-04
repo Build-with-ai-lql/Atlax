@@ -50,6 +50,8 @@ import {
   type RecommendationCreateInput,
   type RecommendationFeedbackInput,
   type RecommendationFeedbackResult,
+  type RecommendationShownInput,
+  type RecommendationShownResult,
   type RecommendationStatus,
   type RecommendationEventType,
   type RecommendationEventInput,
@@ -2021,6 +2023,51 @@ export async function recordRecommendationFeedback(
       updatedAt: persisted.updatedAt,
     },
     feedbackEvent: {
+      id: recEvent.id,
+      eventType: recEvent.eventType,
+      recommendationId: recEvent.recommendationId,
+    },
+  }
+}
+
+export async function markRecommendationShown(
+  input: RecommendationShownInput,
+): Promise<RecommendationShownResult> {
+  const rec = await recommendationsTable.get(input.recommendationId)
+  if (!rec) {
+    throw new Error(`Recommendation not found: ${input.recommendationId}`)
+  }
+  if (rec.userId !== input.userId) {
+    throw new Error(`User ${input.userId} does not own recommendation ${input.recommendationId}`)
+  }
+
+  await recommendationsTable.update(input.recommendationId, {
+    status: 'shown',
+    updatedAt: new Date(),
+  })
+
+  const recEvent = await recordRecommendationEvent({
+    recommendationId: input.recommendationId,
+    userId: input.userId,
+    eventType: 'recommendation_shown',
+    metadata: {
+      source: 'recommendation_shown',
+    },
+  })
+
+  const updated = await recommendationsTable.get(input.recommendationId)
+  const persisted = toPersistedRecommendation(updated)
+  if (!persisted) {
+    throw new Error('Failed to retrieve updated recommendation')
+  }
+
+  return {
+    recommendation: {
+      id: persisted.id,
+      status: persisted.status,
+      updatedAt: persisted.updatedAt,
+    },
+    shownEvent: {
       id: recEvent.id,
       eventType: recEvent.eventType,
       recommendationId: recEvent.recommendationId,

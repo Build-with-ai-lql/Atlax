@@ -9,6 +9,112 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Phase 3 Round 20 (LC-006) -->
+<!-- ============================================ -->
+
+## Phase 3 Round 20 devlog -- LC-006 Recommendation Shown Event 最小曝光记录
+
+**时间戳**: 2026-05-05
+
+**任务起止时间**: 04:55 - 05:10 CST
+
+**工时**: 15 分钟
+
+**Notion 卡片**: LC-006 Recommendation Shown Event 最小曝光记录
+
+**任务目标**: 在 LC-004 已生成 recommendation + recommendation_generated event、LC-005 已实现 accepted / rejected / modified / ignored feedback 的基础上，补齐最小 shown 曝光事件闭环，让推荐生命周期形成 generated → shown → accepted / rejected / modified / ignored 的完整链路。
+
+**改动文件及行数**:
+- `packages/domain/src/services/IntelligenceSpine.ts` | M | +18 行（新增 RecommendationShownInput、RecommendationShownResult 领域类型）
+- `apps/web/lib/repository.ts` | M | +45 行（新增 markRecommendationShown() API + 导入新类型）
+- `apps/web/tests/capture-document-flow.test.ts` | M | +210 行（新增 11 个 LC-006 测试 + import markRecommendationShown）
+- `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | +85 行（本轮日志）
+
+**变更摘要**:
+- **新增领域类型**:
+  - `RecommendationShownInput`：{ recommendationId: string, userId: string }，对标 feedback 的输入结构
+  - `RecommendationShownResult`：{ recommendation: { id, status, updatedAt }, shownEvent: { id, eventType, recommendationId } }，对标 RecommendationFeedbackResult 的返回结构
+- **新增 Repository API**: `markRecommendationShown(input)` —— 核心高层 API，流程：
+  1. 按 recommendationId 查询 recommendation，不存在抛 `Recommendation not found: {id}`
+  2. 校验 userId 归属，不匹配抛 `User {userId} does not own recommendation {id}`
+  3. 更新 recommendation.status 为 'shown'
+  4. 记录 recommendation_event（eventType = 'recommendation_shown'，metadata = { source: 'recommendation_shown' }）
+  5. 返回 RecommendationShownResult（含更新后的 recommendation 状态 + shownEvent ID）
+- **userId 隔离**: markRecommendationShown 内部校验 userId 匹配，不匹配抛 Error（与 recordRecommendationFeedback 保持一致）；底层 recordRecommendationEvent 仍按 userId 写入
+- **错误处理策略**: 不存在 recommendationId 和 userId 不匹配均抛 Error（非返回 null），确保调用方不能静默忽略失败
+- **不改旧链路**: createCaptureToDocumentFlow 和 recordRecommendationFeedback 完全不变，LC-006 仅在已有链路外新增 shown 能力
+- **生命周期完整性**: 完整链路 `generated → shown → accepted/rejected/modified/ignored` 已验证通过
+- **测试覆盖**: 新增 11 个 LC-006 测试（web tests 总数 406 = 395 LC-002/003/004/005 + 11 LC-006），覆盖：
+  - markRecommendationShown basic：status 更新为 shown + event 追加（events 从 1 条变为 2 条）
+  - shown event 保留 userId
+  - userId isolation：user B 标记 user A 的 recommendation → 抛 Error + 原 status 不变（仍为 generated）
+  - 不存在 recommendationId → 抛 Error
+  - shown → accepted：shown 后仍可 feedback accepted（events 共 3 条）
+  - shown → rejected
+  - shown → modified
+  - shown → ignored
+  - LC-004 回归：createCaptureToDocumentFlow 仍生成 landing recommendation + recommendation_generated event
+  - LC-005 回归：recordRecommendationFeedback 仍正常工作
+  - 空内容拒绝：不生成 recommendation / recommendation_event
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 | 是否解决 |
+|------|---------|---------|
+| `recordRecommendationEvent` 函数声明在替换 markRecommendationShown 时被意外删除（仅剩函数体） | 恢复 `export async function recordRecommendationEvent(input: RecommendationEventInput): Promise<PersistedRecommendationEvent> {` 函数声明行 | ✅ |
+
+**自动验证**:
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm lint` | ✅ 0 errors（1 pre-existing warning 来自 GoldenTopNav.tsx，非本轮引入） |
+| `pnpm typecheck` | ✅ PASS（domain + web 均通过） |
+| domain tests | ✅ 312 tests / 20 files |
+| web tests | ✅ 406 tests / 17 files（含 LC-006 新增 11 tests） |
+| `pnpm build:web` | ✅ PASS |
+| `pnpm validate` | ✅ PASS（lint + typecheck + test + terminology 全部通过） |
+
+**手工验证方式**:
+1. 调用 `createCaptureToDocumentFlow({ userId: USER_A, rawText: 'test' })` 获取 recommendationId
+2. 调用 `markRecommendationShown({ recommendationId, userId: USER_A })`，返回 `shown.recommendation.status === 'shown'`，`shown.shownEvent.eventType === 'recommendation_shown'`
+3. `listRecommendationEvents(USER_A, { recommendationId })` 返回 2 条事件（generated + shown），shown event 的 `recommendationId` 正确，`userId === USER_A`
+4. 用户 B 调用 `markRecommendationShown({ recommendationId: recA.id, userId: USER_B })` → 抛 Error，`listRecommendations(USER_A)` 中 recA.status 仍为 generated
+5. 调用 `markRecommendationShown({ recommendationId: 'non_existent_id', userId: USER_A })` → 抛 Error
+6. shown 后调用 `recordRecommendationFeedback({ feedbackType: 'accepted' })` → status 变为 accepted，events 共 3 条（generated + shown + accepted）
+7. shown 后调用 `recordRecommendationFeedback({ feedbackType: 'rejected' })` → status 变为 rejected
+8. shown 后调用 `recordRecommendationFeedback({ feedbackType: 'modified' })` → status 变为 modified
+9. shown 后调用 `recordRecommendationFeedback({ feedbackType: 'ignored' })` → status 变为 ignored
+10. 调用 `createCaptureToDocumentFlow({ rawText: 'LC-004 regression' })` 仍生成 recommendation + event
+11. 调用 `recordRecommendationFeedback({ ... })` 独立工作，不受 shown 影响
+12. 空内容 `createCaptureToDocumentFlow({ rawText: '' })` → 抛 Error，无 recommendation / event 脏数据
+
+**验收标准**:
+- markRecommendationShown 将 recommendation.status 更新为 shown
+- shown 操作新增一条 recommendation_event（eventType = recommendation_shown）
+- recommendation_event.recommendationId 指向被展示的 recommendation
+- shown event 保留 userId
+- userId 隔离测试通过，不能跨用户标记 recommendation
+- 不存在 recommendationId → 抛 Error
+- 已 shown 的 recommendation 后续仍可被 LC-005 feedback 更新为 accepted / rejected / modified / ignored
+- LC-004 的 recommendation_generated 流程不回归
+- 空内容 rejection 仍然不会生成 recommendation / recommendation_event
+- pnpm validate PASS
+- pnpm build:web PASS
+
+**已知风险或未做事项**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| shown 无自动触发策略 | 按设计 | 当前 markRecommendationShown 为显式调用 API，不实现自动触发策略（如"进入视图即 shown"）。前端需在推荐列表渲染时显式调用此 API |
+| shown event metadata 仅含 source 字段 | 极低 | 与 generated event（含 documentId/mindNodeId 等上下文）不同，shown event 的元数据最简化。未来如需记录"展示位置/停留时长"可扩展 metadata |
+| shown 后状态被 feedback 覆盖 | 按设计 | 这是预期行为：shown → accepted/rejected/modified/ignored 表示用户从看到推荐的 exposure 到做出反馈的完整生命周期。不引入 shown→shown 幂等约束（重复 shown 是合法的，如刷新页面后重新曝光） |
+
+**是否可以进入下一轮**: 是（本卡为 LC-006 终点卡，做完后 Local Core / Intelligence Spine 的 Recommendation 事件闭环完整）
+
+**下一轮风险评估**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| 前端 UI 接入 | 低 | 后端 Recommendation shown/feedback API 全部就绪（generated → shown → accepted/rejected/modified/ignored），前端需接入展示和交互逻辑 |
+
+---
+<!-- ============================================ -->
 <!-- 分割线：Phase 3 Round 19 (LC-005) -->
 <!-- ============================================ -->
 
