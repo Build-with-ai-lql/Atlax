@@ -24,6 +24,14 @@ import type {
 import type {
   TabType,
 } from '@atlax/domain'
+import type {
+  RecommendationStatus,
+  RecommendationSubjectType,
+  RecommendationCandidateType,
+  RecommendationEventType,
+  UserBehaviorEventType,
+  UserBehaviorTargetType,
+} from '@atlax/domain'
 
 export interface DockItemRecord {
   id?: number
@@ -303,6 +311,54 @@ export interface PersistedEditorDraft extends EditorDraftRecord {
   id: number
 }
 
+export interface RecommendationRecord {
+  id?: string
+  userId: string
+  subjectType: RecommendationSubjectType
+  subjectId: number
+  recommendationType: string
+  candidateType: RecommendationCandidateType
+  candidateId: string
+  confidenceScore: number
+  reasonJson: string | null
+  status: RecommendationStatus
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface PersistedRecommendation extends RecommendationRecord {
+  id: string
+}
+
+export interface RecommendationEventRecord {
+  id?: string
+  recommendationId: string
+  userId: string
+  eventType: RecommendationEventType
+  metadata: Record<string, unknown> | null
+  createdAt: Date
+}
+
+export interface PersistedRecommendationEvent extends RecommendationEventRecord {
+  id: string
+}
+
+export interface UserBehaviorEventRecord {
+  id?: string
+  userId: string
+  eventType: UserBehaviorEventType
+  targetType: UserBehaviorTargetType
+  targetId: string | null
+  fromContext: string | null
+  toContext: string | null
+  metadata: Record<string, unknown> | null
+  createdAt: Date
+}
+
+export interface PersistedUserBehaviorEvent extends UserBehaviorEventRecord {
+  id: string
+}
+
 const FALLBACK_USER_ID = '_legacy'
 
 export function runV8Upgrade(tx: {
@@ -351,6 +407,9 @@ const db = new Dexie('AtlaxDB') as Dexie & {
   workspaceOpenTabs: EntityTable<WorkspaceOpenTabRecord, 'id'>
   recentDocuments: EntityTable<RecentDocumentRecord, 'id'>
   editorDrafts: EntityTable<EditorDraftRecord, 'id'>
+  recommendations: EntityTable<RecommendationRecord, 'id'>
+  recommendationEvents: EntityTable<RecommendationEventRecord, 'id'>
+  userBehaviorEvents: EntityTable<UserBehaviorEventRecord, 'id'>
 }
 
 db.version(1).stores({
@@ -519,6 +578,28 @@ db.version(16).stores({
   editorDrafts: '++id, userId, draftKey, [userId+draftKey], updatedAt',
 })
 
+db.version(17).stores({
+  dockItems: '++id, userId, rawText, topic, sourceType, status, createdAt',
+  tags: 'id, userId, name, [userId+name]',
+  entries: '++id, userId, sourceDockItemId, type, archivedAt',
+  chatSessions: '++id, userId, status, pinned, dockItemId, createdAt, updatedAt',
+  widgets: '++id, userId, widgetType, active, createdAt, updatedAt',
+  collections: 'id, userId, collectionType, parentId, createdAt, updatedAt',
+  entryTagRelations: 'id, userId, entryId, tagId, [userId+entryId], [userId+tagId], createdAt',
+  entryRelations: 'id, userId, sourceEntryId, targetEntryId, relationType, [userId+sourceEntryId], [userId+targetEntryId], createdAt',
+  knowledgeEvents: 'id, userId, eventType, targetType, createdAt',
+  temporalActivities: 'id, userId, type, occurredAt, dayKey, weekKey, monthKey, [userId+dayKey], [userId+monthKey], createdAt',
+  mindNodes: 'id, userId, nodeType, state, label, [userId+nodeType], [userId+state], createdAt, updatedAt',
+  mindEdges: 'id, userId, sourceNodeId, targetNodeId, edgeType, [userId+sourceNodeId], [userId+targetNodeId], [userId+edgeType], createdAt, updatedAt',
+  workspaceSessions: 'id, userId, createdAt, updatedAt',
+  workspaceOpenTabs: 'id, userId, sessionId, tabType, documentId, isPinned, isActive, sortOrder, [userId+sessionId], [userId+tabType], [userId+documentId], openedAt, updatedAt',
+  recentDocuments: 'id, userId, documentId, [userId+documentId], lastOpenedAt, openCount, createdAt, updatedAt',
+  editorDrafts: '++id, userId, draftKey, [userId+draftKey], updatedAt',
+  recommendations: 'id, userId, subjectType, status, [userId+status], [userId+subjectType], createdAt, updatedAt',
+  recommendationEvents: 'id, userId, recommendationId, eventType, [userId+recommendationId], [userId+eventType], createdAt',
+  userBehaviorEvents: 'id, userId, eventType, targetType, [userId+eventType], [userId+targetType], createdAt',
+})
+
 export { db }
 export const dockItemsTable = db.table('dockItems')
 export const capturesTable = dockItemsTable
@@ -538,3 +619,6 @@ export const workspaceSessionsTable = db.table('workspaceSessions')
 export const workspaceOpenTabsTable = db.table('workspaceOpenTabs')
 export const recentDocumentsTable = db.table('recentDocuments')
 export const editorDraftsTable = db.table('editorDrafts')
+export const recommendationsTable = db.table('recommendations')
+export const recommendationEventsTable = db.table('recommendationEvents')
+export const userBehaviorEventsTable = db.table('userBehaviorEvents')

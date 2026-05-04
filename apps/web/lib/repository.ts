@@ -18,8 +18,11 @@ import {
   makeMindEdgeId,
   makeMindNodeId,
   makeRecentDocumentId,
+  makeRecommendationId,
+  makeRecommendationEventId,
   makeTemporalActivityId,
   makeTagId,
+  makeUserBehaviorEventId,
   makeWorkspaceSessionId,
   makeWorkspaceTabId,
   normalizeTagName,
@@ -40,6 +43,13 @@ import {
   type MindEdgeType,
   type MindNodeType,
   type MindNodeState,
+  type RecommendationCreateInput,
+  type RecommendationStatus,
+  type RecommendationEventType,
+  type RecommendationEventInput,
+  type UserBehaviorEventType,
+  type UserBehaviorTargetType,
+  type UserBehaviorEventInput,
   type RelationDirection,
   type RelationSource,
   type SourceType,
@@ -70,8 +80,11 @@ import {
   mindNodesTable,
   mindEdgesTable,
   recentDocumentsTable,
+  recommendationEventsTable,
+  recommendationsTable,
   tagsTable,
   temporalActivitiesTable,
+  userBehaviorEventsTable,
   widgetsTable,
   workspaceOpenTabsTable,
   workspaceSessionsTable,
@@ -86,7 +99,10 @@ import {
   type MindNodeRecord,
   type MindEdgeRecord,
   type RecentDocumentRecord,
+  type RecommendationRecord,
+  type RecommendationEventRecord,
   type TemporalActivityRecord,
+  type UserBehaviorEventRecord,
   type WorkspaceOpenTabRecord,
   type WorkspaceSessionRecord,
   type EditorDraftRecord,
@@ -101,8 +117,11 @@ import {
   type PersistedMindNode,
   type PersistedMindEdge,
   type PersistedRecentDocument,
+  type PersistedRecommendation,
+  type PersistedRecommendationEvent,
   type PersistedTag,
   type PersistedTemporalActivity,
+  type PersistedUserBehaviorEvent,
   type PersistedWidget,
   type PersistedWorkspaceOpenTab,
   type PersistedWorkspaceSession,
@@ -126,6 +145,9 @@ export type { PersistedMindEdge as StoredMindEdge }
 export type { PersistedWorkspaceSession as StoredWorkspaceSession }
 export type { PersistedWorkspaceOpenTab as StoredWorkspaceOpenTab }
 export type { PersistedRecentDocument as StoredRecentDocument }
+export type { PersistedRecommendation as StoredRecommendation }
+export type { PersistedRecommendationEvent as StoredRecommendationEvent }
+export type { PersistedUserBehaviorEvent as StoredUserBehaviorEvent }
 export type { ChainProvenance }
 export type { CalendarDayResult }
 export type { CalendarMonthOverview }
@@ -1740,4 +1762,150 @@ export async function deleteEditorDraft(userId: string, draftKey: number): Promi
   if (!draft || draft.userId !== userId) return false
   await editorDraftsTable.delete(draft.id)
   return true
+}
+
+function toPersistedRecommendation(rec: RecommendationRecord | undefined): PersistedRecommendation | null {
+  if (!rec || !rec.id) return null
+  return {
+    ...rec,
+    id: rec.id,
+    reasonJson: rec.reasonJson ?? null,
+  }
+}
+
+function toPersistedRecommendationEvent(evt: RecommendationEventRecord | undefined): PersistedRecommendationEvent | null {
+  if (!evt || !evt.id) return null
+  return { ...evt, id: evt.id, metadata: evt.metadata ?? null }
+}
+
+function toPersistedUserBehaviorEvent(evt: UserBehaviorEventRecord | undefined): PersistedUserBehaviorEvent | null {
+  if (!evt || !evt.id) return null
+  return {
+    ...evt,
+    id: evt.id,
+    targetId: evt.targetId ?? null,
+    fromContext: evt.fromContext ?? null,
+    toContext: evt.toContext ?? null,
+    metadata: evt.metadata ?? null,
+  }
+}
+
+export async function createRecommendation(input: RecommendationCreateInput): Promise<PersistedRecommendation> {
+  const now = new Date()
+  const id = makeRecommendationId(input.userId, now.getTime())
+  const record: RecommendationRecord = {
+    id,
+    userId: input.userId,
+    subjectType: input.subjectType,
+    subjectId: typeof input.subjectId === 'string' ? parseInt(input.subjectId, 10) || 0 : input.subjectId,
+    recommendationType: input.recommendationType,
+    candidateType: input.candidateType,
+    candidateId: input.candidateId,
+    confidenceScore: input.confidenceScore,
+    reasonJson: input.reasonJson ?? null,
+    status: input.status ?? 'generated',
+    createdAt: now,
+    updatedAt: now,
+  }
+  await recommendationsTable.add(record)
+  return toPersistedRecommendation(await recommendationsTable.get(id)) as PersistedRecommendation
+}
+
+export async function listRecommendations(
+  userId: string,
+  filters?: { status?: RecommendationStatus; subjectType?: string },
+): Promise<PersistedRecommendation[]> {
+  let collection = recommendationsTable.where('userId').equals(userId)
+
+  if (filters?.status) {
+    collection = collection.and((r) => r.status === filters.status)
+  }
+  if (filters?.subjectType) {
+    collection = collection.and((r) => r.subjectType === filters.subjectType)
+  }
+
+  const recs = await collection.reverse().sortBy('createdAt')
+  return recs.flatMap((r) => { const p = toPersistedRecommendation(r); return p ? [p] : [] })
+}
+
+export async function updateRecommendationStatus(
+  recommendationId: string,
+  status: RecommendationStatus,
+): Promise<PersistedRecommendation | null> {
+  const rec = await recommendationsTable.get(recommendationId)
+  if (!rec) return null
+
+  await recommendationsTable.update(recommendationId, {
+    status,
+    updatedAt: new Date(),
+  })
+
+  return toPersistedRecommendation(await recommendationsTable.get(recommendationId))
+}
+
+export async function recordRecommendationEvent(input: RecommendationEventInput): Promise<PersistedRecommendationEvent> {
+  const now = new Date()
+  const id = makeRecommendationEventId(input.userId, input.recommendationId, now.getTime())
+  const record: RecommendationEventRecord = {
+    id,
+    recommendationId: input.recommendationId,
+    userId: input.userId,
+    eventType: input.eventType,
+    metadata: input.metadata ?? null,
+    createdAt: now,
+  }
+  await recommendationEventsTable.add(record)
+  return toPersistedRecommendationEvent(await recommendationEventsTable.get(id)) as PersistedRecommendationEvent
+}
+
+export async function listRecommendationEvents(
+  userId: string,
+  filters?: { recommendationId?: string; eventType?: RecommendationEventType },
+): Promise<PersistedRecommendationEvent[]> {
+  let collection = recommendationEventsTable.where('userId').equals(userId)
+
+  if (filters?.recommendationId) {
+    collection = collection.and((e) => e.recommendationId === filters.recommendationId)
+  }
+  if (filters?.eventType) {
+    collection = collection.and((e) => e.eventType === filters.eventType)
+  }
+
+  const events = await collection.reverse().sortBy('createdAt')
+  return events.flatMap((e) => { const p = toPersistedRecommendationEvent(e); return p ? [p] : [] })
+}
+
+export async function recordUserBehaviorEvent(input: UserBehaviorEventInput): Promise<PersistedUserBehaviorEvent> {
+  const now = new Date()
+  const id = makeUserBehaviorEventId(input.userId, input.eventType, now.getTime())
+  const record: UserBehaviorEventRecord = {
+    id,
+    userId: input.userId,
+    eventType: input.eventType,
+    targetType: input.targetType,
+    targetId: input.targetId ?? null,
+    fromContext: input.fromContext ?? null,
+    toContext: input.toContext ?? null,
+    metadata: input.metadata ?? null,
+    createdAt: now,
+  }
+  await userBehaviorEventsTable.add(record)
+  return toPersistedUserBehaviorEvent(await userBehaviorEventsTable.get(id)) as PersistedUserBehaviorEvent
+}
+
+export async function listUserBehaviorEvents(
+  userId: string,
+  filters?: { eventType?: UserBehaviorEventType; targetType?: UserBehaviorTargetType },
+): Promise<PersistedUserBehaviorEvent[]> {
+  let collection = userBehaviorEventsTable.where('userId').equals(userId)
+
+  if (filters?.eventType) {
+    collection = collection.and((e) => e.eventType === filters.eventType)
+  }
+  if (filters?.targetType) {
+    collection = collection.and((e) => e.targetType === filters.targetType)
+  }
+
+  const events = await collection.reverse().sortBy('createdAt')
+  return events.flatMap((e) => { const p = toPersistedUserBehaviorEvent(e); return p ? [p] : [] })
 }
