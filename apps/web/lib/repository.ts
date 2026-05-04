@@ -57,6 +57,8 @@ import {
   type RecommendationShownInput,
   type RecommendationShownResult,
   type RecommendationStatus,
+  type RecommendationSubjectType,
+  type RecommendationCandidateType,
   type RecommendationEventType,
   type RecommendationEventInput,
   type RecommendationSignalSummary,
@@ -169,6 +171,77 @@ export type { ChainProvenance }
 export type { CalendarDayResult }
 export type { CalendarMonthOverview }
 export type { StructureProjection }
+
+export type RecommendationDockQueueSortBy = 'rank' | 'confidenceScore' | 'createdAt'
+export type RecommendationDockQueueSortDirection = 'asc' | 'desc'
+
+export interface RecommendationDockQueueFilters {
+  status?: RecommendationStatus
+  candidateType?: RecommendationCandidateType
+  subjectType?: RecommendationSubjectType
+  recommendationType?: string
+}
+
+export interface RecommendationDockQueueQuery extends RecommendationDockQueueFilters {
+  sortBy?: RecommendationDockQueueSortBy
+  sortDirection?: RecommendationDockQueueSortDirection
+  limit?: number
+  cursor?: string | null
+}
+
+export interface RecommendationReasonSummary {
+  source: string | null
+  reason: string
+  context: {
+    subjectType: RecommendationSubjectType
+    subjectId: number | string
+  }
+  candidate: {
+    candidateType: RecommendationCandidateType
+    candidateId: string
+  }
+}
+
+export interface RecommendationScoreSummary {
+  confidenceScore: number
+  score: number
+  rank: number | null
+  scoreReason: string | null
+  scoreBreakdown: Record<string, unknown> | null
+}
+
+export interface RecommendationDockQueueEvidenceSummary {
+  evidenceCount: number
+  sources: string[]
+  evidenceTypes: string[]
+  matchedValues: string[]
+  strongestContribution: number | null
+}
+
+export interface RecommendationDockQueueItem {
+  id: string
+  userId: string
+  status: RecommendationStatus
+  recommendationType: string
+  subjectType: RecommendationSubjectType
+  subjectId: number | string
+  candidateType: RecommendationCandidateType
+  candidateId: string
+  confidenceScore: number
+  createdAt: Date
+  updatedAt: Date
+  reasonSummary: RecommendationReasonSummary
+  scoreSummary: RecommendationScoreSummary
+  evidenceSummary: RecommendationDockQueueEvidenceSummary
+  isShown: boolean
+  hasFeedback: boolean
+}
+
+export interface RecommendationDockQueueResult {
+  items: RecommendationDockQueueItem[]
+  nextCursor: string | null
+  total: number
+}
 
 function toPersistedDockItem(item: DockItemRecord | undefined): PersistedDockItem | null {
   if (!item || typeof item.id !== 'number') {
@@ -1966,6 +2039,349 @@ export async function listRecommendations(
 
   const recs = await collection.reverse().sortBy('createdAt')
   return recs.flatMap((r) => { const p = toPersistedRecommendation(r); return p ? [p] : [] })
+}
+
+export async function listRecommendationDockQueue(
+  userId: string,
+  query: RecommendationDockQueueQuery = {},
+): Promise<RecommendationDockQueueResult> {
+  validateRecommendationDockQueueQuery(query)
+
+  const limit = query.limit ?? 20
+  const offset = parseRecommendationDockQueueCursor(query.cursor)
+  const sortBy = query.sortBy ?? 'createdAt'
+  const sortDirection = query.sortDirection ?? defaultRecommendationDockQueueSortDirection(sortBy)
+  const [recommendations, events] = await Promise.all([
+    recommendationsTable.where('userId').equals(userId).toArray(),
+    recommendationEventsTable.where('userId').equals(userId).toArray(),
+  ])
+  const eventsByRecommendation = groupRecommendationEventsByRecommendationId(events)
+  const filteredRecommendations = recommendations.filter((recommendation) =>
+    matchesRecommendationDockQueueFilters(recommendation, query),
+  )
+  const items = filteredRecommendations
+    .flatMap((recommendation) => {
+      const persisted = toPersistedRecommendation(recommendation)
+      return persisted ? [buildRecommendationDockQueueItem(persisted, eventsByRecommendation.get(persisted.id) ?? [])] : []
+    })
+    .sort((left, right) => compareRecommendationDockQueueItems(left, right, sortBy, sortDirection))
+  const pagedItems = items.slice(offset, offset + limit)
+  const nextOffset = offset + pagedItems.length
+
+  return {
+    items: pagedItems,
+    nextCursor: nextOffset < items.length ? String(nextOffset) : null,
+    total: items.length,
+  }
+}
+
+export async function markRecommendationDockQueueItemShown(input: RecommendationShownInput): Promise<RecommendationShownResult> {
+  return markRecommendationShown(input)
+}
+
+export async function recordRecommendationDockQueueItemFeedback(
+  input: RecommendationFeedbackInput,
+): Promise<RecommendationFeedbackResult> {
+  return recordRecommendationFeedback(input)
+}
+
+const RECOMMENDATION_DOCK_QUEUE_STATUSES: RecommendationStatus[] = [
+  'generated',
+  'shown',
+  'accepted',
+  'rejected',
+  'modified',
+  'ignored',
+]
+const RECOMMENDATION_DOCK_QUEUE_CANDIDATE_TYPES: RecommendationCandidateType[] = [
+  'tag',
+  'project',
+  'mindNode',
+  'entry',
+  'document',
+]
+const RECOMMENDATION_DOCK_QUEUE_SUBJECT_TYPES: RecommendationSubjectType[] = [
+  'dockItem',
+  'entry',
+  'document',
+  'mindNode',
+]
+const RECOMMENDATION_DOCK_QUEUE_SORT_FIELDS: RecommendationDockQueueSortBy[] = [
+  'rank',
+  'confidenceScore',
+  'createdAt',
+]
+const RECOMMENDATION_DOCK_QUEUE_SORT_DIRECTIONS: RecommendationDockQueueSortDirection[] = ['asc', 'desc']
+const RECOMMENDATION_FEEDBACK_EVENT_TYPES: RecommendationEventType[] = [
+  'recommendation_accepted',
+  'recommendation_rejected',
+  'recommendation_modified',
+  'recommendation_ignored',
+]
+
+function validateRecommendationDockQueueQuery(query: RecommendationDockQueueQuery): void {
+  if (query.status && !RECOMMENDATION_DOCK_QUEUE_STATUSES.includes(query.status)) {
+    throw new Error(`Invalid recommendation dock queue status filter: ${String(query.status)}`)
+  }
+  if (query.candidateType && !RECOMMENDATION_DOCK_QUEUE_CANDIDATE_TYPES.includes(query.candidateType)) {
+    throw new Error(`Invalid recommendation dock queue candidateType filter: ${String(query.candidateType)}`)
+  }
+  if (query.subjectType && !RECOMMENDATION_DOCK_QUEUE_SUBJECT_TYPES.includes(query.subjectType)) {
+    throw new Error(`Invalid recommendation dock queue subjectType filter: ${String(query.subjectType)}`)
+  }
+  if (query.recommendationType !== undefined && typeof query.recommendationType !== 'string') {
+    throw new Error(`Invalid recommendation dock queue recommendationType filter: ${String(query.recommendationType)}`)
+  }
+  if (query.sortBy && !RECOMMENDATION_DOCK_QUEUE_SORT_FIELDS.includes(query.sortBy)) {
+    throw new Error(`Invalid recommendation dock queue sortBy: ${String(query.sortBy)}`)
+  }
+  if (query.sortDirection && !RECOMMENDATION_DOCK_QUEUE_SORT_DIRECTIONS.includes(query.sortDirection)) {
+    throw new Error(`Invalid recommendation dock queue sortDirection: ${String(query.sortDirection)}`)
+  }
+  if (query.limit !== undefined && (!Number.isInteger(query.limit) || query.limit <= 0)) {
+    throw new Error(`Invalid recommendation dock queue limit: ${String(query.limit)}`)
+  }
+  parseRecommendationDockQueueCursor(query.cursor)
+}
+
+function parseRecommendationDockQueueCursor(cursor?: string | null): number {
+  if (cursor === undefined || cursor === null || cursor === '') return 0
+  const offset = Number.parseInt(cursor, 10)
+  if (!Number.isInteger(offset) || offset < 0 || String(offset) !== cursor) {
+    throw new Error(`Invalid recommendation dock queue cursor: ${cursor}`)
+  }
+  return offset
+}
+
+function defaultRecommendationDockQueueSortDirection(sortBy: RecommendationDockQueueSortBy): RecommendationDockQueueSortDirection {
+  return sortBy === 'rank' ? 'asc' : 'desc'
+}
+
+function matchesRecommendationDockQueueFilters(
+  recommendation: RecommendationRecord,
+  filters: RecommendationDockQueueFilters,
+): boolean {
+  return (!filters.status || recommendation.status === filters.status) &&
+    (!filters.candidateType || recommendation.candidateType === filters.candidateType) &&
+    (!filters.subjectType || recommendation.subjectType === filters.subjectType) &&
+    (!filters.recommendationType || recommendation.recommendationType === filters.recommendationType)
+}
+
+function groupRecommendationEventsByRecommendationId(
+  events: RecommendationEventRecord[],
+): Map<string, PersistedRecommendationEvent[]> {
+  const grouped = new Map<string, PersistedRecommendationEvent[]>()
+
+  for (const event of events) {
+    const persisted = toPersistedRecommendationEvent(event)
+    if (!persisted) continue
+    const current = grouped.get(persisted.recommendationId) ?? []
+    current.push(persisted)
+    grouped.set(persisted.recommendationId, current)
+  }
+
+  Array.from(grouped.values()).forEach((groupedEvents: PersistedRecommendationEvent[]) => {
+    groupedEvents.sort((left, right) =>
+      left.createdAt.getTime() - right.createdAt.getTime() ||
+      left.id.localeCompare(right.id),
+    )
+  })
+
+  return grouped
+}
+
+function buildRecommendationDockQueueItem(
+  recommendation: PersistedRecommendation,
+  events: PersistedRecommendationEvent[],
+): RecommendationDockQueueItem {
+  const reason = parseRecommendationReasonJson(recommendation.reasonJson)
+  const generatedEvent = events.find((event) => event.eventType === 'recommendation_generated')
+  const generatedMetadata = generatedEvent?.metadata ?? null
+  const feedbackEvent = events.find((event) => RECOMMENDATION_FEEDBACK_EVENT_TYPES.includes(event.eventType))
+  const isShown = recommendation.status === 'shown' || events.some((event) => event.eventType === 'recommendation_shown')
+  const hasFeedback = isRecommendationFeedbackStatus(recommendation.status) || Boolean(feedbackEvent)
+  const scoreSummary = buildRecommendationDockQueueScoreSummary(recommendation, reason, generatedMetadata)
+
+  return {
+    id: recommendation.id,
+    userId: recommendation.userId,
+    status: recommendation.status,
+    recommendationType: recommendation.recommendationType,
+    subjectType: recommendation.subjectType,
+    subjectId: recommendation.subjectId,
+    candidateType: recommendation.candidateType,
+    candidateId: recommendation.candidateId,
+    confidenceScore: recommendation.confidenceScore,
+    createdAt: recommendation.createdAt,
+    updatedAt: recommendation.updatedAt,
+    reasonSummary: buildRecommendationDockQueueReasonSummary(recommendation, reason, generatedMetadata),
+    scoreSummary,
+    evidenceSummary: buildRecommendationDockQueueEvidenceSummary(reason, generatedMetadata),
+    isShown,
+    hasFeedback,
+  }
+}
+
+function buildRecommendationDockQueueReasonSummary(
+  recommendation: PersistedRecommendation,
+  reason: Record<string, unknown> | null,
+  generatedMetadata: Record<string, unknown> | null,
+): RecommendationReasonSummary {
+  return {
+    source: readString(reason?.source) ?? readString(generatedMetadata?.source),
+    reason: readString(reason?.scoreReason) ??
+      readString(reason?.reason) ??
+      `${recommendation.recommendationType} recommendation for ${recommendation.candidateType}`,
+    context: {
+      subjectType: recommendation.subjectType,
+      subjectId: recommendation.subjectId,
+    },
+    candidate: {
+      candidateType: recommendation.candidateType,
+      candidateId: recommendation.candidateId,
+    },
+  }
+}
+
+function buildRecommendationDockQueueScoreSummary(
+  recommendation: PersistedRecommendation,
+  reason: Record<string, unknown> | null,
+  generatedMetadata: Record<string, unknown> | null,
+): RecommendationScoreSummary {
+  const rank = readNumber(reason?.rank) ?? readNumber(generatedMetadata?.rank)
+  const scoreBreakdown = readRecord(reason?.scoreBreakdown)
+
+  return {
+    confidenceScore: recommendation.confidenceScore,
+    score: readNumber(reason?.score) ?? readNumber(generatedMetadata?.score) ?? recommendation.confidenceScore,
+    rank: rank === null ? null : rank,
+    scoreReason: readString(reason?.scoreReason),
+    scoreBreakdown,
+  }
+}
+
+function buildRecommendationDockQueueEvidenceSummary(
+  reason: Record<string, unknown> | null,
+  generatedMetadata: Record<string, unknown> | null,
+): RecommendationDockQueueEvidenceSummary {
+  const explicitSummary = readEvidenceSummary(reason?.evidenceSummary) ??
+    readEvidenceSummary(generatedMetadata?.evidenceSummary)
+  if (explicitSummary) return explicitSummary
+
+  const recall = readRecord(reason?.recall)
+  const evidence = readUnknownArray(recall?.evidence) ?? readUnknownArray(reason?.evidence) ?? []
+  const sources = uniqueSortedStrings(evidence.map((item) => readString(readRecord(item)?.source)).filter(isString))
+  const evidenceTypes = uniqueSortedStrings(
+    evidence.map((item) => readString(readRecord(item)?.evidenceType)).filter(isString),
+  )
+  const matchedValues = uniqueSortedStrings(
+    evidence.map((item) => readString(readRecord(item)?.matchedValue)).filter(isString),
+  ).slice(0, 5)
+  const strongestContribution = Math.max(
+    0,
+    ...evidence.map((item) => readNumber(readRecord(item)?.confidenceContribution) ?? 0),
+  )
+
+  return {
+    evidenceCount: evidence.length,
+    sources,
+    evidenceTypes,
+    matchedValues,
+    strongestContribution: evidence.length > 0 ? strongestContribution : null,
+  }
+}
+
+function readEvidenceSummary(value: unknown): RecommendationDockQueueEvidenceSummary | null {
+  const summary = readRecord(value)
+  if (!summary) return null
+
+  return {
+    evidenceCount: readNumber(summary.evidenceCount) ?? 0,
+    sources: readStringArray(summary.sources),
+    evidenceTypes: readStringArray(summary.evidenceTypes),
+    matchedValues: readStringArray(summary.matchedValues),
+    strongestContribution: readNumber(summary.strongestContribution),
+  }
+}
+
+function parseRecommendationReasonJson(reasonJson: string | null): Record<string, unknown> | null {
+  if (!reasonJson) return null
+  try {
+    const parsed = JSON.parse(reasonJson)
+    return readRecord(parsed)
+  } catch {
+    return null
+  }
+}
+
+function isRecommendationFeedbackStatus(status: RecommendationStatus): boolean {
+  return status === 'accepted' || status === 'rejected' || status === 'modified' || status === 'ignored'
+}
+
+function compareRecommendationDockQueueItems(
+  left: RecommendationDockQueueItem,
+  right: RecommendationDockQueueItem,
+  sortBy: RecommendationDockQueueSortBy,
+  sortDirection: RecommendationDockQueueSortDirection,
+): number {
+  const multiplier = sortDirection === 'asc' ? 1 : -1
+  const compared = compareRecommendationDockQueuePrimarySort(left, right, sortBy) * multiplier
+  if (compared !== 0) return compared
+
+  return compareNullableNumbers(left.scoreSummary.rank, right.scoreSummary.rank, true) ||
+    right.confidenceScore - left.confidenceScore ||
+    right.createdAt.getTime() - left.createdAt.getTime() ||
+    left.id.localeCompare(right.id)
+}
+
+function compareRecommendationDockQueuePrimarySort(
+  left: RecommendationDockQueueItem,
+  right: RecommendationDockQueueItem,
+  sortBy: RecommendationDockQueueSortBy,
+): number {
+  if (sortBy === 'rank') {
+    return compareNullableNumbers(left.scoreSummary.rank, right.scoreSummary.rank, true)
+  }
+  if (sortBy === 'confidenceScore') {
+    return left.confidenceScore - right.confidenceScore
+  }
+  return left.createdAt.getTime() - right.createdAt.getTime()
+}
+
+function compareNullableNumbers(left: number | null, right: number | null, missingLast: boolean): number {
+  if (left === null && right === null) return 0
+  if (left === null) return missingLast ? 1 : -1
+  if (right === null) return missingLast ? -1 : 1
+  return left - right
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function readUnknownArray(value: unknown): unknown[] | null {
+  return Array.isArray(value) ? value : null
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string'
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? uniqueSortedStrings(value.filter(isString)) : []
+}
+
+function uniqueSortedStrings(values: string[]): string[] {
+  return Array.from(new Set(values)).sort()
 }
 
 export async function generateBasicCandidates(input: {

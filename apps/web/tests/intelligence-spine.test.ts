@@ -10,9 +10,12 @@ import {
   createStoredTag,
   generateRecommendationsForContext,
   generateBasicCandidates,
+  listRecommendationDockQueue,
   listRecommendations,
+  markRecommendationDockQueueItemShown,
   markRecommendationShown,
   updateRecommendationStatus,
+  recordRecommendationDockQueueItemFeedback,
   recordRecommendationFeedback,
   recordRecommendationEvent,
   listRecommendationEvents,
@@ -635,6 +638,320 @@ describe('intelligence spine', () => {
       expect(result.recommendations).toEqual([])
       expect(result.recommendationEvents).toEqual([])
       expect(result.scoredCandidates).toEqual([])
+    })
+  })
+
+  describe('recommendation dock queue pack', () => {
+    it('lists current user generated recommendations with UI summaries', async () => {
+      const captureId = await createDockItem(USER_A, 'Dock Local Core Project Atlas')
+      const tag = unwrap(await createStoredTag(USER_A, 'Local Core'))
+      await createCollection({
+        userId: USER_A,
+        name: 'Project Atlas',
+        collectionType: 'project',
+      })
+      await generateRecommendationsForContext({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: captureId,
+        topK: 2,
+      })
+
+      const dockQueue = await listRecommendationDockQueue(USER_A, { status: 'generated', sortBy: 'rank' })
+
+      expect(dockQueue.items).toHaveLength(2)
+      expect(dockQueue.total).toBe(2)
+      expect(dockQueue.nextCursor).toBeNull()
+      expect(dockQueue.items.every((item) => item.userId === USER_A)).toBe(true)
+      expect(dockQueue.items.map((item) => item.status)).toEqual(['generated', 'generated'])
+
+      const tagItem = unwrap(dockQueue.items.find((item) => item.candidateId === tag.id) ?? null)
+      expect(tagItem.reasonSummary.source).toBe('recommendation_engine_mvp')
+      expect(tagItem.reasonSummary.reason).toContain('recall')
+      expect(tagItem.scoreSummary.score).toBe(tagItem.confidenceScore)
+      expect(tagItem.scoreSummary.rank).toBeGreaterThan(0)
+      expect(tagItem.scoreSummary.scoreBreakdown?.finalScore).toBe(tagItem.confidenceScore)
+      expect(tagItem.evidenceSummary.evidenceCount).toBeGreaterThan(0)
+      expect(tagItem.isShown).toBe(false)
+      expect(tagItem.hasFeedback).toBe(false)
+    })
+
+    it.each(['generated', 'shown', 'accepted', 'rejected', 'modified', 'ignored'] as const)(
+      'filters dockQueue by %s status',
+      async (status) => {
+        await createRecommendation({
+          userId: USER_A,
+          subjectType: 'dockItem',
+          subjectId: status,
+          recommendationType: 'tag_suggestion',
+          candidateType: 'tag',
+          candidateId: `tag_${status}`,
+          confidenceScore: 0.7,
+          status,
+        })
+
+        const dockQueue = await listRecommendationDockQueue(USER_A, { status })
+
+        expect(dockQueue.items).toHaveLength(1)
+        expect(dockQueue.items[0].status).toBe(status)
+        expect(dockQueue.items[0].candidateId).toBe(`tag_${status}`)
+      },
+    )
+
+    it('filters dockQueue by candidateType, subjectType, and recommendationType', async () => {
+      await createRecommendation({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: 1,
+        recommendationType: 'tag_suggestion',
+        candidateType: 'tag',
+        candidateId: 'tag_a',
+        confidenceScore: 0.8,
+      })
+      await createRecommendation({
+        userId: USER_A,
+        subjectType: 'document',
+        subjectId: 2,
+        recommendationType: 'node_suggestion',
+        candidateType: 'mindNode',
+        candidateId: 'node_a',
+        confidenceScore: 0.7,
+      })
+
+      const candidateFiltered = await listRecommendationDockQueue(USER_A, { candidateType: 'mindNode' })
+      const subjectFiltered = await listRecommendationDockQueue(USER_A, { subjectType: 'document' })
+      const typeFiltered = await listRecommendationDockQueue(USER_A, { recommendationType: 'tag_suggestion' })
+
+      expect(candidateFiltered.items).toHaveLength(1)
+      expect(candidateFiltered.items[0].candidateId).toBe('node_a')
+      expect(subjectFiltered.items).toHaveLength(1)
+      expect(subjectFiltered.items[0].subjectType).toBe('document')
+      expect(typeFiltered.items).toHaveLength(1)
+      expect(typeFiltered.items[0].recommendationType).toBe('tag_suggestion')
+    })
+
+    it('sorts dockQueue by rank, confidenceScore, and createdAt with stable secondary order', async () => {
+      const first = await createRecommendation({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: 1,
+        recommendationType: 'tag_suggestion',
+        candidateType: 'tag',
+        candidateId: 'tag_rank_2',
+        confidenceScore: 0.9,
+        reasonJson: JSON.stringify({ rank: 2, score: 0.9, evidenceSummary: { evidenceCount: 0 } }),
+      })
+      const second = await createRecommendation({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: 2,
+        recommendationType: 'tag_suggestion',
+        candidateType: 'tag',
+        candidateId: 'tag_rank_1',
+        confidenceScore: 0.9,
+        reasonJson: JSON.stringify({ rank: 1, score: 0.9, evidenceSummary: { evidenceCount: 0 } }),
+      })
+      const third = await createRecommendation({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: 3,
+        recommendationType: 'tag_suggestion',
+        candidateType: 'tag',
+        candidateId: 'tag_score_high',
+        confidenceScore: 0.95,
+        reasonJson: JSON.stringify({ rank: 3, score: 0.95, evidenceSummary: { evidenceCount: 0 } }),
+      })
+      await db.table('recommendations').update(first.id, { createdAt: new Date('2026-01-01T00:00:00.000Z') })
+      await db.table('recommendations').update(second.id, { createdAt: new Date('2026-01-02T00:00:00.000Z') })
+      await db.table('recommendations').update(third.id, { createdAt: new Date('2026-01-03T00:00:00.000Z') })
+
+      const byRank = await listRecommendationDockQueue(USER_A, { sortBy: 'rank' })
+      const byConfidence = await listRecommendationDockQueue(USER_A, { sortBy: 'confidenceScore' })
+      const byCreatedAt = await listRecommendationDockQueue(USER_A, { sortBy: 'createdAt' })
+
+      expect(byRank.items.map((item) => item.candidateId)).toEqual(['tag_rank_1', 'tag_rank_2', 'tag_score_high'])
+      expect(byConfidence.items.map((item) => item.candidateId)).toEqual(['tag_score_high', 'tag_rank_1', 'tag_rank_2'])
+      expect(byCreatedAt.items.map((item) => item.candidateId)).toEqual(['tag_score_high', 'tag_rank_1', 'tag_rank_2'])
+    })
+
+    it('paginates dockQueue with limit and cursor', async () => {
+      for (let index = 0; index < 3; index += 1) {
+        await createRecommendation({
+          userId: USER_A,
+          subjectType: 'dockItem',
+          subjectId: index,
+          recommendationType: 'tag_suggestion',
+          candidateType: 'tag',
+          candidateId: `tag_page_${index}`,
+          confidenceScore: 0.5 + index / 10,
+          reasonJson: JSON.stringify({ rank: index + 1, evidenceSummary: { evidenceCount: 0 } }),
+        })
+      }
+
+      const page1 = await listRecommendationDockQueue(USER_A, { sortBy: 'rank', limit: 2 })
+      const page2 = await listRecommendationDockQueue(USER_A, { sortBy: 'rank', limit: 2, cursor: unwrap(page1.nextCursor) })
+
+      expect(page1.items).toHaveLength(2)
+      expect(page1.nextCursor).toBe('2')
+      expect(page2.items).toHaveLength(1)
+      expect(page2.nextCursor).toBeNull()
+      expect([...page1.items, ...page2.items].map((item) => item.candidateId)).toEqual([
+        'tag_page_0',
+        'tag_page_1',
+        'tag_page_2',
+      ])
+    })
+
+    it('builds summaries from generated event metadata when reasonJson is missing', async () => {
+      const rec = await createRecommendation({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: 1,
+        recommendationType: 'tag_suggestion',
+        candidateType: 'tag',
+        candidateId: 'tag_metadata_only',
+        confidenceScore: 0.66,
+        reasonJson: null,
+      })
+      await recordRecommendationEvent({
+        userId: USER_A,
+        recommendationId: rec.id,
+        eventType: 'recommendation_generated',
+        metadata: {
+          source: 'metadata_only',
+          rank: 4,
+          score: 0.66,
+          evidenceSummary: {
+            evidenceCount: 2,
+            sources: ['tag'],
+            evidenceTypes: ['text_match'],
+            matchedValues: ['metadata only'],
+            strongestContribution: 0.66,
+          },
+        },
+      })
+
+      const dockQueue = await listRecommendationDockQueue(USER_A)
+
+      expect(dockQueue.items).toHaveLength(1)
+      expect(dockQueue.items[0].reasonSummary.source).toBe('metadata_only')
+      expect(dockQueue.items[0].scoreSummary.rank).toBe(4)
+      expect(dockQueue.items[0].evidenceSummary).toMatchObject({
+        evidenceCount: 2,
+        sources: ['tag'],
+        evidenceTypes: ['text_match'],
+        matchedValues: ['metadata only'],
+        strongestContribution: 0.66,
+      })
+    })
+
+    it('sets isShown and hasFeedback from lifecycle events and supports dockQueue item actions', async () => {
+      const rec = await createRecommendation({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: 1,
+        recommendationType: 'tag_suggestion',
+        candidateType: 'tag',
+        candidateId: 'tag_feedback',
+        confidenceScore: 0.8,
+      })
+      await recordRecommendationEvent({
+        userId: USER_A,
+        recommendationId: rec.id,
+        eventType: 'recommendation_generated',
+      })
+
+      await markRecommendationDockQueueItemShown({
+        userId: USER_A,
+        recommendationId: rec.id,
+      })
+      let dockQueue = await listRecommendationDockQueue(USER_A)
+      expect(dockQueue.items[0].status).toBe('shown')
+      expect(dockQueue.items[0].isShown).toBe(true)
+      expect(dockQueue.items[0].hasFeedback).toBe(false)
+
+      await recordRecommendationDockQueueItemFeedback({
+        userId: USER_A,
+        recommendationId: dockQueue.items[0].id,
+        feedbackType: 'accepted',
+      })
+      dockQueue = await listRecommendationDockQueue(USER_A)
+
+      expect(dockQueue.items[0].status).toBe('accepted')
+      expect(dockQueue.items[0].isShown).toBe(true)
+      expect(dockQueue.items[0].hasFeedback).toBe(true)
+
+      const recommendationEvents = await listRecommendationEvents(USER_A, { recommendationId: rec.id })
+      const behaviorEvents = await listUserBehaviorEvents(USER_A)
+      expect(recommendationEvents.map((event) => event.eventType).sort()).toEqual([
+        'recommendation_accepted',
+        'recommendation_generated',
+        'recommendation_shown',
+      ])
+      expect(behaviorEvents.map((event) => event.eventType).sort()).toEqual([
+        'recommendation_accepted',
+        'recommendation_shown',
+      ])
+    })
+
+    it('keeps userId isolation for dockQueue query and dockQueue item actions', async () => {
+      const recA = await createRecommendation({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: 1,
+        recommendationType: 'tag_suggestion',
+        candidateType: 'tag',
+        candidateId: 'tag_a',
+        confidenceScore: 0.8,
+      })
+      const recB = await createRecommendation({
+        userId: USER_B,
+        subjectType: 'dockItem',
+        subjectId: 2,
+        recommendationType: 'tag_suggestion',
+        candidateType: 'tag',
+        candidateId: 'tag_b',
+        confidenceScore: 0.7,
+      })
+
+      const dockQueueA = await listRecommendationDockQueue(USER_A)
+      const dockQueueB = await listRecommendationDockQueue(USER_B)
+
+      expect(dockQueueA.items).toHaveLength(1)
+      expect(dockQueueA.items[0].id).toBe(recA.id)
+      expect(dockQueueB.items).toHaveLength(1)
+      expect(dockQueueB.items[0].id).toBe(recB.id)
+      await expect(
+        markRecommendationDockQueueItemShown({
+          userId: USER_A,
+          recommendationId: recB.id,
+        }),
+      ).rejects.toThrow(`User ${USER_A} does not own recommendation`)
+      await expect(
+        recordRecommendationDockQueueItemFeedback({
+          userId: USER_B,
+          recommendationId: recA.id,
+          feedbackType: 'rejected',
+        }),
+      ).rejects.toThrow(`User ${USER_B} does not own recommendation`)
+    })
+
+    it('returns empty dockQueue without recommendations and rejects malformed query inputs', async () => {
+      await expect(listRecommendationDockQueue(USER_A, { status: 'bad' as never })).rejects.toThrow(
+        'Invalid recommendation dock queue status filter',
+      )
+      await expect(listRecommendationDockQueue(USER_A, { sortBy: 'score' as never })).rejects.toThrow(
+        'Invalid recommendation dock queue sortBy',
+      )
+      await expect(listRecommendationDockQueue(USER_A, { limit: 0 })).rejects.toThrow(
+        'Invalid recommendation dock queue limit',
+      )
+      await expect(listRecommendationDockQueue(USER_A, { cursor: 'bad_cursor' })).rejects.toThrow(
+        'Invalid recommendation dock queue cursor',
+      )
+
+      const empty = await listRecommendationDockQueue(USER_A)
+      expect(empty).toEqual({ items: [], nextCursor: null, total: 0 })
     })
   })
 

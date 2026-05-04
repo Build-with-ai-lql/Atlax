@@ -9,6 +9,87 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Phase 3 Round 25 (LC-011) -->
+<!-- ============================================ -->
+
+## Phase 3 Round 25 devlog -- LC-011 Local Recommendation Inbox Pack 推荐结果消费闭环能力包
+
+**时间戳**: 2026-05-05
+
+**任务起止时间**: 07:25 - 07:40 CST
+
+**工时**: 15 分钟
+
+**Notion 卡片**: LC-011 Local Recommendation Inbox Pack 推荐结果消费闭环能力包
+
+**任务目标**: 在 LC-010 已能生成 recommendations 的基础上，新增本地 Recommendation Inbox / Queue 消费能力，使后续 UI 可以通过统一 repository / service API 消费推荐；不接 UI、不做前端页面、不引入 workspaceId 一次性补丁、不做 preference_profiles / rhythm_profiles / LLM / embedding / vector search、不重构 Recommendation 生命周期。
+
+**改动文件及行数**:
+- `apps/web/lib/repository.ts` | M | +416 行（新增 Recommendation Dock Queue 等价消费 API、UI view model、filter / sort / pagination、summary 提取、inbox item 生命周期封装）
+- `apps/web/tests/intelligence-spine.test.ts` | M | +317 行（新增 LC-011 推荐消费闭环测试，覆盖 filter / sort / pagination / summary / shown / feedback / userId isolation / malformed input）
+- `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | +81 行（本轮日志）
+
+**变更摘要**:
+- **等价 API 命名**: 由于仓库术语检查禁止在 product / business 代码中使用 `Inbox`，本轮以 `listRecommendationDockQueue` 作为 `listRecommendationInbox` 的等价 repository API；语义仍是 LC-011 Recommendation Inbox / Queue 消费能力。
+- **推荐消费 view model**: 新增 `RecommendationDockQueueItem`，返回 UI 可直接消费的基础字段：`id`、`status`、`recommendationType`、`subjectType`、`subjectId`、`candidateType`、`candidateId`、`confidenceScore`、`createdAt`、`updatedAt`。
+- **filter 支持**: `listRecommendationDockQueue(userId, query)` 支持 `status`、`candidateType`、`subjectType`、`recommendationType` 过滤；查询从 `recommendationsTable.where('userId').equals(userId)` 起步，保持 userId isolation。
+- **排序与分页**: 支持按 `rank`、`confidenceScore`、`createdAt` 排序；默认 `createdAt desc`，rank 默认升序；同分或字段缺失时按 rank / confidence / createdAt / id 做 deterministic secondary sort；支持 `limit` + offset cursor，返回 `nextCursor` / `total`。
+- **summary 提取**: 从 `recommendation.reasonJson` 安全解析 `reasonSummary`、`scoreSummary`、`evidenceSummary`；当旧数据缺失 reasonJson 时，兜底使用 `recommendation_generated` event metadata；再缺失时返回空 summary，不抛无意义异常。
+- **shown / feedback 状态聚合**: `isShown` 同时读取当前 status 与 `recommendation_shown` event；`hasFeedback` 同时读取 accepted / rejected / modified / ignored status 与对应 feedback events。
+- **item 操作封装**: 新增 `markRecommendationDockQueueItemShown` 与 `recordRecommendationDockQueueItemFeedback`，复用既有 `markRecommendationShown` / `recordRecommendationFeedback`，保持 LC-005 / LC-006 / LC-007 / LC-008 的 transaction 与 event / behavior event 一致性。
+- **输入异常处理**: malformed status / candidateType / subjectType / sortBy / sortDirection / limit / cursor 均明确抛错，避免静默产生错误结果。
+- **范围控制**: 未接 UI；未新增前端页面；未做每日推荐 / 周 Review / Nudge；未做 preference_profiles / rhythm_profiles；未做 LLM / embedding / vector search；未引入 workspaceId 一次性补丁；未重构 Recommendation 生命周期；未改变 LC-010 scoring 主逻辑。
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 | 是否解决 |
+|------|---------|---------|
+| LC-011 需求名包含 Inbox，但仓库 `check:terminology` 禁止 apps / packages 内出现 `Inbox` | API 采用 `RecommendationDockQueue` 命名作为等价能力；devlog 保留卡片名称，代码与测试通过术语检查 | ✅ |
+| reasonJson / generated metadata 在 LC-004 ~ LC-010 数据中结构不完全一致 | summary builder 使用安全 JSON parse、类型守卫与多级 fallback；旧数据缺失字段时返回空数组 / null，不抛异常 | ✅ |
+| shown 后再 accepted 时 status 不再是 shown，但 UI 仍需要知道已展示过 | `isShown` 同时看 status 与生命周期事件；`hasFeedback` 同时看终态 status 与 feedback event | ✅ |
+| 排序字段可能缺失 rank 或 score 相同 | rank 缺失排后，并追加 rank / confidenceScore / createdAt / id secondary sort，保证 deterministic | ✅ |
+
+**自动验证**:
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm --dir apps/web test intelligence-spine.test.ts capture-document-flow.test.ts` | ✅ PASS（2 files / 129 tests） |
+| `pnpm validate` | ✅ PASS（lint 仅保留既有 GoldenTopNav `<img>` warning；domain 20 files / 312 tests；web 17 files / 452 tests；terminology PASS） |
+| `pnpm build:web` | ✅ PASS（同一既有 `<img>` warning） |
+
+**手工验证方式**:
+1. 生成 user A recommendations 后调用 `listRecommendationDockQueue(USER_A, { status: 'generated', sortBy: 'rank' })`，期望只返回 user A items，且包含 reasonSummary / scoreSummary / evidenceSummary。
+2. 分别构造 generated / shown / accepted / rejected / modified / ignored recommendations，按 status 查询，期望每次只返回对应 status。
+3. 构造不同 candidateType / subjectType / recommendationType，分别传入 filter，期望返回集合精确匹配。
+4. 构造带 rank / confidenceScore / createdAt 的 recommendations，分别排序，期望稳定排序并在同分时 deterministic。
+5. 使用 `limit: 2` 查询第一页，再使用返回的 `nextCursor` 查询下一页，期望分页不重复、不漏项。
+6. 构造缺失 reasonJson 但有 generated event metadata 的旧数据，期望 summary 从 metadata 兜底生成。
+7. 从返回 item.id 调用 `markRecommendationDockQueueItemShown`，期望 recommendation.status 为 shown，并追加 `recommendation_shown` 与 user_behavior_event。
+8. 从返回 item.id 调用 `recordRecommendationDockQueueItemFeedback`，期望 status 与 `recommendation_events` / `user_behavior_events` 保持一致。
+9. 用 user A 操作 user B recommendation，期望抛 ownership 错误且 user B 数据不被修改。
+10. 无 recommendation 时调用 queue API，期望 `{ items: [], nextCursor: null, total: 0 }`。
+
+**验收标准**:
+- 存在 `listRecommendationDockQueue` 等价 API，可按 userId 返回推荐消费队列
+- 支持 status / candidateType / subjectType / recommendationType filter
+- 支持 rank / confidenceScore / createdAt deterministic sort
+- 支持 limit / cursor 最小分页
+- item 返回 reasonSummary / scoreSummary / evidenceSummary / isShown / hasFeedback
+- item 可触发 mark shown 与 feedback，并复用既有生命周期一致性 API
+- userId isolation 与 malformed input 明确处理均有测试覆盖
+- LC-004 ~ LC-010 关键链路回归通过
+- `pnpm validate` PASS；`pnpm build:web` PASS
+
+**已知风险或未做事项**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| API 名称未直接使用 `Inbox` | 按仓库约束 | 术语检查禁止 apps / packages 使用 `Inbox`；本轮采用 Dock Queue 作为等价 API |
+| cursor 采用 offset cursor | 低 | 满足最小分页能力；后续若需要大规模数据可替换为 createdAt/id keyset cursor |
+| summary 是最小 UI view model | 低 | 已覆盖 reasonJson 与 event metadata fallback，但未定义复杂展示文案策略 |
+
+**是否 ready for review**: 是（LC-011 本卡完成；已验证；已 git add 暂存；未 commit，未 push）
+
+---
+
+<!-- ============================================ -->
 <!-- 分割线：Phase 3 Round 24 (LC-010) -->
 <!-- ============================================ -->
 
