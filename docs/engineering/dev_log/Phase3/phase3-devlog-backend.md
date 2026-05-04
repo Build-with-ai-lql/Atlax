@@ -9,6 +9,79 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Local Core Phase 1 Round 2 (LC-002) -->
+<!-- ============================================ -->
+
+## Local Core Phase 1 Round 2 devlog -- LC-002 Capture / Document / MindNode 最小闭环服务化
+
+**时间戳**: 2026-05-05
+
+**任务起止时间**: 01:44 - 01:57 CST
+
+**Notion 卡片**: LC-002 Capture / Document / MindNode 最小闭环服务化
+
+**任务目标**: 补齐 Local Core 主链路前半段 Capture → Document → MindNode 的最小闭环服务化，让一次文本输入通过统一 Local Core service / repository contract 创建 Capture 记录、Document 记录和 MindNode 结构投影。
+
+**改动文件及行数**:
+- `packages/domain/src/services/CaptureToDocumentFlow.ts` | A | +50 行（领域类型定义 + 验证函数：CaptureToDocumentInput、CaptureToDocumentResult 类型，validateCaptureInput、extractDocumentTitle 函数）
+- `packages/domain/src/services/index.ts` | M | +1 行（导出 CaptureToDocumentFlow）
+- `apps/web/lib/repository.ts` | M | +75 行（新增 createCaptureToDocumentFlow API + 4 行类型/函数导入）
+- `apps/web/tests/capture-document-flow.test.ts` | A | +234 行（16 个 repository 集成测试）
+- `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | +60 行（本轮日志）
+
+**变更摘要**:
+- **新增领域服务**: CaptureToDocumentFlow 定义 CaptureToDocumentInput（userId/rawText/topic/sourceType）、CaptureToDocumentResult（capture/document/mindNode 三元组）、validateCaptureInput（空内容拒绝 + userId 非空校验）、extractDocumentTitle（取首行，>60 字符截断）
+- **新增 Repository API**: createCaptureToDocumentFlow — 一次调用完成 Capture（dockItem）创建 → Document（entry）创建 → MindNode（'document' 类型，drifting 状态）创建，返回完整三元组结果
+- **userId 隔离**: createCaptureToDocumentFlow 内部的 createDockItem、entriesTable.add、upsertMindNode 均继承现有 userId 隔离语义
+- **workspaceId**: 当前数据模型无 workspaceId 字段，未硬加。所有 capture/document/mindNode 表仅按 userId 隔离
+- **测试覆盖**: 16 个测试用例覆盖完整流程创建、自定义 topic/sourceType、标题提取（多行/长标题截断）、空内容/纯空白/空 userId 拒绝、userId 隔离（capture/document/mindNode 三层）、document ↔ mindNode 关联稳定性
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 | 是否解决 |
+|------|---------|---------|
+| 无 | — | — |
+
+**自动验证**:
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm lint` | ✅ 0 errors（1 pre-existing warning 来自 GoldenTopNav.tsx，非本轮引入） |
+| `pnpm typecheck` | ✅ PASS（domain + web 均通过） |
+| domain tests | ✅ 312 tests / 20 files |
+| web tests | ✅ 367 tests / 17 files（含 LC-002 新增 16 tests） |
+| `pnpm build:web` | ✅ PASS（Next.js 14.2.28 构建成功，7 routes） |
+| `pnpm validate` | ✅ PASS（lint + typecheck + test + terminology 全部通过） |
+
+**手工验证方式**:
+1. 调用 `createCaptureToDocumentFlow({ userId: 'test', rawText: '今日学习笔记' })`，返回的 capture.id > 0，document.id > 0，mindNode.id 非空
+2. 返回结果中 `capture.rawText === document.content === '今日学习笔记'`，`document.sourceCaptureId === capture.id`
+3. `mindNode.documentId === document.id`，`mindNode.nodeType === 'document'`，`mindNode.state === 'drifting'`
+4. `mindNode.label === document.title === '今日学习笔记'`（首行提取）
+5. 调用 `getDocumentByCaptureId(userId, captureId)` 返回的 document.id 与结果一致
+6. 调用 `getMindNode(userId, mindNodeId)` 返回的 node.documentId 与 document.id 一致
+7. 空字符串/纯空白 rawText 抛出 `'rawText must not be empty'`
+8. 空 userId 抛出 `'userId must not be empty'`
+9. 不同 userId A/B 创建后，`getDocumentByCaptureId(USER_B, captureA.id)` 返回 null
+10. 不同 userId 的 mindNode 交叉查询返回 null
+
+**手工验证标准**:
+- Capture → Document → MindNode 三元组一次调用创建成功，各字段值正确
+- document.sourceCaptureId 指向正确的 capture
+- mindNode.documentId 指向正确的 document
+- 空内容/空 userId 被拒绝，抛异常而非静默创建脏数据
+- 跨 userId 查询均返回 null/空
+
+**是否可以进入下一轮**: 是
+
+**下一轮风险评估**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| Capture 状态为 pending 而非 archived | 低 | 当前 createCaptureToDocumentFlow 创建的 capture status 为 pending（createDockItem 默认值），而非 archived。若后续需要 capture 自动标记为 archived，可在 createCaptureToDocumentFlow 内部追加状态更新 |
+| MindNode 无自动边连接 | 低 | 当前仅创建孤立 document 类型 MindNode，未自动创建与父级/同级节点的 MindEdge。需后续轮次补齐图谱拓扑逻辑 |
+| workspaceId 缺失 | 低 | 当前数据模型无 workspaceId，仅按 userId 隔离。多工作区场景下无法区分同一用户的不同工作区，未来如引入 workspace 需补齐 |
+
+---
+
+<!-- ============================================ -->
 <!-- 分割线：Local Core Phase 1 Round 1 (LC-001) -->
 <!-- ============================================ -->
 

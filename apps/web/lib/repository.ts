@@ -10,7 +10,9 @@ import {
   computeTemporalKeys,
   createTag,
   dedupeTagNames,
+  extractDocumentTitle,
   generateSuggestions,
+  validateCaptureInput,
   makeCollectionId,
   makeEntryRelationId,
   makeEntryTagRelationId,
@@ -35,6 +37,8 @@ import {
   type ChainProvenance,
   type Collection,
   type CollectionType,
+  type CaptureToDocumentInput,
+  type CaptureToDocumentResult,
   type DocumentUpdateInput,
   type EntryRelationType,
   type EntryStatus,
@@ -1349,6 +1353,75 @@ export async function updateDocument(
   updates: DocumentUpdateInput,
 ): Promise<PersistedDocument | null> {
   return updateArchivedEntry(userId, documentId, updates)
+}
+
+export async function createCaptureToDocumentFlow(
+  input: CaptureToDocumentInput,
+): Promise<CaptureToDocumentResult> {
+  const validationError = validateCaptureInput(input)
+  if (validationError !== null) {
+    throw new Error(validationError)
+  }
+
+  const sourceType = input.sourceType ?? 'text'
+  const title = extractDocumentTitle(input.rawText)
+
+  const captureId = await createDockItem(input.userId, input.rawText, sourceType, { topic: input.topic ?? null })
+
+  const docId = await entriesTable.add({
+    userId: input.userId,
+    sourceDockItemId: captureId,
+    title,
+    content: input.rawText,
+    type: 'note',
+    tags: [],
+    project: null,
+    actions: [],
+    createdAt: new Date(),
+    archivedAt: new Date(),
+  }) as number
+
+  const mindNode = await upsertMindNode({
+    userId: input.userId,
+    nodeType: 'document',
+    label: title,
+    documentId: docId,
+    state: 'drifting',
+  })
+
+  const capture = await getPersistedDockItem(captureId)
+  if (!capture) {
+    throw new Error('Failed to retrieve created capture')
+  }
+
+  const entry = await toPersistedEntry(await entriesTable.get(docId))
+  if (!entry) {
+    throw new Error('Failed to retrieve created document')
+  }
+
+  return {
+    capture: {
+      id: capture.id,
+      rawText: capture.rawText,
+      status: capture.status,
+      createdAt: capture.createdAt,
+    },
+    document: {
+      id: entry.id,
+      title: entry.title,
+      content: entry.content,
+      sourceCaptureId: entry.sourceDockItemId,
+      type: entry.type,
+      createdAt: entry.createdAt,
+    },
+    mindNode: {
+      id: mindNode.id,
+      label: mindNode.label,
+      nodeType: mindNode.nodeType,
+      documentId: mindNode.documentId as number,
+      state: mindNode.state,
+    },
+  }
 }
 
 function toPersistedMindNode(node: MindNodeRecord | undefined): PersistedMindNode | null {
