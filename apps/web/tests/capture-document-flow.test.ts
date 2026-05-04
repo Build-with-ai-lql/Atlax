@@ -7,6 +7,7 @@ import {
   getMindNode,
   listRecommendations,
   listRecommendationEvents,
+  recordRecommendationFeedback,
 } from '@/lib/repository'
 
 const USER_A = 'user_test_a'
@@ -500,6 +501,171 @@ describe('capture → document → mindNode flow', () => {
       expect(meta.source).toBe('capture_to_document_flow')
       expect(meta.documentId).toBe(result.document.id)
       expect(meta.mindNodeId).toBe(result.mindNode.id)
+    })
+  })
+
+  describe('recommendation feedback flow (LC-005)', () => {
+    it('records accepted feedback: status update + event append', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'accepted feedback 测试',
+      })
+
+      const feedback = await recordRecommendationFeedback({
+        recommendationId: result.recommendation.id,
+        userId: USER_A,
+        feedbackType: 'accepted',
+      })
+
+      expect(feedback.recommendation.status).toBe('accepted')
+      expect(feedback.feedbackEvent.eventType).toBe('recommendation_accepted')
+      expect(feedback.feedbackEvent.recommendationId).toBe(result.recommendation.id)
+
+      const events = await listRecommendationEvents(USER_A, {
+        recommendationId: result.recommendation.id,
+      })
+      expect(events).toHaveLength(2)
+      const feedbackEvent = events.find((e) => e.eventType === 'recommendation_accepted')
+      expect(feedbackEvent).toBeDefined()
+      expect(unwrap(feedbackEvent ?? null).recommendationId).toBe(result.recommendation.id)
+    })
+
+    it('records rejected feedback', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'rejected feedback 测试',
+      })
+
+      const feedback = await recordRecommendationFeedback({
+        recommendationId: result.recommendation.id,
+        userId: USER_A,
+        feedbackType: 'rejected',
+      })
+
+      expect(feedback.recommendation.status).toBe('rejected')
+      expect(feedback.feedbackEvent.eventType).toBe('recommendation_rejected')
+
+      const events = await listRecommendationEvents(USER_A, {
+        recommendationId: result.recommendation.id,
+      })
+      const feedbackEvent = events.find((e) => e.eventType === 'recommendation_rejected')
+      expect(feedbackEvent).toBeDefined()
+    })
+
+    it('records modified feedback with modification context saved', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'modified feedback 测试',
+      })
+
+      const feedbackPayload = {
+        originalTag: '学习',
+        modifiedTag: 'TypeScript 学习',
+        reason: '更精确的分类',
+      }
+
+      const feedback = await recordRecommendationFeedback({
+        recommendationId: result.recommendation.id,
+        userId: USER_A,
+        feedbackType: 'modified',
+        feedbackPayload,
+      })
+
+      expect(feedback.recommendation.status).toBe('modified')
+      expect(feedback.feedbackEvent.eventType).toBe('recommendation_modified')
+
+      const events = await listRecommendationEvents(USER_A, {
+        recommendationId: result.recommendation.id,
+      })
+      const feedbackEvent = events.find((e) => e.eventType === 'recommendation_modified')
+      expect(feedbackEvent).toBeDefined()
+      const meta = unwrap(feedbackEvent ?? null).metadata as Record<string, unknown>
+      expect(meta.feedbackType).toBe('modified')
+      expect(meta.source).toBe('recommendation_feedback')
+      expect(meta.feedbackPayload).toEqual(feedbackPayload)
+    })
+
+    it('records ignored feedback', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'ignored feedback 测试',
+      })
+
+      const feedback = await recordRecommendationFeedback({
+        recommendationId: result.recommendation.id,
+        userId: USER_A,
+        feedbackType: 'ignored',
+      })
+
+      expect(feedback.recommendation.status).toBe('ignored')
+      expect(feedback.feedbackEvent.eventType).toBe('recommendation_ignored')
+
+      const events = await listRecommendationEvents(USER_A, {
+        recommendationId: result.recommendation.id,
+      })
+      const feedbackEvent = events.find((e) => e.eventType === 'recommendation_ignored')
+      expect(feedbackEvent).toBeDefined()
+    })
+
+    it('userId isolation: user A cannot feedback user B recommendation', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'userId isolation 测试',
+      })
+
+      await expect(
+        recordRecommendationFeedback({
+          recommendationId: result.recommendation.id,
+          userId: USER_B,
+          feedbackType: 'accepted',
+        }),
+      ).rejects.toThrow(`User ${USER_B} does not own recommendation`)
+
+      const recs = await listRecommendations(USER_A)
+      expect(recs[0].status).toBe('generated')
+    })
+
+    it('fails for non-existent recommendationId', async () => {
+      await expect(
+        recordRecommendationFeedback({
+          recommendationId: 'non_existent_rec_id',
+          userId: USER_A,
+          feedbackType: 'accepted',
+        }),
+      ).rejects.toThrow('Recommendation not found: non_existent_rec_id')
+    })
+
+    it('regression: createCaptureToDocumentFlow still generates landing recommendation + event', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'LC-004 regression 测试',
+      })
+
+      expect(result.recommendation.id).toBeTruthy()
+      expect(result.recommendation.recommendationType).toBe('landing')
+      expect(result.recommendation.status).toBe('generated')
+      expect(result.recommendationEvent.eventType).toBe('recommendation_generated')
+
+      const events = await listRecommendationEvents(USER_A, {
+        recommendationId: result.recommendation.id,
+      })
+      expect(events).toHaveLength(1)
+      expect(events[0].eventType).toBe('recommendation_generated')
+    })
+
+    it('regression: empty content rejection does not generate recommendation', async () => {
+      await expect(
+        createCaptureToDocumentFlow({
+          userId: USER_A,
+          rawText: '',
+        }),
+      ).rejects.toThrow('rawText must not be empty')
+
+      const recs = await listRecommendations(USER_A)
+      expect(recs).toHaveLength(0)
+
+      const events = await listRecommendationEvents(USER_A)
+      expect(events).toHaveLength(0)
     })
   })
 })

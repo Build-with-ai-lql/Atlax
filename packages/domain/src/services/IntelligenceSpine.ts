@@ -109,6 +109,45 @@ export function makeRecommendationEventId(userId: string, recommendationId: stri
   return `${userId}_recevt_${recommendationId}_${timestamp}_${suffix}`
 }
 
+export type RecommendationFeedbackType = 'accepted' | 'rejected' | 'modified' | 'ignored'
+
+export interface RecommendationFeedbackInput {
+  recommendationId: string
+  userId: string
+  feedbackType: RecommendationFeedbackType
+  feedbackPayload?: Record<string, unknown> | null
+}
+
+export interface RecommendationFeedbackResult {
+  recommendation: {
+    id: string
+    status: RecommendationStatus
+    updatedAt: Date
+  }
+  feedbackEvent: {
+    id: string
+    eventType: RecommendationEventType
+    recommendationId: string
+  }
+}
+
+export function feedbackTypeToStatus(feedbackType: RecommendationFeedbackType): RecommendationStatus {
+  return feedbackType
+}
+
+export function feedbackTypeToEventType(feedbackType: RecommendationFeedbackType): RecommendationEventType {
+  switch (feedbackType) {
+    case 'accepted':
+      return 'recommendation_accepted'
+    case 'rejected':
+      return 'recommendation_rejected'
+    case 'modified':
+      return 'recommendation_modified'
+    case 'ignored':
+      return 'recommendation_ignored'
+  }
+}
+
 export function makeUserBehaviorEventId(userId: string, eventType: UserBehaviorEventType, timestamp: number): string {
   const suffix = Math.random().toString(36).slice(2, 6)
   return `${userId}_ube_${eventType}_${timestamp}_${suffix}`

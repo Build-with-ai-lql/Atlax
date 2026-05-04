@@ -9,6 +9,114 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Phase 3 Round 19 (LC-005) -->
+<!-- ============================================ -->
+
+## Phase 3 Round 19 devlog -- LC-005 Recommendation Feedback 最小事件闭环
+
+**时间戳**: 2026-05-05
+
+**任务起止时间**: 04:17 - 04:22 CST
+
+**工时**: 5 分钟
+
+**Notion 卡片**: LC-005 Recommendation Feedback 最小事件闭环
+
+**任务目标**: 在 LC-004 已生成 recommendation + recommendation_generated event 的基础上，补齐最小 recommendation feedback 能力，支持 accepted / rejected / modified / ignored 四类反馈，包含 userId 隔离、不存在 recommendationId 失败路径、modified 修改上下文保存。
+
+**改动文件及行数**:
+- `packages/domain/src/services/IntelligenceSpine.ts` | M | +39 行（新增 RecommendationFeedbackType、RecommendationFeedbackInput、RecommendationFeedbackResult 类型，feedbackTypeToStatus、feedbackTypeToEventType 映射函数）
+- `apps/web/lib/repository.ts` | M | +65 行（新增 getRecommendation(userId, recommendationId) + recordRecommendationFeedback() API；updateRecommendationStatus 增加 userId 校验；新增类型/函数导入）
+- `apps/web/tests/intelligence-spine.test.ts` | M | +5 行（updateRecommendationStatus 5 处调用适配新签名：增加 userId 参数）
+- `apps/web/tests/capture-document-flow.test.ts` | M | +166 行（新增 8 个 LC-005 测试 + import recordRecommendationFeedback）
+- `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | +95 行（本轮日志）
+
+**变更摘要**:
+- **新增领域类型**: `RecommendationFeedbackType = 'accepted' | 'rejected' | 'modified' | 'ignored'`（与 RecommendationStatus 值相同，语义上是"用户反馈动作"的标签）；`RecommendationFeedbackInput`（recommendationId + userId + feedbackType + feedbackPayload?）；`RecommendationFeedbackResult`（recommendation + feedbackEvent 返回值）
+- **反馈类型到状态/事件的映射**: `feedbackTypeToStatus` 直接返回 feedbackType（因 status 值与反馈类型值一致）；`feedbackTypeToEventType` 映射到 `recommendation_{accepted|rejected|modified|ignored}` 事件类型
+- **新增 Repository API**:
+  - `getRecommendation(userId, recommendationId)`：按 recommendationId + userId 反查推荐记录，userId 不匹配返回 null。解决原有 `updateRecommendationStatus` 无 userId 校验的安全漏洞
+  - `recordRecommendationFeedback(input)`：核心高层 API，流程如下：
+    1. 按 recommendationId 查询 recommendation，不存在抛 `Recommendation not found: {id}`
+    2. 校验 userId 归属，不匹配抛 `User {userId} does not own recommendation {id}`
+    3. 更新 recommendation.status 为 feedbackType（accepted/rejected/modified/ignored）
+    4. 记录 recommendation_event 反馈事件（eventType = recommendation_{feedbackType}，metadata = { source: 'recommendation_feedback', feedbackType, feedbackPayload? }）
+    5. 返回 RecommendationFeedbackResult（含更新后的 recommendation 状态 + feedbackEvent ID）
+- **修复 updateRecommendationStatus 安全漏洞**: 原函数签名 `(recommendationId, status)` 无 userId 校验，任意调用方可更新任何用户 recommendation。现改为 `(userId, recommendationId, status)`，内部增加 `if (!rec || rec.userId !== userId) return null` 校验
+- **modified 反馈上下文保存**: `feedbackPayload` 通过 `RecommendationFeedbackInput.feedbackPayload` 传入，写入 recommendation_event.metadata.feedbackPayload。当前使用开放 `Record<string, unknown>` 类型，支持任意 JSON 结构的最小修改上下文
+- **userId 隔离**: getRecommendation、updateRecommendationStatus、recordRecommendationFeedback 三层均强制 userId 匹配；listRecommendationEvents 底层按 userId 过滤
+- **错误处理策略**: 不存在 recommendationId 和 userId 不匹配均抛 Error（非返回 null），确保调用方不能静默忽略失败
+- **不改旧链路**: createCaptureToDocumentFlow 内部仍使用 `createRecommendation` + `recordRecommendationEvent`（非 recordRecommendationFeedback），保持 LC-004 生成的 recommendation 状态不受反馈逻辑影响
+- **测试覆盖**: 新增 8 个 LC-005 测试（web tests 总数 395 = 387 LC-002/003/004 + 8 LC-005），覆盖：
+  - accepted feedback：status 更新 + event 追加（events 从 1 条变为 2 条）
+  - rejected feedback
+  - modified feedback：验证 feedbackPayload 在 event.metadata 中被保存
+  - ignored feedback
+  - userId isolation：user B 反馈 user A 的 recommendation → 抛 Error + 原 status 不变（仍为 generated）
+  - 不存在 recommendationId → 抛 Error
+  - LC-004 回归：createCaptureToDocumentFlow 仍生成 landing recommendation + recommendation_generated event
+  - LC-004 回归：空内容拒绝不生成 recommendation / event
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 | 是否解决 |
+|------|---------|---------|
+| `RecommendationFeedbackType` 类型 import 但未在 repository.ts 中使用（仅作为 `RecommendationFeedbackInput` 的成员类型间接使用） | 从 import 中移除 `RecommendationFeedbackType`，保留 `RecommendationFeedbackInput` 和 `RecommendationFeedbackResult` | ✅ |
+| `events.find()` 返回 `T \| undefined`，`unwrap()` 期望 `T \| null` 导致 TS2532 类型错误 | `unwrap(feedbackEvent ?? null)` 转换 undefined → null | ✅ |
+| `updateRecommendationStatus` 签名变更后 intelligence-spine.test.ts 中 5 处调用缺少 userId 参数 | 所有调用统一增加 `USER_A` 作为第一参数 | ✅ |
+
+**自动验证**:
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm lint` | ✅ 0 errors（1 pre-existing warning 来自 GoldenTopNav.tsx，非本轮引入） |
+| `pnpm typecheck` | ✅ PASS（domain + web 均通过） |
+| domain tests | ✅ 312 tests / 20 files |
+| web tests | ✅ 395 tests / 17 files（含 LC-005 新增 8 tests） |
+| `pnpm build:web` | ✅ PASS（Next.js 14.2.28 构建成功，7 routes） |
+| `pnpm validate` | ✅ PASS（lint + typecheck + test + terminology 全部通过） |
+
+**手工验证方式**:
+1. 调用 `createCaptureToDocumentFlow({ userId: USER_A, rawText: 'test' })` 获取 recommendationId
+2. 调用 `recordRecommendationFeedback({ recommendationId, userId: USER_A, feedbackType: 'accepted' })`，返回 `feedback.recommendation.status === 'accepted'`，`feedback.feedbackEvent.eventType === 'recommendation_accepted'`
+3. `listRecommendationEvents(USER_A, { recommendationId })` 返回 2 条事件（generated + accepted）
+4. 重新 flow 创建新 recommendation，调用 `recordRecommendationFeedback({ feedbackType: 'rejected' })`，status 变为 rejected
+5. 调用 `recordRecommendationFeedback({ feedbackType: 'modified', feedbackPayload: { originalTag: '学习', modifiedTag: 'TS' } })`，status 变为 modified，`listRecommendationEvents` 中 feedback_event.metadata.feedbackPayload 含修改上下文
+6. 调用 `recordRecommendationFeedback({ feedbackType: 'ignored' })`，status 变为 ignored
+7. 用户 B 调用 `recordRecommendationFeedback({ recommendationId: recA.id, userId: USER_B, feedbackType: 'accepted' })` → 抛 Error，`listRecommendations(USER_A)` 中 recA.status 仍为 generated
+8. 调用 `recordRecommendationFeedback({ recommendationId: 'non_existent_id', userId: USER_A, feedbackType: 'accepted' })` → 抛 Error
+9. 调用 `createCaptureToDocumentFlow({ rawText: 'LC-004 regression' })` 仍生成 recommendation + event
+10. 空内容 `createCaptureToDocumentFlow({ rawText: '' })` → 抛 Error，无 recommendation / event 脏数据
+
+**验收标准**:
+- recordRecommendationFeedback 支持 accepted / rejected / modified / ignored 四类反馈
+- 反馈后 recommendation.status 更新为对应状态
+- 反馈后 recommendation_event 追加对应事件（recommendation_* 类型）
+- recommendation_event 通过 recommendationId 关联 recommendation
+- modified 反馈的 feedbackPayload 在 event.metadata 中保存
+- userId 隔离：用户不能反馈其他用户的 recommendation
+- 不存在 recommendationId → 抛 Error
+- userId 不匹配 → 抛 Error
+- LC-004 主链路不受影响（createCaptureToDocumentFlow 回归通过）
+- 空内容拒绝不产生脏数据
+- pnpm validate 和 pnpm build:web 通过
+
+**已知风险或未做事项**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| updateRecommendationStatus 签名 breaking change | 低 | 旧签名 `(recommendationId, status)` → 新签名 `(userId, recommendationId, status)`。当前代码库仅 intelligence-spine.test.ts 有 5 处调用已全部适配。若外部 consumer 依赖此 API，需同步更新 |
+| feedbackPayload 无 schema 约束 | 极低 | 开放 `Record<string, unknown>` 类型提供最大灵活性，但无结构化校验。当前推荐系统处于早期阶段，不强约束 payload 格式。未来如需统一修改上下文格式，可在 feedbackTypeToEventType 层增加 validateFeedbackPayload |
+| recordRecommendationFeedback 无事务保证 | 低 | 先写 recommendation 状态更新，再写 recommendation_event。若事件写入失败，状态已更新但事件缺失。由于 Dexie 无跨表事务，此风险存在于所有 repository 操作中。后续可封装 `db.transaction()` |
+| 不做 shown event | 按设计 | LC-005 卡明确不在"极低成本外"实现 shown event。当前 recommendation_events 表有 shown 状态定义（RecommendationEventType 含 recommendation_shown），但无自动写入逻辑。后续前端展示推荐时需单独调用 recordRecommendationEvent 写入 |
+
+**是否可以进入下一轮**: 是
+
+**下一轮风险评估**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| 反馈数据无偏好学习回路 | 低 | 当前仅记录用户反馈事件（event 写入），不更新用户偏好 profile、不触发重排序。后续 LC-006 可消费 feedback event 驱动 ranking/learning |
+
+---
+
+<!-- ============================================ -->
 <!-- 分割线：Phase 3 Round 18 (LC-004) -->
 <!-- ============================================ -->
 

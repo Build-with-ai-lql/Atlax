@@ -176,7 +176,7 @@ describe('intelligence spine', () => {
         confidenceScore: 0.9,
       })
 
-      const updated = await updateRecommendationStatus(rec.id, 'accepted')
+      const updated = await updateRecommendationStatus(USER_A, rec.id, 'accepted')
       expect(updated).not.toBeNull()
       expect(unwrap(updated).status).toBe('accepted')
       expect(unwrap(updated).id).toBe(rec.id)
@@ -194,7 +194,7 @@ describe('intelligence spine', () => {
         status: 'shown',
       })
 
-      const updated = await updateRecommendationStatus(rec.id, 'rejected')
+      const updated = await updateRecommendationStatus(USER_A, rec.id, 'rejected')
       expect(unwrap(updated).status).toBe('rejected')
     })
 
@@ -209,7 +209,7 @@ describe('intelligence spine', () => {
         confidenceScore: 0.9,
       })
 
-      const updated = await updateRecommendationStatus(rec.id, 'modified')
+      const updated = await updateRecommendationStatus(USER_A, rec.id, 'modified')
       expect(unwrap(updated).status).toBe('modified')
     })
 
@@ -224,12 +224,12 @@ describe('intelligence spine', () => {
         confidenceScore: 0.9,
       })
 
-      const updated = await updateRecommendationStatus(rec.id, 'ignored')
+      const updated = await updateRecommendationStatus(USER_A, rec.id, 'ignored')
       expect(unwrap(updated).status).toBe('ignored')
     })
 
     it('returns null for non-existent recommendation', async () => {
-      const result = await updateRecommendationStatus('non_existent_id', 'accepted')
+      const result = await updateRecommendationStatus(USER_A, 'non_existent_id', 'accepted')
       expect(result).toBeNull()
     })
   })

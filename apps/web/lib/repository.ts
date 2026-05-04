@@ -48,12 +48,16 @@ import {
   type MindNodeType,
   type MindNodeState,
   type RecommendationCreateInput,
+  type RecommendationFeedbackInput,
+  type RecommendationFeedbackResult,
   type RecommendationStatus,
   type RecommendationEventType,
   type RecommendationEventInput,
   type UserBehaviorEventType,
   type UserBehaviorTargetType,
   type UserBehaviorEventInput,
+  feedbackTypeToStatus,
+  feedbackTypeToEventType,
   type RelationDirection,
   type RelationSource,
   type SourceType,
@@ -1948,12 +1952,19 @@ export async function listRecommendations(
   return recs.flatMap((r) => { const p = toPersistedRecommendation(r); return p ? [p] : [] })
 }
 
+export async function getRecommendation(userId: string, recommendationId: string): Promise<PersistedRecommendation | null> {
+  const rec = await recommendationsTable.get(recommendationId)
+  if (!rec || rec.userId !== userId) return null
+  return toPersistedRecommendation(rec)
+}
+
 export async function updateRecommendationStatus(
+  userId: string,
   recommendationId: string,
   status: RecommendationStatus,
 ): Promise<PersistedRecommendation | null> {
   const rec = await recommendationsTable.get(recommendationId)
-  if (!rec) return null
+  if (!rec || rec.userId !== userId) return null
 
   await recommendationsTable.update(recommendationId, {
     status,
@@ -1961,6 +1972,60 @@ export async function updateRecommendationStatus(
   })
 
   return toPersistedRecommendation(await recommendationsTable.get(recommendationId))
+}
+
+export async function recordRecommendationFeedback(
+  input: RecommendationFeedbackInput,
+): Promise<RecommendationFeedbackResult> {
+  const rec = await recommendationsTable.get(input.recommendationId)
+  if (!rec) {
+    throw new Error(`Recommendation not found: ${input.recommendationId}`)
+  }
+  if (rec.userId !== input.userId) {
+    throw new Error(`User ${input.userId} does not own recommendation ${input.recommendationId}`)
+  }
+
+  const status = feedbackTypeToStatus(input.feedbackType)
+  const eventType = feedbackTypeToEventType(input.feedbackType)
+
+  await recommendationsTable.update(input.recommendationId, {
+    status,
+    updatedAt: new Date(),
+  })
+
+  const metadata: Record<string, unknown> = {
+    source: 'recommendation_feedback',
+    feedbackType: input.feedbackType,
+  }
+  if (input.feedbackPayload) {
+    metadata.feedbackPayload = input.feedbackPayload
+  }
+
+  const recEvent = await recordRecommendationEvent({
+    recommendationId: input.recommendationId,
+    userId: input.userId,
+    eventType,
+    metadata,
+  })
+
+  const updated = await recommendationsTable.get(input.recommendationId)
+  const persisted = toPersistedRecommendation(updated)
+  if (!persisted) {
+    throw new Error('Failed to retrieve updated recommendation')
+  }
+
+  return {
+    recommendation: {
+      id: persisted.id,
+      status: persisted.status,
+      updatedAt: persisted.updatedAt,
+    },
+    feedbackEvent: {
+      id: recEvent.id,
+      eventType: recEvent.eventType,
+      recommendationId: recEvent.recommendationId,
+    },
+  }
 }
 
 export async function recordRecommendationEvent(input: RecommendationEventInput): Promise<PersistedRecommendationEvent> {
