@@ -5,6 +5,8 @@ import {
   createCaptureToDocumentFlow,
   getDocumentByCaptureId,
   getMindNode,
+  listRecommendations,
+  listRecommendationEvents,
 } from '@/lib/repository'
 
 const USER_A = 'user_test_a'
@@ -14,6 +16,8 @@ async function cleanAll() {
   await db.table('dockItems').clear()
   await db.table('entries').clear()
   await db.table('mindNodes').clear()
+  await db.table('recommendations').clear()
+  await db.table('recommendationEvents').clear()
 }
 
 function unwrap<T>(value: T | null): T {
@@ -49,6 +53,17 @@ describe('capture → document → mindNode flow', () => {
       expect(result.mindNode.nodeType).toBe('document')
       expect(result.mindNode.documentId).toBe(result.document.id)
       expect(result.mindNode.state).toBe('drifting')
+
+      expect(result.recommendation.id).toBeTruthy()
+      expect(result.recommendation.recommendationType).toBe('landing')
+      expect(result.recommendation.status).toBe('generated')
+      expect(result.recommendation.subjectType).toBe('dockItem')
+      expect(result.recommendation.subjectId).toBe(result.capture.id)
+      expect(result.recommendation.candidateType).toBe('mindNode')
+      expect(result.recommendation.candidateId).toBe(result.mindNode.id)
+
+      expect(result.recommendationEvent.id).toBeTruthy()
+      expect(result.recommendationEvent.eventType).toBe('recommendation_generated')
     })
 
     it('creates capture with custom topic', async () => {
@@ -287,6 +302,204 @@ describe('capture → document → mindNode flow', () => {
 
       const found = pendingItems.find((i: { id: number }) => i.id === result.capture.id)
       expect(found).toBeUndefined()
+    })
+  })
+
+  describe('recommendation landing flow (LC-004)', () => {
+    it('creates landing recommendation on successful flow', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'recommendation 生成测试',
+      })
+
+      expect(result.recommendation.id).toBeTruthy()
+      expect(result.recommendation.recommendationType).toBe('landing')
+      expect(result.recommendation.status).toBe('generated')
+    })
+
+    it('creates recommendation_event generated on successful flow', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'event 生成测试',
+      })
+
+      expect(result.recommendationEvent.id).toBeTruthy()
+      expect(result.recommendationEvent.eventType).toBe('recommendation_generated')
+    })
+
+    it('recommendation.subject points to capture', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'subject 指向验证',
+      })
+
+      expect(result.recommendation.subjectType).toBe('dockItem')
+      expect(result.recommendation.subjectId).toBe(result.capture.id)
+    })
+
+    it('recommendation.candidate points to mindNode', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'candidate 指向验证',
+      })
+
+      expect(result.recommendation.candidateType).toBe('mindNode')
+      expect(result.recommendation.candidateId).toBe(result.mindNode.id)
+    })
+
+    it('recommendation_event associates with recommendation', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'event 关联验证',
+      })
+
+      const events = await listRecommendationEvents(USER_A, {
+        recommendationId: result.recommendation.id,
+      })
+      expect(events).toHaveLength(1)
+      expect(events[0].eventType).toBe('recommendation_generated')
+      expect(events[0].recommendationId).toBe(result.recommendation.id)
+    })
+
+    it('userId isolation: user A cannot query user B recommendation', async () => {
+      const resultA = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: '用户A的推荐',
+      })
+      await createCaptureToDocumentFlow({
+        userId: USER_B,
+        rawText: '用户B的推荐',
+      })
+
+      const recsA = await listRecommendations(USER_A)
+      const recsB = await listRecommendations(USER_B)
+
+      expect(recsA).toHaveLength(1)
+      expect(recsB).toHaveLength(1)
+      expect(recsA[0].id).toBe(resultA.recommendation.id)
+
+      const crossRecs = await listRecommendations(USER_B, { subjectType: 'dockItem' })
+      const foundCross = crossRecs.find((r) => r.id === resultA.recommendation.id)
+      expect(foundCross).toBeUndefined()
+    })
+
+    it('userId isolation: user A cannot query user B recommendation_event', async () => {
+      const resultA = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: '用户A的事件',
+      })
+      await createCaptureToDocumentFlow({
+        userId: USER_B,
+        rawText: '用户B的事件',
+      })
+
+      const eventsA = await listRecommendationEvents(USER_A, {
+        recommendationId: resultA.recommendation.id,
+      })
+      expect(eventsA).toHaveLength(1)
+
+      const eventsB = await listRecommendationEvents(USER_B, {
+        recommendationId: resultA.recommendation.id,
+      })
+      expect(eventsB).toHaveLength(0)
+    })
+
+    it('empty content rejection does not generate recommendation', async () => {
+      await expect(
+        createCaptureToDocumentFlow({
+          userId: USER_A,
+          rawText: '',
+        }),
+      ).rejects.toThrow('rawText must not be empty')
+
+      const recs = await listRecommendations(USER_A)
+      expect(recs).toHaveLength(0)
+    })
+
+    it('empty content rejection does not generate recommendation_event', async () => {
+      await expect(
+        createCaptureToDocumentFlow({
+          userId: USER_A,
+          rawText: '   ',
+        }),
+      ).rejects.toThrow('rawText must not be empty')
+
+      const events = await listRecommendationEvents(USER_A)
+      expect(events).toHaveLength(0)
+    })
+
+    it('LC-003 status rules not regressed: capture.status = archived', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'LC-003 状态规则不回退',
+      })
+
+      const dockItem = await db.table('dockItems').get(result.capture.id)
+      expect(unwrap(dockItem).status).toBe('archived')
+    })
+
+    it('LC-003 status rules not regressed: processedAt is set', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'processedAt 验证 LC-004',
+      })
+
+      const dockItem = await db.table('dockItems').get(result.capture.id)
+      expect(unwrap(dockItem).processedAt).toBeInstanceOf(Date)
+      expect(unwrap(dockItem).processedAt).not.toBeNull()
+    })
+
+    it('LC-002 association rules not regressed: Document.sourceDockItemId', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'LC-002 sourceDockItemId 不回退',
+      })
+
+      const entry = await db.table('entries').get(result.document.id)
+      expect(unwrap(entry).sourceDockItemId).toBe(result.capture.id)
+    })
+
+    it('LC-002 association rules not regressed: MindNode.documentId', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'LC-002 documentId 不回退',
+      })
+
+      const node = await db.table('mindNodes').get(result.mindNode.id)
+      expect(unwrap(node).documentId).toBe(result.document.id)
+    })
+
+    it('recommendation record has reasonJson with flow metadata', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'reasonJson 验证',
+      })
+
+      const recs = await listRecommendations(USER_A)
+      expect(recs).toHaveLength(1)
+      const reasonJson = unwrap(recs[0].reasonJson)
+      const parsed = JSON.parse(reasonJson)
+      expect(parsed.source).toBe('capture_to_document_flow')
+      expect(parsed.reason).toBe('created from successful capture landing flow')
+      expect(parsed.documentId).toBe(result.document.id)
+      expect(parsed.mindNodeId).toBe(result.mindNode.id)
+    })
+
+    it('recommendation_event has metadata with flow context', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'event metadata 验证',
+      })
+
+      const events = await listRecommendationEvents(USER_A, {
+        recommendationId: result.recommendation.id,
+      })
+      expect(events).toHaveLength(1)
+      expect(events[0].metadata).not.toBeNull()
+      const meta = events[0].metadata as Record<string, unknown>
+      expect(meta.source).toBe('capture_to_document_flow')
+      expect(meta.documentId).toBe(result.document.id)
+      expect(meta.mindNodeId).toBe(result.mindNode.id)
     })
   })
 })

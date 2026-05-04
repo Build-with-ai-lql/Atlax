@@ -9,37 +9,59 @@
 ---
 
 <!-- ============================================ -->
-<!-- 分割线：Local Core Phase 1 Round 2 (LC-002) -->
+<!-- 分割线：Phase 3 Round 18 (LC-004) -->
 <!-- ============================================ -->
 
-## Local Core Phase 1 Round 2 devlog -- LC-002 Capture / Document / MindNode 最小闭环服务化
+## Phase 3 Round 18 devlog -- LC-004 Capture Landing Recommendation 最小生成闭环
 
 **时间戳**: 2026-05-05
 
-**任务起止时间**: 01:44 - 01:57 CST
+**任务起止时间**: 03:12 - 03:32 CST
 
-**Notion 卡片**: LC-002 Capture / Document / MindNode 最小闭环服务化
+**工时**: 20 分钟
 
-**任务目标**: 补齐 Local Core 主链路前半段 Capture → Document → MindNode 的最小闭环服务化，让一次文本输入通过统一 Local Core service / repository contract 创建 Capture 记录、Document 记录和 MindNode 结构投影。
+**Notion 卡片**: LC-004 Capture Landing Recommendation 最小生成闭环
+
+**任务目标**: 在 Capture → Document → MindNode 最小闭环成功后，生成最小 landing recommendation，并写入 recommendation_event generated，把主链路推进到 Capture → Document → MindNode → Recommendation → RecommendationEvent。
 
 **改动文件及行数**:
-- `packages/domain/src/services/CaptureToDocumentFlow.ts` | A | +50 行（领域类型定义 + 验证函数：CaptureToDocumentInput、CaptureToDocumentResult 类型，validateCaptureInput、extractDocumentTitle 函数）
-- `packages/domain/src/services/index.ts` | M | +1 行（导出 CaptureToDocumentFlow）
-- `apps/web/lib/repository.ts` | M | +75 行（新增 createCaptureToDocumentFlow API + 4 行类型/函数导入）
-- `apps/web/tests/capture-document-flow.test.ts` | A | +234 行（16 个 repository 集成测试）
-- `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | +60 行（本轮日志）
+- `packages/domain/src/services/CaptureToDocumentFlow.ts` | M | +13 行（CaptureToDocumentResult 新增 recommendation + recommendationEvent 字段）
+- `apps/web/lib/repository.ts` | M | +41 行（createCaptureToDocumentFlow 内部在 MindNode 创建后同步创建 landing recommendation + recommendation_event generated，返回值扩展包含 recommendation/recommendationEvent）
+- `apps/web/tests/capture-document-flow.test.ts` | M | +205 行（新增 15 个 LC-004 测试 + 主测试扩展 recommendation 断言 + cleanAll 扩展 + 新增 import）
+- `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | +105 行（本轮日志 + 格式修复）
 
 **变更摘要**:
-- **新增领域服务**: CaptureToDocumentFlow 定义 CaptureToDocumentInput（userId/rawText/topic/sourceType）、CaptureToDocumentResult（capture/document/mindNode 三元组）、validateCaptureInput（空内容拒绝 + userId 非空校验）、extractDocumentTitle（取首行，>60 字符截断）
-- **新增 Repository API**: createCaptureToDocumentFlow — 一次调用完成 Capture（dockItem）创建 → Document（entry）创建 → MindNode（'document' 类型，drifting 状态）创建，返回完整三元组结果
-- **userId 隔离**: createCaptureToDocumentFlow 内部的 createDockItem、entriesTable.add、upsertMindNode 均继承现有 userId 隔离语义
-- **workspaceId**: 当前数据模型无 workspaceId 字段，未硬加。所有 capture/document/mindNode 表仅按 userId 隔离
-- **测试覆盖**: 16 个测试用例覆盖完整流程创建、自定义 topic/sourceType、标题提取（多行/长标题截断）、空内容/纯空白/空 userId 拒绝、userId 隔离（capture/document/mindNode 三层）、document ↔ mindNode 关联稳定性
+- **recommendation 生成规则**: createCaptureToDocumentFlow 成功后，同步创建一条 landing recommendation：
+  - `subjectType = 'dockItem'`，`subjectId = captureId`（指向本次 capture）
+  - `recommendationType = 'landing'`（复用已有 recommendationType 开放字符串字段）
+  - `candidateType = 'mindNode'`，`candidateId = mindNode.id`（指向本次生成的 mindNode）
+  - `status = 'generated'`
+  - `confidenceScore = 1.0`（最小闭环确定性高，不引入概率语义）
+  - `reasonJson` 写入结构化可解释信息：`{ source: 'capture_to_document_flow', reason: 'created from successful capture landing flow', documentId, mindNodeId }`
+- **recommendation_event generated 写入规则**: 同步调用 `recordRecommendationEvent` 写入一条事件：
+  - `eventType = 'recommendation_generated'`（对应领域枚举 `RecommendationEventType`）
+  - `recommendationId` 关联刚创建的 recommendation
+  - `metadata` 写入 `{ source: 'capture_to_document_flow', documentId, mindNodeId }`
+- **subject 指向决策**: subject 指向 capture（dockItem），而非 document。理由是 capture 是用户输入的原点，推荐系统应当知道"为什么推荐"源于哪次用户输入。从 capture 可通过 `document.sourceDockItemId` 反查 document
+- **userId 隔离**: createCaptureToDocumentFlow 内部调用的 `createDockItem`、`entriesTable.add`、`upsertMindNode`、`createRecommendation`、`recordRecommendationEvent` 均继承现有 userId 隔离语义。`listRecommendations` / `listRecommendationEvents` 底层查询均以 userId 为前缀过滤
+- **workspaceId**: 当前数据模型无 workspaceId 字段（`recommendationsTable` / `recommendationEventsTable` 仅有 userId 隔离），不硬引入。原因：LC-001 阶段定义的三张 Intelligence Spine 表均未设计 workspaceId，强行添加会破坏现有 schema 一致性（需额外 migration + 回填策略）。未来如引入 workspace 概念，需统一补齐所有 Intelligence Spine 表的 workspaceId
+- **不修改已有状态规则**: LC-003 的 `capture.status = archived` / `processedAt` 写入逻辑完全不变；LC-002 的 `document.sourceDockItemId` / `mindNode.documentId` 关联完全不变
+- **测试覆盖**: 新增 15 个 LC-004 测试（web tests 总数 387 = 372 LC-002/003 + 15 LC-004），覆盖：
+  - landing recommendation 创建 + recommendation_event generated 创建
+  - recommendation.subject 指向 capture
+  - recommendation.candidate 指向 mindNode
+  - recommendation_event 关联 recommendation（by recommendationId 过滤）
+  - userId 隔离：recommendation + recommendation_event 双层
+  - 空内容拒绝时无 recommendation / recommendation_event 写入
+  - LC-003 状态规则不回退（capture.status=archived, processedAt 非空）
+  - LC-002 关联规则不回退（sourceDockItemId, documentId）
+  - reasonJson 结构化元数据验证
+  - recommendation_event metadata 内容验证
 
 **遇到的问题以及解决方式**:
 | 问题 | 解决方式 | 是否解决 |
 |------|---------|---------|
-| 无 | — | — |
+| LC-001~LC-004 开发日志未遵循 devlog-structure.md 规范（顺序正排、缺工时、题目格式不一致） | 在 LC-004 交付后统一修复：重排为倒序（LC-004→LC-003→LC-002→LC-001），补充工时记录，统一题目格式为 Phase 3 Round X | ✅ |
 
 **自动验证**:
 | 检查项 | 结果 |
@@ -47,49 +69,63 @@
 | `pnpm lint` | ✅ 0 errors（1 pre-existing warning 来自 GoldenTopNav.tsx，非本轮引入） |
 | `pnpm typecheck` | ✅ PASS（domain + web 均通过） |
 | domain tests | ✅ 312 tests / 20 files |
-| web tests | ✅ 367 tests / 17 files（含 LC-002 新增 16 tests） |
+| web tests | ✅ 387 tests / 17 files（含 LC-004 新增 15 tests） |
 | `pnpm build:web` | ✅ PASS（Next.js 14.2.28 构建成功，7 routes） |
 | `pnpm validate` | ✅ PASS（lint + typecheck + test + terminology 全部通过） |
 
 **手工验证方式**:
-1. 调用 `createCaptureToDocumentFlow({ userId: 'test', rawText: '今日学习笔记' })`，返回的 capture.id > 0，document.id > 0，mindNode.id 非空
-2. 返回结果中 `capture.rawText === document.content === '今日学习笔记'`，`document.sourceCaptureId === capture.id`
-3. `mindNode.documentId === document.id`，`mindNode.nodeType === 'document'`，`mindNode.state === 'drifting'`
-4. `mindNode.label === document.title === '今日学习笔记'`（首行提取）
-5. 调用 `getDocumentByCaptureId(userId, captureId)` 返回的 document.id 与结果一致
-6. 调用 `getMindNode(userId, mindNodeId)` 返回的 node.documentId 与 document.id 一致
-7. 空字符串/纯空白 rawText 抛出 `'rawText must not be empty'`
-8. 空 userId 抛出 `'userId must not be empty'`
-9. 不同 userId A/B 创建后，`getDocumentByCaptureId(USER_B, captureA.id)` 返回 null
-10. 不同 userId 的 mindNode 交叉查询返回 null
+1. 调用 `createCaptureToDocumentFlow({ userId: 'test', rawText: '测试推荐生成' })`，返回结果含 `recommendation` 和 `recommendationEvent` 字段
+2. `result.recommendation.recommendationType === 'landing'`，`result.recommendation.status === 'generated'`
+3. `result.recommendation.subjectType === 'dockItem'`，`result.recommendation.subjectId === result.capture.id`
+4. `result.recommendation.candidateType === 'mindNode'`，`result.recommendation.candidateId === result.mindNode.id`
+5. `result.recommendationEvent.eventType === 'recommendation_generated'`
+6. 调用 `listRecommendationEvents(userId, { recommendationId: result.recommendation.id })` 返回 1 条记录，`eventType === 'recommendation_generated'`，`recommendationId === result.recommendation.id`
+7. 调用 `listRecommendations(userId)` 返回 1 条记录，`reasonJson` 可 JSON.parse 得到 `{ source, reason, documentId, mindNodeId }`
+8. 不同 userId A/B 创建后，`listRecommendations(USER_B)` 不包含 USER_A 的 recommendation
+9. `listRecommendationEvents(USER_B, { recommendationId: recA.id })` 返回空
+10. 空字符串 rawText → 抛出异常，且 `listRecommendations` / `listRecommendationEvents` 均为空
 
-**手工验证标准**:
-- Capture → Document → MindNode 三元组一次调用创建成功，各字段值正确
-- document.sourceCaptureId 指向正确的 capture
-- mindNode.documentId 指向正确的 document
-- 空内容/空 userId 被拒绝，抛异常而非静默创建脏数据
-- 跨 userId 查询均返回 null/空
+**验收标准**:
+- createCaptureToDocumentFlow 成功后自动生成 landing recommendation（status = generated）
+- 同步写入 recommendation_event generated（eventType = recommendation_generated）
+- recommendation.subject 指向 capture（dockItem 类型）
+- recommendation.candidate 指向 mindNode（mindNode 类型）
+- recommendation_event 可通过 recommendationId 关联到 recommendation
+- recommendation / recommendation_event 按 userId 隔离
+- 空内容拒绝时不产生任何 recommendation / recommendation_event 脏数据
+- LC-003 状态规则（archived + processedAt）不回退
+- LC-002 关联规则（sourceDockItemId + documentId）不回退
+- pnpm validate 和 pnpm build:web 通过
+
+**已知风险或未做事项**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| recommendation 写入在 capture status 更新之前 | 低 | 当前流程顺序：MindNode 创建 → Recommendation 创建 → Capture status 更新。若 Recommendation 创建成功后 Capture status 更新失败，会产生一条无对应 archived capture 的 recommendation。由于 Dexie 无跨表事务，此风险存在但极低（dockItemsTable.update 简单操作失败概率极小） |
+| landing 使用开放字符串 recommendationType | 低 | 当前 `recommendationType` 为开放 `string` 类型（非枚举），`landing` 值不与任何领域枚举冲突。未来如需强类型化，可将 `landing` 加入 RecommendationType 联合类型 |
+| confidenceScore = 1.0 的语义 | 极低 | 最小闭环中推荐确定性高，使用 1.0 合理。但若后续引入概率排序算法，此值可能需要重新审视。当前不影响任何排序逻辑（不做 Top-K） |
+| 不做推荐排序/Top-K | 按设计 | LC-004 仅为最小生成闭环，不引入排序/Top-K 策略。后续如需 Top-K 展示，可基于 `confidenceScore` 或 `createdAt` 排序 |
 
 **是否可以进入下一轮**: 是
 
 **下一轮风险评估**:
 | 风险 | 等级 | 说明 |
 |------|------|------|
-| Capture 状态为 pending 而非 archived | 低 | 当前 createCaptureToDocumentFlow 创建的 capture status 为 pending（createDockItem 默认值），而非 archived。若后续需要 capture 自动标记为 archived，可在 createCaptureToDocumentFlow 内部追加状态更新 |
-| MindNode 无自动边连接 | 低 | 当前仅创建孤立 document 类型 MindNode，未自动创建与父级/同级节点的 MindEdge。需后续轮次补齐图谱拓扑逻辑 |
-| workspaceId 缺失 | 低 | 当前数据模型无 workspaceId，仅按 userId 隔离。多工作区场景下无法区分同一用户的不同工作区，未来如引入 workspace 需补齐 |
+| 后续轮次需补齐 recommendation shown 事件 | 低 | 当前未做 shown 事件（严格按卡要求），前端展示推荐列表时需单独写入 shown 事件以形成完整审计链路 |
+| 多 candidate 场景需重新设计 | 低 | 当前一条 flow 生成一条 recommendation + 一个 candidate（mindNode），未来如需多 candidate 需改为批量创建 |
 
 ---
 
 <!-- ============================================ -->
-<!-- 分割线：Local Core Phase 1 Round 3 (LC-003) -->
+<!-- 分割线：Phase 3 Round 17 (LC-003) -->
 <!-- ============================================ -->
 
-## Local Core Phase 1 Round 3 devlog -- LC-003 状态一致性与结构投影收口
+## Phase 3 Round 17 devlog -- LC-003 状态一致性与结构投影收口
 
 **时间戳**: 2026-05-05
 
 **任务起止时间**: 02:25 - 02:35 CST
+
+**工时**: 10 分钟
 
 **Notion 卡片**: LC-003 Local Core 状态一致性与结构投影收口
 
@@ -168,14 +204,91 @@
 ---
 
 <!-- ============================================ -->
-<!-- 分割线：Local Core Phase 1 Round 1 (LC-001) -->
+<!-- 分割线：Phase 3 Round 16 (LC-002) -->
 <!-- ============================================ -->
 
-## Local Core Phase 1 Round 1 devlog -- LC-001 反馈事件骨架落地
+## Phase 3 Round 16 devlog -- LC-002 Capture / Document / MindNode 最小闭环服务化
+
+**时间戳**: 2026-05-05
+
+**任务起止时间**: 01:44 - 01:57 CST
+
+**工时**: 13 分钟
+
+**Notion 卡片**: LC-002 Capture / Document / MindNode 最小闭环服务化
+
+**任务目标**: 补齐 Local Core 主链路前半段 Capture → Document → MindNode 的最小闭环服务化，让一次文本输入通过统一 Local Core service / repository contract 创建 Capture 记录、Document 记录和 MindNode 结构投影。
+
+**改动文件及行数**:
+- `packages/domain/src/services/CaptureToDocumentFlow.ts` | A | +50 行（领域类型定义 + 验证函数：CaptureToDocumentInput、CaptureToDocumentResult 类型，validateCaptureInput、extractDocumentTitle 函数）
+- `packages/domain/src/services/index.ts` | M | +1 行（导出 CaptureToDocumentFlow）
+- `apps/web/lib/repository.ts` | M | +75 行（新增 createCaptureToDocumentFlow API + 4 行类型/函数导入）
+- `apps/web/tests/capture-document-flow.test.ts` | A | +234 行（16 个 repository 集成测试）
+- `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | +60 行（本轮日志）
+
+**变更摘要**:
+- **新增领域服务**: CaptureToDocumentFlow 定义 CaptureToDocumentInput（userId/rawText/topic/sourceType）、CaptureToDocumentResult（capture/document/mindNode 三元组）、validateCaptureInput（空内容拒绝 + userId 非空校验）、extractDocumentTitle（取首行，>60 字符截断）
+- **新增 Repository API**: createCaptureToDocumentFlow — 一次调用完成 Capture（dockItem）创建 → Document（entry）创建 → MindNode（'document' 类型，drifting 状态）创建，返回完整三元组结果
+- **userId 隔离**: createCaptureToDocumentFlow 内部的 createDockItem、entriesTable.add、upsertMindNode 均继承现有 userId 隔离语义
+- **workspaceId**: 当前数据模型无 workspaceId 字段，未硬加。所有 capture/document/mindNode 表仅按 userId 隔离
+- **测试覆盖**: 16 个测试用例覆盖完整流程创建、自定义 topic/sourceType、标题提取（多行/长标题截断）、空内容/纯空白/空 userId 拒绝、userId 隔离（capture/document/mindNode 三层）、document ↔ mindNode 关联稳定性
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 | 是否解决 |
+|------|---------|---------|
+| 无 | — | — |
+
+**自动验证**:
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm lint` | ✅ 0 errors（1 pre-existing warning 来自 GoldenTopNav.tsx，非本轮引入） |
+| `pnpm typecheck` | ✅ PASS（domain + web 均通过） |
+| domain tests | ✅ 312 tests / 20 files |
+| web tests | ✅ 367 tests / 17 files（含 LC-002 新增 16 tests） |
+| `pnpm build:web` | ✅ PASS（Next.js 14.2.28 构建成功，7 routes） |
+| `pnpm validate` | ✅ PASS（lint + typecheck + test + terminology 全部通过） |
+
+**手工验证方式**:
+1. 调用 `createCaptureToDocumentFlow({ userId: 'test', rawText: '今日学习笔记' })`，返回的 capture.id > 0，document.id > 0，mindNode.id 非空
+2. 返回结果中 `capture.rawText === document.content === '今日学习笔记'`，`document.sourceCaptureId === capture.id`
+3. `mindNode.documentId === document.id`，`mindNode.nodeType === 'document'`，`mindNode.state === 'drifting'`
+4. `mindNode.label === document.title === '今日学习笔记'`（首行提取）
+5. 调用 `getDocumentByCaptureId(userId, captureId)` 返回的 document.id 与结果一致
+6. 调用 `getMindNode(userId, mindNodeId)` 返回的 node.documentId 与 document.id 一致
+7. 空字符串/纯空白 rawText 抛出 `'rawText must not be empty'`
+8. 空 userId 抛出 `'userId must not be empty'`
+9. 不同 userId A/B 创建后，`getDocumentByCaptureId(USER_B, captureA.id)` 返回 null
+10. 不同 userId 的 mindNode 交叉查询返回 null
+
+**验收标准**:
+- Capture → Document → MindNode 三元组一次调用创建成功，各字段值正确
+- document.sourceCaptureId 指向正确的 capture
+- mindNode.documentId 指向正确的 document
+- 空内容/空 userId 被拒绝，抛异常而非静默创建脏数据
+- 跨 userId 查询均返回 null/空
+
+**是否可以进入下一轮**: 是
+
+**下一轮风险评估**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| Capture 状态为 pending 而非 archived | 低 | 当前 createCaptureToDocumentFlow 创建的 capture status 为 pending（createDockItem 默认值），而非 archived。若后续需要 capture 自动标记为 archived，可在 createCaptureToDocumentFlow 内部追加状态更新 |
+| MindNode 无自动边连接 | 低 | 当前仅创建孤立 document 类型 MindNode，未自动创建与父级/同级节点的 MindEdge。需后续轮次补齐图谱拓扑逻辑 |
+| workspaceId 缺失 | 低 | 当前数据模型无 workspaceId，仅按 userId 隔离。多工作区场景下无法区分同一用户的不同工作区，未来如引入 workspace 需补齐 |
+
+---
+
+<!-- ============================================ -->
+<!-- 分割线：Phase 3 Round 15 (LC-001) -->
+<!-- ============================================ -->
+
+## Phase 3 Round 15 devlog -- LC-001 反馈事件骨架落地
 
 **时间戳**: 2026-05-04
 
 **任务起止时间**: 20:05 - 20:22 CST
+
+**工时**: 17 分钟
 
 **Notion 卡片**: LC-001 Local Core 反馈事件骨架落地
 
@@ -222,7 +335,7 @@
 7. `recordUserBehaviorEvent` 写入后，`listUserBehaviorEvents` 按 eventType/targetType 过滤正确
 8. 不同 userId 之间的 recommendation、recommendationEvent、userBehaviorEvent 完全隔离，不互相污染
 
-**手工验证标准**:
+**验收标准**:
 - 三张 IndexedDB 表 schema 与 db.ts version(17) 定义一致
 - 所有 repository API 返回的 Persisted 对象 userId 与请求 userId 匹配
 - 跨用户查询不返回其他用户数据
@@ -252,6 +365,8 @@
 **时间戳**: 2026-04-26
 
 **任务起止时间**: 09:15 - 09:45 CST
+
+**工时**: 30 分钟
 
 **任务目标**: 补齐 createEntryRelation/deleteEntryRelation 的 TemporalActivity 双写链路，确保 Time Machine 能拿到关系变更时间事件。
 
@@ -300,6 +415,8 @@
 **时间戳**: 2026-04-26
 
 **任务起止时间**: 08:10 - 09:15 CST
+
+**工时**: 65 分钟
 
 **任务目标**: 建立 Phase 3 知识结构化底座，包含 Collection、EntryTagRelation、EntryRelation、KnowledgeEvent、TemporalActivity 五张表及结构投影服务，支撑 World Tree / Time Machine / Review Insight 视图。
 
@@ -357,6 +474,8 @@
 
 **任务起止时间**: 04:50 - 08:10 CST
 
+**工时**: 200 分钟
+
 **任务目标**: 实现 Widget 持久化模型和 Calendar 日期查询能力，为前端提供 Widget/Calendar 主线后端支撑。
 
 **改动文件及行数**:
@@ -405,6 +524,8 @@
 
 **任务起止时间**: 02:04 - 02:35 CST
 
+**工时**: 31 分钟
+
 **任务目标**: 实现取消后的两层 refill/refield 选择逻辑，支持"重走流程"和"单修模块"两种模式。
 
 **改动文件及行数**:
@@ -447,6 +568,8 @@
 **时间戳**: 2026-04-26
 
 **任务起止时间**: 01:52 - 02:04 CST
+
+**工时**: 12 分钟
 
 **任务目标**: 实现 ChatSession 与 DockItem 的映射关系，避免重复确认产生重复文档；修正 Refill 语义并增加持久化 patch。
 
@@ -500,6 +623,8 @@
 
 **任务起止时间**: 01:02 - 01:52 CST
 
+**工时**: 50 分钟
+
 **任务目标**: 对 Round 8 修复进行质量收口复核，确保 trailing whitespace、reopen 复用逻辑、编辑策略、userId 隔离全部正确。
 
 **改动文件及行数**:
@@ -536,6 +661,8 @@
 **时间戳**: 2026-04-25
 
 **任务起止时间**: 23:45 - 01:02 CST
+
+**工时**: 77 分钟
 
 **任务目标**: 修复 reopenItem 清空 suggestions + processedAt 的问题，实现归档记录重新打开后复用已有整理结果；同时修复 27 个 lint error。
 
@@ -589,6 +716,8 @@
 
 **任务起止时间**: 22:55 - 23:45 CST
 
+**工时**: 50 分钟
+
 **任务目标**: 修复 createDockItem 绕过 chain link 校验的安全漏洞，确保 sourceId/parentId 的合法性验证覆盖创建路径。
 
 **改动文件及行数**:
@@ -636,6 +765,8 @@
 **时间戳**: 2026-04-25
 
 **任务起止时间**: 17:42 - 22:55 CST
+
+**工时**: 313 分钟
 
 **任务目标**: 补齐 Chain provenance 异步查询能力，修复 EditorCommandTransform 测试期望值，增加跨用户隔离测试。
 
@@ -686,6 +817,8 @@
 
 **任务起止时间**: 15:12 - 17:42 CST
 
+**工时**: 150 分钟
+
 **任务目标**: 修复 updateChainLinks 未验证 sourceId/parentId 存在性和 ownership 的问题。
 
 **改动文件及行数**:
@@ -729,6 +862,8 @@
 **时间戳**: 2026-04-24
 
 **任务起止时间**: 14:28 - 15:12 CST
+
+**工时**: 44 分钟
 
 **任务目标**: 收口链式结构服务、编辑保存策略（archived entry 编辑）、编辑器能力接口测试。
 
@@ -776,6 +911,8 @@
 **时间戳**: 2026-04-24
 
 **任务起止时间**: 18:16 - 19:30 CST
+
+**工时**: 74 分钟
 
 **任务目标**: 修复 archiveItem 写入 selectedProject/selectedActions 的问题，Events userId 隔离，ChatSession 真实 Dexie 层测试。
 
@@ -833,6 +970,8 @@
 
 **任务起止时间**: 15:54 - 18:16 CST
 
+**工时**: 142 分钟
+
 **任务目标**: 补齐 ChatSession 模型的 title/pinned 字段，修复 lint 错误，增加 repository 测试。
 
 **改动文件及行数**:
@@ -875,6 +1014,8 @@
 **时间戳**: 2026-04-24
 
 **任务起止时间**: 15:18 - 15:54 CST
+
+**工时**: 36 分钟
 
 **任务目标**: 设计并实现 ChatSession 数据结构的持久化存储，包含 IndexedDB 表、Migration 和 Repository 方法。
 
@@ -920,6 +1061,8 @@
 
 **任务起止时间**: 12:40 - 14:28 CST
 
+**工时**: 108 分钟
+
 **任务目标**: 补齐 Round 1 的测试覆盖，接入 sanitizeSuggestionLabel，确认 repository 导出。
 
 **改动文件及行数**:
@@ -962,6 +1105,8 @@
 **时间戳**: 2026-04-24
 
 **任务起止时间**: 11:45 - 12:40 CST
+
+**工时**: 55 分钟
 
 **任务目标**: Phase 3 后端底座建设，包含 #6 Chat 引导状态机、#9 数据能力补齐、#7 链式结构最小落地、#8 编辑保存路径收敛、#11 编辑器能力接口预留。
 

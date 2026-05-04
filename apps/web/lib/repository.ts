@@ -1394,6 +1394,34 @@ export async function createCaptureToDocumentFlow(
     processedAt: new Date(),
   })
 
+  const rec = await createRecommendation({
+    userId: input.userId,
+    subjectType: 'dockItem',
+    subjectId: captureId,
+    recommendationType: 'landing',
+    candidateType: 'mindNode',
+    candidateId: mindNode.id,
+    confidenceScore: 1.0,
+    reasonJson: JSON.stringify({
+      source: 'capture_to_document_flow',
+      reason: 'created from successful capture landing flow',
+      documentId: docId,
+      mindNodeId: mindNode.id,
+    }),
+    status: 'generated',
+  })
+
+  const recEvent = await recordRecommendationEvent({
+    recommendationId: rec.id,
+    userId: input.userId,
+    eventType: 'recommendation_generated',
+    metadata: {
+      source: 'capture_to_document_flow',
+      documentId: docId,
+      mindNodeId: mindNode.id,
+    },
+  })
+
   const capture = await getPersistedDockItem(captureId)
   if (!capture) {
     throw new Error('Failed to retrieve created capture')
@@ -1426,6 +1454,19 @@ export async function createCaptureToDocumentFlow(
       nodeType: mindNode.nodeType,
       documentId: mindNode.documentId as number,
       state: mindNode.state,
+    },
+    recommendation: {
+      id: rec.id,
+      recommendationType: rec.recommendationType,
+      status: rec.status,
+      subjectType: rec.subjectType,
+      subjectId: rec.subjectId as number,
+      candidateType: rec.candidateType,
+      candidateId: rec.candidateId,
+    },
+    recommendationEvent: {
+      id: recEvent.id,
+      eventType: recEvent.eventType,
     },
   }
 }

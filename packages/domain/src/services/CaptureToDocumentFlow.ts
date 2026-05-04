@@ -30,6 +30,19 @@ export interface CaptureToDocumentResult {
     documentId: number
     state: string
   }
+  recommendation: {
+    id: string
+    recommendationType: string
+    status: string
+    subjectType: string
+    subjectId: number
+    candidateType: string
+    candidateId: string
+  }
+  recommendationEvent: {
+    id: string
+    eventType: string
+  }
 }
 
 export function validateCaptureInput(input: CaptureToDocumentInput): string | null {
