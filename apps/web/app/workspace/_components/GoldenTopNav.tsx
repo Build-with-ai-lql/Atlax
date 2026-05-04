@@ -10,7 +10,6 @@ import {
   Home,
   Library,
   Network,
-  Plus,
   Search,
   Settings,
   User,
@@ -54,7 +53,6 @@ const SEARCH_SUGGESTIONS: SearchSuggestion[] = [
 interface GoldenTopNavProps {
   activeModule: GoldenViewId
   onModuleChange: (module: GoldenViewId) => void
-  onOpenRecorder: () => void
   user: LocalUser
   onLogout?: () => void
   isCollapsed?: boolean
@@ -67,7 +65,6 @@ interface GoldenTopNavProps {
 const GoldenTopNav: FC<GoldenTopNavProps> = ({
   activeModule,
   onModuleChange,
-  onOpenRecorder,
   user,
   onLogout,
   isCollapsed: isCollapsedProp,
@@ -379,16 +376,6 @@ const GoldenTopNav: FC<GoldenTopNavProps> = ({
                 <CornerDownLeft className="h-3 w-3 pointer-events-none" />
               </button>
             </div>
-
-            {!isSearchMode && (
-              <button
-                onClick={onOpenRecorder}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-white/10 hover:text-white"
-                title="Capture"
-              >
-                <Plus className="h-4 w-4 pointer-events-none" />
-              </button>
-            )}
 
             <div
               id="nav-account-container"

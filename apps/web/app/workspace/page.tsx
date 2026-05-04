@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Send, Minimize2, Sparkles, Loader2, MoreHorizontal, LayoutList, FileCode2, Pencil, FolderOutput, Download, Trash2, Check, Package, Archive, FileText, LayoutGrid, List, Columns, Search, Folder, Plus, PenTool, Circle, RotateCcw, Lightbulb, ChevronRight } from 'lucide-react'
+import { Sparkles, Loader2, MoreHorizontal, LayoutList, FileCode2, Pencil, FolderOutput, Download, Trash2, Check, Package, Archive, FileText, LayoutGrid, List, Columns, Search, Folder, Plus, PenTool, Circle, RotateCcw, Lightbulb, ChevronRight } from 'lucide-react'
 
 import { getCurrentUser, registerUser, logoutUser, type LocalUser } from '@/lib/auth'
 import GoldenTopNav from './_components/GoldenTopNav'
@@ -33,7 +33,8 @@ import {
 } from '@/lib/repository'
 import { db } from '@/lib/db'
 import type { EntryStatus } from '@/lib/types'
-import { recordEvent, type AppMode } from '@/lib/events'
+import { recordEvent } from '@/lib/events'
+import type { HomeViewHandle } from './features/home/HomeView'
 
 import WorkspaceTabs, { type Tab } from './features/shared/WorkspaceTabs'
 import HomeView from './features/home/HomeView'
@@ -90,10 +91,6 @@ export default function WorkspacePage() {
   const [activeTabId, setActiveTabId] = useState<string>('tab-home')
   const [tabsRestored, setTabsRestored] = useState(false)
 
-  const [recorderState, setRecorderState] = useState<'closed' | 'classic' | 'chat'>('closed')
-  const [inputMode, setInputMode] = useState<AppMode>('chat')
-  const [inputText, setInputText] = useState('')
-
   const [editorContent, setEditorContent] = useState('')
   const [editorTitle, setEditorTitle] = useState('')
   const [editingItemId, setEditingItemId] = useState<number | null>(null)
@@ -106,6 +103,8 @@ export default function WorkspacePage() {
   const [draftsRestored, setDraftsRestored] = useState(false)
 
   const flushSaveRef = useRef<() => Promise<void>>(() => Promise.resolve())
+
+  const homeViewRef = useRef<HomeViewHandle>(null)
 
   const [registerName, setRegisterName] = useState('')
 
@@ -781,6 +780,13 @@ export default function WorkspacePage() {
     setEditingItemId(null)
   }, [tabs, activeTabId, activeModule, editingItemId, handleActivateTab, handleNewNote, userId])
 
+  const handleFocusCaptureInput = useCallback(() => {
+    handleModuleChange('home')
+    requestAnimationFrame(() => {
+      homeViewRef.current?.focusCaptureInput()
+    })
+  }, [handleModuleChange])
+
   const handleSetEditorMode = useCallback((mode: 'classic' | 'block') => {
     setEditorMode(mode)
   }, [])
@@ -910,7 +916,6 @@ export default function WorkspacePage() {
         <GoldenTopNav
           activeModule={activeModule}
           onModuleChange={handleModuleChange}
-          onOpenRecorder={() => setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')}
           user={user}
           onLogout={handleLogout}
           isCollapsed={isEditorActive && activeModule === 'editor' && !editorNavExpanded}
@@ -1049,6 +1054,7 @@ export default function WorkspacePage() {
           <div id="view-home" className={`view-section ${activeModule === 'home' ? 'active' : ''} overflow-y-auto no-scrollbar pt-20 pb-4 px-6`}>
             <div className="w-full max-w-5xl mx-auto">
               <HomeView
+                ref={homeViewRef}
                 userId={userId}
                 userName={user.name}
                 onOpenEditor={openEditorTab}
@@ -1119,7 +1125,7 @@ export default function WorkspacePage() {
               onSuggest={handleSuggest}
               onOpenEditor={openEditorTab}
               onReopen={handleReopen}
-              onOpenRecorder={() => setRecorderState(inputMode === 'classic' ? 'classic' : 'chat')}
+              onOpenRecorder={handleFocusCaptureInput}
               selectedItem={selectedItem}
               onToast={showToast}
               onSwitchToMind={handleSwitchToMind}
@@ -1169,15 +1175,6 @@ export default function WorkspacePage() {
           </div>
         )}
 
-        <FloatingRecorder
-          recorderState={recorderState}
-          setRecorderState={setRecorderState}
-          inputMode={inputMode}
-          setInputMode={setInputMode}
-          inputText={inputText}
-          setInputText={setInputText}
-          onCapture={handleCapture}
-        />
       </div>
     </div>
   )
@@ -1916,60 +1913,6 @@ function ColumnListView({ columnStack, setColumnStack, selectedColumnNode, setSe
             )}
           </div>
         ))}
-      </div>
-    </div>
-  )
-}
-
-function FloatingRecorder({ recorderState, setRecorderState, inputMode, setInputMode, inputText, setInputText, onCapture }: {
-  recorderState: 'closed' | 'classic' | 'chat'
-  setRecorderState: (s: 'closed' | 'classic' | 'chat') => void
-  inputMode: AppMode
-  setInputMode: (m: AppMode) => void
-  inputText: string
-  setInputText: (t: string) => void
-  onCapture: (text: string) => Promise<void>
-}) {
-  const [submitting, setSubmitting] = useState(false)
-
-  const handleSubmit = async () => {
-    if (!inputText.trim() || submitting) return
-    setSubmitting(true)
-    try {
-      await onCapture(inputText.trim())
-      setInputText('')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  if (recorderState === 'closed') return null
-
-  return (
-    <div className="fixed bottom-6 right-6 z-50 transition-all duration-500" style={{ width: 'min(92vw, 480px)', minWidth: '320px' }}>
-      <div className="bg-[#0A0D14]/95 backdrop-blur-xl rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-white/[0.06] overflow-hidden flex flex-col">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.06]">
-          <div className="flex items-center gap-2">
-            <button onClick={() => setInputMode('classic')} className={`px-3 py-1 rounded-lg text-[11px] font-medium transition-colors ${inputMode === 'classic' ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-slate-300'}`}>Classic</button>
-            <button onClick={() => setInputMode('chat')} className={`px-3 py-1 rounded-lg text-[11px] font-medium transition-colors ${inputMode === 'chat' ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-slate-300'}`}>Chat</button>
-          </div>
-          <button onClick={() => setRecorderState('closed')} className="p-1.5 text-slate-500 hover:text-white rounded-lg hover:bg-white/5 transition-colors"><Minimize2 size={14} /></button>
-        </div>
-        <div className="p-4">
-          {inputMode === 'classic' ? (
-            <div className="space-y-3">
-              <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmit() }} placeholder="快速记录..." className="w-full min-h-[100px] bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-sm text-white/90 outline-none focus:border-emerald-500/30 resize-none placeholder-slate-600" />
-              <button onClick={handleSubmit} disabled={submitting || !inputText.trim()} className="w-full py-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl text-xs font-medium hover:bg-emerald-500/30 transition-colors disabled:opacity-30">{submitting ? '保存中...' : '保存'}</button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="flex gap-2">
-                <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSubmit() }} placeholder="输入内容..." className="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-2.5 text-sm text-white/90 outline-none focus:border-emerald-500/30 placeholder-slate-600" />
-                <button onClick={handleSubmit} disabled={submitting || !inputText.trim()} className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl hover:bg-emerald-500/30 transition-colors disabled:opacity-30"><Send size={16} /></button>
-              </div>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   )

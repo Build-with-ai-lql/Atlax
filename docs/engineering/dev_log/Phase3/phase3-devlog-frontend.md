@@ -9,6 +9,98 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Local Core Phase 1 Round 1 (FE-001) -->
+<!-- ============================================ -->
+
+## Phase 3 Round 21 devlog -- Local Core Phase 1 FE-001 移除旧版 Capture 浮层入口
+
+**时间戳**: 2026-05-04
+
+**Notion 卡片**: FE-001 移除旧版 Capture 浮层入口
+
+**任务起止时间**: 23:01 - 00:41 CST
+
+**工时**: 100 分钟（含 3 轮 Review 修补）
+
+**执行范围**: Local Core Phase 1 - 前端 UI 清理任务 + Review 阻塞修复，不涉及 schema/repository/后端服务化变更。
+
+**任务目标**: 移除旧版 Capture 浮层入口，删除 TopNav Plus 按钮；补充不新增依赖的前端源码级测试。
+
+**变更摘要**:
+- 删除 `FloatingRecorder` 组件（含 Classic/Chat tab 切换、"快速记录..."输入框、"保存"按钮）
+- 移除 `recorderState`/`inputMode`/`inputText` 三个组件状态
+- 移除 `AppMode` 类型导入（不再需要）
+- 移除 `Send`/`Minimize2` 图标导入（仅 FloatingRecorder 使用）
+- **移除 GoldenTopNav 的 Plus 按钮**（含 `Plus` 图标导入、`onOpenRecorder` prop）
+- `HomeView` 改为 `forwardRef`，暴露 `focusCaptureInput` 方法
+- `DockFinderView` 的 `onOpenRecorder` 绑定到 `handleFocusCaptureInput`（New Capture 菜单项聚焦主输入框）
+- **测试**：新增 `fe-001-capture-removed.test.ts`（24 测试，仅依赖 vitest + node:fs），源码级断言覆盖全部阻塞项
+
+**Review 修补记录**:
+| 轮次 | 阻塞项 | 处理 |
+|------|--------|------|
+| 第二轮 | 移除新增依赖 4 个 | 回退 package.json/lockfile/vitest.config.ts/setup.ts 至 HEAD，删除 3 个依赖新库的测试文件 |
+| 第二轮 | 补充不新增依赖的测试 | 重写为 3 tests（dynamic import 验证） |
+| 第三轮 | @rollup/rollup-darwin-x64 缺失 | 锁文件恢复至 HEAD 后已自动解决 |
+| 第三轮 | 补强测试覆盖 Plus/Capture/浮层/卡片 | 扩展至 24 tests，用 `node:fs` 读取源码做文本断言 |
+
+**改动文件及行数**:
+- `apps/web/app/workspace/page.tsx` | M | -72 行
+- `apps/web/app/workspace/features/home/HomeView.tsx` | M | +12 行
+- `apps/web/app/workspace/_components/GoldenTopNav.tsx` | M | -13 行
+- `apps/web/tests/fe-001-capture-removed.test.ts` | A | +138 行（24 测试，零新依赖）
+- `docs/engineering/dev_log/Phase3/phase3-devlog-frontend.md` | M | 本轮日志
+
+**遇到的问题**:
+1. 第二轮 Review：要求移除所有新增测试依赖 → 回退了 4 个包 + lockfile + 配置，用纯 vitest dynamic import 替代组件级测试
+2. `@rollup/rollup-darwin-x64` 缺失（由 `pnpm-lock.yaml` 残留引起）→ 恢复 lockfile 至 HEAD 后自动解决
+3. 第三轮 Review：要求补强测试 → 扩展为源码文本断言，用 `node:fs` + `import.meta.dirname` 读取源文件，对 Plus/Capture/浮层/卡片做精确 `toContain`/`not.toMatch` 断言
+
+**解决方式**: 如上述对应修复。
+
+**是否解决**: 是。
+
+**自动验证结果**:
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm lint` | ✅ 0 errors（仅 1 个 demo2-prototype 已有 warning） |
+| `pnpm typecheck` (domain + web) | ✅ PASS |
+| `pnpm test` (domain 312 + web 351) | ✅ 663 tests passed（+21 新增） |
+| `pnpm build:web` | ✅ PASS（workspace 45.9 kB） |
+| `pnpm check:terminology` | ✅ PASS |
+
+**测试覆盖范围**:
+| 测试文件 | 覆盖内容 |
+|----------|---------|
+| `fe-001-capture-removed.test.ts` (24) | GoldenTopNav: 无 Plus/Capture/onOpenRecorder（4 tests）；page.tsx: 无 FloatingRecorder/recorderState/inputMode/Classic/Chat/Send/Minimize2/AppMode（10 tests）；HomeView: 输入框/卡片/forwardRef 完整（10 tests） |
+
+**手工验证方式**:
+1. 启动 `pnpm dev:web`，打开 workspace 页面
+2. 确认页面初始加载时右下角不显示旧版 Capture 浮层（Classic/Chat tab 切换面板）
+3. 确认 TopNav 右侧不再显示 Plus 按钮
+4. 确认 Home 页面主捕获输入框 "Capture an idea... (Press Enter to Dock)" 显示正常
+5. 确认 New Document / Process Dock / Graph Explorer 卡片显示正常
+6. 确认 Home / Mind / Dock / Editor 导航仍可正常点击切换
+7. 确认 Dock FinderView 中 "New Capture" 菜单项可切换回 Home 并聚焦输入框
+
+**手工验证标准**:
+- 页面任何状态下右下角不出现 Classic/Chat 旧版浮层
+- TopNav 无 Plus 按钮
+- Home 主捕获输入框可正常输入和 Enter 提交
+- New Document / Process Dock 卡片点击行为正常
+- TopNav 四个导航模块切换正常
+
+**是否可以进入下一轮**: 是。
+
+**下一轮风险评估**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| Chat 入口缺失 | 低 | 旧 Chat tab 已移除，未来 AI Chat 能力通过独立入口进入 |
+| Plus 按钮移除 | 低 | 用户需要通过其他入口进行快速捕获（Home 输入框 / Dock New Capture 菜单） |
+
+---
+
+<!-- ============================================ -->
 <!-- 分割线：Round 20 -->
 <!-- ============================================ -->
 
