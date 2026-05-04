@@ -80,6 +80,7 @@ import type {
 import { isValidChatSessionInput } from '@atlax/domain/ports'
 
 import {
+  db,
   chatSessionsTable,
   collectionsTable,
   entriesTable,
@@ -1400,33 +1401,42 @@ export async function createCaptureToDocumentFlow(
     processedAt: new Date(),
   })
 
-  const rec = await createRecommendation({
-    userId: input.userId,
-    subjectType: 'dockItem',
-    subjectId: captureId,
-    recommendationType: 'landing',
-    candidateType: 'mindNode',
-    candidateId: mindNode.id,
-    confidenceScore: 1.0,
-    reasonJson: JSON.stringify({
-      source: 'capture_to_document_flow',
-      reason: 'created from successful capture landing flow',
-      documentId: docId,
-      mindNodeId: mindNode.id,
-    }),
-    status: 'generated',
-  })
+  const { rec, recEvent } = await db.transaction(
+    'rw',
+    recommendationsTable,
+    recommendationEventsTable,
+    async () => {
+      const createdRecommendation = await createRecommendation({
+        userId: input.userId,
+        subjectType: 'dockItem',
+        subjectId: captureId,
+        recommendationType: 'landing',
+        candidateType: 'mindNode',
+        candidateId: mindNode.id,
+        confidenceScore: 1.0,
+        reasonJson: JSON.stringify({
+          source: 'capture_to_document_flow',
+          reason: 'created from successful capture landing flow',
+          documentId: docId,
+          mindNodeId: mindNode.id,
+        }),
+        status: 'generated',
+      })
 
-  const recEvent = await recordRecommendationEvent({
-    recommendationId: rec.id,
-    userId: input.userId,
-    eventType: 'recommendation_generated',
-    metadata: {
-      source: 'capture_to_document_flow',
-      documentId: docId,
-      mindNodeId: mindNode.id,
+      const createdEvent = await recordRecommendationEvent({
+        recommendationId: createdRecommendation.id,
+        userId: input.userId,
+        eventType: 'recommendation_generated',
+        metadata: {
+          source: 'capture_to_document_flow',
+          documentId: docId,
+          mindNodeId: mindNode.id,
+        },
+      })
+
+      return { rec: createdRecommendation, recEvent: createdEvent }
     },
-  })
+  )
 
   const capture = await getPersistedDockItem(captureId)
   if (!capture) {
@@ -1979,22 +1989,8 @@ export async function updateRecommendationStatus(
 export async function recordRecommendationFeedback(
   input: RecommendationFeedbackInput,
 ): Promise<RecommendationFeedbackResult> {
-  const rec = await recommendationsTable.get(input.recommendationId)
-  if (!rec) {
-    throw new Error(`Recommendation not found: ${input.recommendationId}`)
-  }
-  if (rec.userId !== input.userId) {
-    throw new Error(`User ${input.userId} does not own recommendation ${input.recommendationId}`)
-  }
-
   const status = feedbackTypeToStatus(input.feedbackType)
   const eventType = feedbackTypeToEventType(input.feedbackType)
-
-  await recommendationsTable.update(input.recommendationId, {
-    status,
-    updatedAt: new Date(),
-  })
-
   const metadata: Record<string, unknown> = {
     source: 'recommendation_feedback',
     feedbackType: input.feedbackType,
@@ -2003,18 +1999,34 @@ export async function recordRecommendationFeedback(
     metadata.feedbackPayload = input.feedbackPayload
   }
 
-  const recEvent = await recordRecommendationEvent({
-    recommendationId: input.recommendationId,
-    userId: input.userId,
-    eventType,
-    metadata,
-  })
+  const { persisted, recEvent } = await db.transaction(
+    'rw',
+    recommendationsTable,
+    recommendationEventsTable,
+    async () => {
+      await getRecommendationRecordForLifecycleWrite(input.userId, input.recommendationId)
 
-  const updated = await recommendationsTable.get(input.recommendationId)
-  const persisted = toPersistedRecommendation(updated)
-  if (!persisted) {
-    throw new Error('Failed to retrieve updated recommendation')
-  }
+      await recommendationsTable.update(input.recommendationId, {
+        status,
+        updatedAt: new Date(),
+      })
+
+      const createdEvent = await recordRecommendationEvent({
+        recommendationId: input.recommendationId,
+        userId: input.userId,
+        eventType,
+        metadata,
+      })
+
+      const updated = await recommendationsTable.get(input.recommendationId)
+      const updatedRecommendation = toPersistedRecommendation(updated)
+      if (!updatedRecommendation) {
+        throw new Error('Failed to retrieve updated recommendation')
+      }
+
+      return { persisted: updatedRecommendation, recEvent: createdEvent }
+    },
+  )
 
   return {
     recommendation: {
@@ -2033,33 +2045,36 @@ export async function recordRecommendationFeedback(
 export async function markRecommendationShown(
   input: RecommendationShownInput,
 ): Promise<RecommendationShownResult> {
-  const rec = await recommendationsTable.get(input.recommendationId)
-  if (!rec) {
-    throw new Error(`Recommendation not found: ${input.recommendationId}`)
-  }
-  if (rec.userId !== input.userId) {
-    throw new Error(`User ${input.userId} does not own recommendation ${input.recommendationId}`)
-  }
+  const { persisted, recEvent } = await db.transaction(
+    'rw',
+    recommendationsTable,
+    recommendationEventsTable,
+    async () => {
+      await getRecommendationRecordForLifecycleWrite(input.userId, input.recommendationId)
 
-  await recommendationsTable.update(input.recommendationId, {
-    status: 'shown',
-    updatedAt: new Date(),
-  })
+      await recommendationsTable.update(input.recommendationId, {
+        status: 'shown',
+        updatedAt: new Date(),
+      })
 
-  const recEvent = await recordRecommendationEvent({
-    recommendationId: input.recommendationId,
-    userId: input.userId,
-    eventType: 'recommendation_shown',
-    metadata: {
-      source: 'recommendation_shown',
+      const createdEvent = await recordRecommendationEvent({
+        recommendationId: input.recommendationId,
+        userId: input.userId,
+        eventType: 'recommendation_shown',
+        metadata: {
+          source: 'recommendation_shown',
+        },
+      })
+
+      const updated = await recommendationsTable.get(input.recommendationId)
+      const updatedRecommendation = toPersistedRecommendation(updated)
+      if (!updatedRecommendation) {
+        throw new Error('Failed to retrieve updated recommendation')
+      }
+
+      return { persisted: updatedRecommendation, recEvent: createdEvent }
     },
-  })
-
-  const updated = await recommendationsTable.get(input.recommendationId)
-  const persisted = toPersistedRecommendation(updated)
-  if (!persisted) {
-    throw new Error('Failed to retrieve updated recommendation')
-  }
+  )
 
   return {
     recommendation: {
@@ -2075,7 +2090,23 @@ export async function markRecommendationShown(
   }
 }
 
+async function getRecommendationRecordForLifecycleWrite(
+  userId: string,
+  recommendationId: string,
+): Promise<RecommendationRecord> {
+  const rec = await recommendationsTable.get(recommendationId)
+  if (!rec) {
+    throw new Error(`Recommendation not found: ${recommendationId}`)
+  }
+  if (rec.userId !== userId) {
+    throw new Error(`User ${userId} does not own recommendation ${recommendationId}`)
+  }
+  return rec
+}
+
 export async function recordRecommendationEvent(input: RecommendationEventInput): Promise<PersistedRecommendationEvent> {
+  await getRecommendationRecordForLifecycleWrite(input.userId, input.recommendationId)
+
   const now = new Date()
   const id = makeRecommendationEventId(input.userId, input.recommendationId, now.getTime())
   const record: RecommendationEventRecord = {

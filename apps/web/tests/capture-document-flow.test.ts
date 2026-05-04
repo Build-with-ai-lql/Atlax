@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { db } from '@/lib/db'
+import { db, recommendationEventsTable, recommendationsTable } from '@/lib/db'
 import {
   createCaptureToDocumentFlow,
   getDocumentByCaptureId,
@@ -15,6 +15,7 @@ const USER_A = 'user_test_a'
 const USER_B = 'user_test_b'
 
 async function cleanAll() {
+  vi.restoreAllMocks()
   await db.table('dockItems').clear()
   await db.table('entries').clear()
   await db.table('mindNodes').clear()
@@ -867,6 +868,147 @@ describe('capture → document → mindNode flow', () => {
         createCaptureToDocumentFlow({
           userId: USER_A,
           rawText: '',
+        }),
+      ).rejects.toThrow('rawText must not be empty')
+
+      const recs = await listRecommendations(USER_A)
+      expect(recs).toHaveLength(0)
+
+      const events = await listRecommendationEvents(USER_A)
+      expect(events).toHaveLength(0)
+    })
+  })
+
+  describe('recommendation event consistency (LC-007)', () => {
+    it('rolls back generated recommendation when generated event write fails', async () => {
+      vi.spyOn(recommendationEventsTable, 'add').mockRejectedValueOnce(new Error('event write failed'))
+
+      await expect(
+        createCaptureToDocumentFlow({
+          userId: USER_A,
+          rawText: 'generated consistency rollback 测试',
+        }),
+      ).rejects.toThrow('event write failed')
+
+      const recs = await listRecommendations(USER_A)
+      expect(recs).toHaveLength(0)
+
+      const events = await listRecommendationEvents(USER_A)
+      expect(events).toHaveLength(0)
+    })
+
+    it('does not append shown event when shown status update fails', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'shown status failure consistency 测试',
+      })
+      vi.spyOn(recommendationsTable, 'update').mockRejectedValueOnce(new Error('status update failed'))
+      const eventAdd = vi.spyOn(recommendationEventsTable, 'add')
+
+      await expect(
+        markRecommendationShown({
+          recommendationId: result.recommendation.id,
+          userId: USER_A,
+        }),
+      ).rejects.toThrow('status update failed')
+
+      expect(eventAdd).not.toHaveBeenCalled()
+
+      const recs = await listRecommendations(USER_A)
+      expect(recs[0].status).toBe('generated')
+
+      const events = await listRecommendationEvents(USER_A, {
+        recommendationId: result.recommendation.id,
+      })
+      expect(events).toHaveLength(1)
+      expect(events[0].eventType).toBe('recommendation_generated')
+    })
+
+    it('rolls back shown status update when shown event write fails', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'shown event failure consistency 测试',
+      })
+      vi.spyOn(recommendationEventsTable, 'add').mockRejectedValueOnce(new Error('shown event write failed'))
+
+      await expect(
+        markRecommendationShown({
+          recommendationId: result.recommendation.id,
+          userId: USER_A,
+        }),
+      ).rejects.toThrow('shown event write failed')
+
+      const recs = await listRecommendations(USER_A)
+      expect(recs[0].status).toBe('generated')
+
+      const events = await listRecommendationEvents(USER_A, {
+        recommendationId: result.recommendation.id,
+      })
+      expect(events).toHaveLength(1)
+      expect(events[0].eventType).toBe('recommendation_generated')
+    })
+
+    it.each(['accepted', 'rejected', 'modified', 'ignored'] as const)(
+      'rolls back %s feedback status update when feedback event write fails',
+      async (feedbackType) => {
+        const result = await createCaptureToDocumentFlow({
+          userId: USER_A,
+          rawText: `${feedbackType} feedback event failure consistency 测试`,
+        })
+        vi.spyOn(recommendationEventsTable, 'add').mockRejectedValueOnce(new Error('feedback event write failed'))
+
+        await expect(
+          recordRecommendationFeedback({
+            recommendationId: result.recommendation.id,
+            userId: USER_A,
+            feedbackType,
+          }),
+        ).rejects.toThrow('feedback event write failed')
+
+        const recs = await listRecommendations(USER_A)
+        expect(recs[0].status).toBe('generated')
+
+        const events = await listRecommendationEvents(USER_A, {
+          recommendationId: result.recommendation.id,
+        })
+        expect(events).toHaveLength(1)
+        expect(events[0].eventType).toBe('recommendation_generated')
+      },
+    )
+
+    it('does not append feedback event when feedback status update fails', async () => {
+      const result = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'feedback status failure consistency 测试',
+      })
+      vi.spyOn(recommendationsTable, 'update').mockRejectedValueOnce(new Error('feedback status update failed'))
+      const eventAdd = vi.spyOn(recommendationEventsTable, 'add')
+
+      await expect(
+        recordRecommendationFeedback({
+          recommendationId: result.recommendation.id,
+          userId: USER_A,
+          feedbackType: 'accepted',
+        }),
+      ).rejects.toThrow('feedback status update failed')
+
+      expect(eventAdd).not.toHaveBeenCalled()
+
+      const recs = await listRecommendations(USER_A)
+      expect(recs[0].status).toBe('generated')
+
+      const events = await listRecommendationEvents(USER_A, {
+        recommendationId: result.recommendation.id,
+      })
+      expect(events).toHaveLength(1)
+      expect(events[0].eventType).toBe('recommendation_generated')
+    })
+
+    it('regression: empty content rejection still does not generate recommendation or event', async () => {
+      await expect(
+        createCaptureToDocumentFlow({
+          userId: USER_A,
+          rawText: '   \n\t',
         }),
       ).rejects.toThrow('rawText must not be empty')
 

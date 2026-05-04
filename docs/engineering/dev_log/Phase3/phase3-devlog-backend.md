@@ -9,6 +9,85 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Phase 3 Round 21 (LC-007) -->
+<!-- ============================================ -->
+
+## Phase 3 Round 21 devlog -- LC-007 Recommendation Event Consistency 最小一致性收口
+
+**时间戳**: 2026-05-05
+
+**任务起止时间**: 05:22 - 05:33 CST
+
+**工时**: 11 分钟
+
+**Notion 卡片**: LC-007 Recommendation Event Consistency 最小一致性收口
+
+**任务目标**: 为 Recommendation 生命周期中的 generated / shown / feedback 写入路径建立最小一致性保护，避免 recommendation.status 已更新但 recommendation_event 未写入，或 recommendation_event 孤立写入。
+
+**改动文件及行数**:
+- `apps/web/lib/repository.ts` | M | +106 / -75 行（generated、shown、feedback 写入路径增加 Dexie transaction；recordRecommendationEvent 增加 recommendation 存在性与 userId 归属校验）
+- `apps/web/tests/capture-document-flow.test.ts` | M | +144 / -2 行（新增 LC-007 一致性失败注入测试）
+- `apps/web/tests/intelligence-spine.test.ts` | M | +38 行（补充 recordRecommendationEvent 不存在 recommendationId / userId 不匹配失败测试）
+- `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | +79 行（本轮日志）
+
+**变更摘要**:
+- **generated 路径一致性**: `createCaptureToDocumentFlow` 中 recommendation 创建与 `recommendation_generated` event 追加放入同一个 Dexie `db.transaction('rw', recommendationsTable, recommendationEventsTable, ...)`。event 写入失败时，generated recommendation 回滚，不留下 recommendation/event 半成品。
+- **shown 路径一致性**: `markRecommendationShown` 中 recommendation.status 更新为 `shown` 与 `recommendation_shown` event 追加放入同一个 Dexie transaction。status 更新失败时不追加 event；event 写入失败时 status 回滚为原状态。
+- **feedback 路径一致性**: `recordRecommendationFeedback` 中 accepted / rejected / modified / ignored 对应的 status 更新与 `recommendation_{feedbackType}` event 追加放入同一个 Dexie transaction。四类反馈 event 写入失败均不会留下已更新 status。
+- **孤立 event 防护**: `recordRecommendationEvent` 写入前统一调用 `getRecommendationRecordForLifecycleWrite(userId, recommendationId)`，不存在 recommendationId 时抛 `Recommendation not found: {id}`，userId 不匹配时抛 `User {userId} does not own recommendation {id}`。
+- **范围控制**: 未改变 Recommendation event type 命名；未改变 recommendation.status 语义；未做 UI、Top-K、ranking、learning、preference_profiles、rhythm_profiles、workspaceId 一次性补丁；未重构 LC-004 / LC-005 / LC-006 主链路。
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 | 是否解决 |
+|------|---------|---------|
+| status 更新与 event 追加分属两个 await，存在部分成功风险 | 使用现有 Dexie transaction 将 recommendations / recommendationEvents 两张表写入纳入同一事务 | ✅ |
+| 低层 `recordRecommendationEvent` 可被直接调用并写入不存在 recommendationId 的孤立 event | 写入前增加 recommendation 存在性与 userId 归属校验；测试覆盖不存在 ID 与跨用户失败 | ✅ |
+| 需要验证 event 写失败时 Dexie 回滚 status | 用 Vitest spy 注入 `recommendationEventsTable.add` 失败，断言 status 保持 generated 且只有 generated event | ✅ |
+
+**自动验证**:
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm --filter @atlax/web test -- capture-document-flow.test.ts intelligence-spine.test.ts` | ✅ PASS（web 17 files / 417 tests，含 LC-007 新增测试） |
+| `pnpm --filter @atlax/web typecheck` | ✅ PASS |
+| `pnpm validate` | ✅ PASS（lint 0 errors；1 个既有 GoldenTopNav `<img>` warning；domain 312 tests；web 417 tests；terminology PASS） |
+| `pnpm build:web` | ✅ PASS（Next.js 14.2.28，9 static pages；同一个既有 GoldenTopNav `<img>` warning） |
+
+**手工验证方式**:
+1. generated 路径：注入 `recommendationEventsTable.add` 失败，调用 `createCaptureToDocumentFlow`，期望抛错且 `listRecommendations(USER_A)` / `listRecommendationEvents(USER_A)` 均为空。
+2. shown status 失败：先生成 recommendation，再注入 `recommendationsTable.update` 失败，调用 `markRecommendationShown`，期望不追加 shown event，status 仍为 generated。
+3. shown event 失败：先生成 recommendation，再注入 `recommendationEventsTable.add` 失败，调用 `markRecommendationShown`，期望 status 回滚为 generated，只保留 generated event。
+4. feedback event 失败：分别对 accepted / rejected / modified / ignored 注入 event 写入失败，调用 `recordRecommendationFeedback`，期望 status 仍为 generated，只保留 generated event。
+5. feedback status 失败：注入 `recommendationsTable.update` 失败，调用 accepted feedback，期望不追加 feedback event，status 仍为 generated。
+6. 空内容 rejection：调用 `createCaptureToDocumentFlow({ rawText: '   \n\t' })`，期望抛 `rawText must not be empty` 且无 recommendation / recommendation_event。
+7. 低层 event 防护：直接调用不存在 recommendationId 或跨 userId 的 `recordRecommendationEvent`，期望明确抛错且不写入 event。
+
+**验收标准**:
+- recommendation generated 写入路径具备最小一致性保护
+- recommendation shown 写入路径具备最小一致性保护
+- accepted / rejected / modified / ignored feedback 写入路径具备最小一致性保护
+- recommendation.status 更新失败时不追加孤立 recommendation_event
+- recommendation_event 追加失败时不留下 status 已更新但 event 缺失的部分成功状态
+- 不存在 recommendationId 明确失败
+- userId 不匹配明确失败，不能跨用户更新 recommendation 或写 event
+- LC-004 recommendation_generated 主链路不回归
+- LC-006 recommendation_shown 主链路不回归
+- LC-005 accepted / rejected / modified / ignored feedback 主链路不回归
+- 空内容 rejection 仍不会生成 recommendation / recommendation_event
+- `pnpm validate` PASS
+- `pnpm build:web` PASS
+
+**已知风险或未做事项**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| generated transaction 只包 recommendation + recommendation_event | 低 | 本卡目标是 Recommendation lifecycle event consistency；capture/document/mindNode 主链路保持 LC-004 形态，不做跨主链路大事务重构 |
+| shown 重复曝光仍可重复写 event | 按设计 | 本卡明确不实现 shown 去重策略，保持 LC-006 语义 |
+| feedback 仅记录事件，不进入学习/排序 | 按设计 | 本卡明确不做 Top-K / ranking / learning / preference_profiles / rhythm_profiles |
+
+**是否可以进入下一轮**: 否（LC-007 本卡冻结，不进入下一张卡）
+
+---
+
+<!-- ============================================ -->
 <!-- 分割线：Phase 3 Round 20 (LC-006) -->
 <!-- ============================================ -->
 

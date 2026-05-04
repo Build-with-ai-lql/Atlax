@@ -288,6 +288,44 @@ describe('intelligence spine', () => {
       const eventTypes = events.map((e) => e.eventType).sort()
       expect(eventTypes).toEqual(['recommendation_accepted', 'recommendation_shown'])
     })
+
+    it('fails for non-existent recommendationId without writing orphan event', async () => {
+      await expect(
+        recordRecommendationEvent({
+          recommendationId: 'non_existent_rec_id',
+          userId: USER_A,
+          eventType: 'recommendation_generated',
+        }),
+      ).rejects.toThrow('Recommendation not found: non_existent_rec_id')
+
+      const events = await listRecommendationEvents(USER_A)
+      expect(events).toHaveLength(0)
+    })
+
+    it('fails when userId does not own recommendation without cross-user event', async () => {
+      const rec = await createRecommendation({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: 1,
+        recommendationType: 'tag_suggestion',
+        candidateType: 'tag',
+        candidateId: 'tag_a',
+        confidenceScore: 0.9,
+      })
+
+      await expect(
+        recordRecommendationEvent({
+          recommendationId: rec.id,
+          userId: USER_B,
+          eventType: 'recommendation_shown',
+        }),
+      ).rejects.toThrow(`User ${USER_B} does not own recommendation ${rec.id}`)
+
+      const eventsA = await listRecommendationEvents(USER_A)
+      const eventsB = await listRecommendationEvents(USER_B)
+      expect(eventsA).toHaveLength(0)
+      expect(eventsB).toHaveLength(0)
+    })
   })
 
   describe('listRecommendationEvents', () => {
