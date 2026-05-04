@@ -22,6 +22,7 @@ import {
   makeRecentDocumentId,
   makeRecommendationId,
   makeRecommendationEventId,
+  generateBasicCandidates as buildBasicCandidates,
   makeTemporalActivityId,
   makeTagId,
   makeUserBehaviorEventId,
@@ -48,6 +49,8 @@ import {
   type MindNodeType,
   type MindNodeState,
   type RecommendationCreateInput,
+  type BasicCandidate,
+  type BasicCandidateContext,
   type RecommendationFeedbackInput,
   type RecommendationFeedbackResult,
   type RecommendationShownInput,
@@ -1931,7 +1934,7 @@ export async function createRecommendation(input: RecommendationCreateInput): Pr
     id,
     userId: input.userId,
     subjectType: input.subjectType,
-    subjectId: typeof input.subjectId === 'string' ? parseInt(input.subjectId, 10) || 0 : input.subjectId,
+    subjectId: input.subjectId,
     recommendationType: input.recommendationType,
     candidateType: input.candidateType,
     candidateId: input.candidateId,
@@ -1960,6 +1963,168 @@ export async function listRecommendations(
 
   const recs = await collection.reverse().sortBy('createdAt')
   return recs.flatMap((r) => { const p = toPersistedRecommendation(r); return p ? [p] : [] })
+}
+
+export async function generateBasicCandidates(input: {
+  userId: string
+  subjectType: BasicCandidateContext['subjectType']
+  subjectId: number | string
+}): Promise<BasicCandidate[]> {
+  const context = await getBasicCandidateContext(input.userId, input.subjectType, input.subjectId)
+  if (!context) return []
+
+  const [tags, collections, mindNodes, documents] = await Promise.all([
+    tagsTable.where('userId').equals(input.userId).toArray(),
+    collectionsTable.where('userId').equals(input.userId).toArray(),
+    mindNodesTable.where('userId').equals(input.userId).toArray(),
+    entriesTable.where('userId').equals(input.userId).toArray(),
+  ])
+
+  return buildBasicCandidates({
+    userId: input.userId,
+    context,
+    tags: tags.map((tag) => ({
+      id: tag.id as string,
+      userId: tag.userId,
+      name: tag.name,
+    })),
+    collections: collections.map((collection) => ({
+      id: collection.id as string,
+      userId: collection.userId,
+      name: collection.name,
+      collectionType: collection.collectionType,
+    })),
+    mindNodes: mindNodes.map((node) => ({
+      id: node.id as string,
+      userId: node.userId,
+      nodeType: node.nodeType,
+      label: node.label,
+      documentId: node.documentId ?? null,
+      degreeScore: node.degreeScore ?? 0,
+      recentActivityScore: node.recentActivityScore ?? 0,
+      documentWeightScore: node.documentWeightScore ?? 0,
+      userPinScore: node.userPinScore ?? 0,
+      clusterCenterScore: node.clusterCenterScore ?? 0,
+      metadata: node.metadata ?? null,
+    })),
+    documents: documents.map((document) => ({
+      id: document.id as number,
+      userId: document.userId,
+      tags: document.tags,
+      project: document.project ?? null,
+    })),
+  })
+}
+
+export async function createRecommendationFromBasicCandidate(input: {
+  userId: string
+  subjectType: BasicCandidateContext['subjectType']
+  subjectId: number | string
+  candidate: BasicCandidate
+  recommendationType?: string
+}): Promise<{
+  recommendation: PersistedRecommendation
+  recommendationEvent: PersistedRecommendationEvent
+}> {
+  const { recommendation, recommendationEvent } = await db.transaction(
+    'rw',
+    recommendationsTable,
+    recommendationEventsTable,
+    async () => {
+      const createdRecommendation = await createRecommendation({
+        userId: input.userId,
+        subjectType: input.subjectType,
+        subjectId: input.subjectId,
+        recommendationType: input.recommendationType ?? `basic_${input.candidate.candidateType}_candidate`,
+        candidateType: input.candidate.candidateType,
+        candidateId: input.candidate.candidateId,
+        confidenceScore: input.candidate.confidenceScore,
+        reasonJson: JSON.stringify(input.candidate.reasonJson),
+        status: 'generated',
+      })
+
+      const createdEvent = await recordRecommendationEvent({
+        recommendationId: createdRecommendation.id,
+        userId: input.userId,
+        eventType: 'recommendation_generated',
+        metadata: {
+          source: 'basic_candidate_recall',
+          candidateType: input.candidate.candidateType,
+          candidateId: input.candidate.candidateId,
+          confidenceScore: input.candidate.confidenceScore,
+          evidence: input.candidate.evidence,
+          context: input.candidate.reasonJson.context,
+        },
+      })
+
+      return {
+        recommendation: createdRecommendation,
+        recommendationEvent: createdEvent,
+      }
+    },
+  )
+
+  return { recommendation, recommendationEvent }
+}
+
+async function getBasicCandidateContext(
+  userId: string,
+  subjectType: BasicCandidateContext['subjectType'],
+  subjectId: number | string,
+): Promise<BasicCandidateContext | null> {
+  if (subjectType === 'dockItem') {
+    const captureId = toNumericSubjectId(subjectId)
+    if (captureId === null) return null
+
+    const capture = await getDockItemForUser(userId, captureId)
+    if (!capture) return null
+
+    return {
+      subjectType,
+      subjectId: capture.id,
+      rawText: capture.rawText,
+      title: capture.topic,
+      tags: capture.userTags,
+      project: capture.selectedProject,
+    }
+  }
+
+  if (subjectType === 'entry' || subjectType === 'document') {
+    const documentId = toNumericSubjectId(subjectId)
+    if (documentId === null) return null
+
+    const document = await entriesTable.get(documentId)
+    if (!document || document.userId !== userId) return null
+
+    return {
+      subjectType,
+      subjectId: document.id as number,
+      title: document.title,
+      content: document.content,
+      tags: document.tags,
+      project: document.project,
+      documentId: document.id as number,
+    }
+  }
+
+  const node = await getMindNode(userId, String(subjectId))
+  if (!node) return null
+
+  return {
+    subjectType,
+    subjectId: node.id,
+    mindNodeId: node.id,
+    mindNodeLabel: node.label,
+    mindNodeType: node.nodeType,
+    documentId: node.documentId,
+    metadata: node.metadata,
+  }
+}
+
+function toNumericSubjectId(subjectId: number | string): number | null {
+  if (typeof subjectId === 'number') return subjectId
+  const parsed = Number.parseInt(subjectId, 10)
+  return Number.isNaN(parsed) ? null : parsed
 }
 
 export async function getRecommendation(userId: string, recommendationId: string): Promise<PersistedRecommendation | null> {

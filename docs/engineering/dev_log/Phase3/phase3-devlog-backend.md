@@ -9,6 +9,91 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Phase 3 Round 23 (LC-009) -->
+<!-- ============================================ -->
+
+## Phase 3 Round 23 devlog -- LC-009 Basic Candidate Recall Pack 基础候选召回能力包
+
+**时间戳**: 2026-05-05
+
+**任务起止时间**: 06:17 - 06:25 CST
+
+**工时**: 8 分钟
+
+**Notion 卡片**: LC-009 Basic Candidate Recall Pack 基础候选召回能力包
+
+**任务目标**: 在不接 UI、不做 Top-K / ranking / learning、不重构 LC-004 到 LC-008 主链路的前提下，建立基础 Candidate Recall Pack，可基于 capture / document / mindNode 上下文从本地 Tag / Collection / MindNode 数据生成最小候选，并可将 candidate 转为 recommendation record 且保留 evidence。
+
+**改动文件及行数**:
+- `packages/domain/src/services/IntelligenceSpine.ts` | M | +285 行（新增 BasicCandidate / evidence / reasonJson 类型与 `generateBasicCandidates` 纯召回服务）
+- `apps/web/lib/repository.ts` | M | +166 / -1 行（新增 `generateBasicCandidates` repository API、candidate 上下文解析、`createRecommendationFromBasicCandidate` 转 recommendation 写入路径）
+- `apps/web/lib/db.ts` | M | +1 / -1 行（RecommendationRecord.subjectId 支持 number|string，保留 mindNode subjectId）
+- `apps/web/tests/intelligence-spine.test.ts` | M | +163 行（覆盖 tag、project/collection、mindNode/cluster、userId isolation、空候选、candidate 转 recommendation）
+- `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | +85 行（本轮日志）
+
+**变更摘要**:
+- **统一 Candidate 结构**: 新增 `BasicCandidate`，字段包含 `candidateType`、`candidateId`、`confidenceScore`、`evidence`、`reasonJson`；候选类型限制为 `tag` / `project` / `mindNode`，不引入 Top-K 或学习排序。
+- **基础召回服务**: `generateBasicCandidates(input)` 基于传入的 user-scoped context 和本地 tags / collections / mindNodes / documents 做最小召回，按 userId 过滤数据源。
+- **repository API**: `generateBasicCandidates({ userId, subjectType, subjectId })` 支持 `dockItem` capture、`document` / `entry`、`mindNode` 三类上下文；上下文不存在或不属于 userId 时返回空数组。
+- **candidate 转 recommendation**: `createRecommendationFromBasicCandidate` 在 recommendations + recommendationEvents transaction 中创建 `generated` recommendation 和 `recommendation_generated` event。
+- **reasonJson/evidence 保留**: recommendation.reasonJson 序列化保存 candidate.reasonJson，包含 `source: basic_candidate_recall`、candidate 基本字段、context、完整 evidence；generated event metadata 同步保留 evidence。
+- **范围控制**: 未做 UI；未做 Top-K 精排；未做 learning / ranking；未做 preference_profiles / rhythm_profiles；未做每日推荐 / 周 Review / Nudge；未引入 workspaceId 一次性补丁；未改变 recommendation_event 命名；未重构 LC-004 / LC-005 / LC-006 / LC-007 / LC-008 主链路。
+
+**三类 candidate 覆盖说明**:
+- **tag candidate**: 从 document/capture 的 tags 或文本命中已有 user-scoped tag，evidence 使用 `assigned_tag` / `text_match`。
+- **project / collection candidate**: 从 document/capture 的 project 或文本命中已有 user-scoped collection，candidateType 使用 `project`，candidateId 使用 collection.id，evidence 使用 `project_match` / `collection_match`。
+- **mindNode / cluster candidate**: 从文本命中 mindNode label，或 mindNode 上下文共享 `metadata.clusterId` 召回 cluster peer，evidence 使用 `text_match` / `cluster_peer`。
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 | 是否解决 |
+|------|---------|---------|
+| 原 RecommendationRecord.subjectId 在 web DB 类型中只允许 number，mindNode subjectId 会被转换为 0 | 将 DB record 类型调整为 number|string，并让 createRecommendation 原样保留 subjectId；既有数字 subject 不受影响 | ✅ |
+| candidate 需要既能从纯 domain 生成，又能读本地 Dexie 数据 | domain 只提供纯 `generateBasicCandidates(input)`；repository 负责按 userId 读取 Tag / Collection / MindNode / Document 表并拼装 context | ✅ |
+| 无候选场景不能抛无意义异常 | repository 在上下文不存在或无命中时返回 `[]`，测试覆盖空候选与跨用户数据不污染 | ✅ |
+
+**自动验证**:
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm --filter @atlax/domain typecheck` | ✅ PASS |
+| `pnpm --dir apps/web typecheck` | ✅ PASS |
+| `pnpm --dir apps/web test intelligence-spine.test.ts capture-document-flow.test.ts` | ✅ PASS（2 files / 107 tests） |
+| `pnpm validate` | ✅ PASS（lint 仅保留既有 GoldenTopNav `<img>` warning；domain 20 files / 312 tests；web 17 files / 430 tests；terminology PASS） |
+| `pnpm build:web` | ✅ PASS（同一既有 `<img>` warning） |
+
+**手工验证方式**:
+1. 创建 user A document 并给 document.tags 设置已有 tag，调用 `generateBasicCandidates({ userId: USER_A, subjectType: 'document', subjectId })`，期望返回 tag candidate，reasonJson.evidence 包含 `assigned_tag`。
+2. 创建 user A project collection 并给 document.project 设置同名项目，调用 `generateBasicCandidates`，期望返回 project candidate，candidateId 等于 collection.id。
+3. 创建两个 mindNode，metadata.clusterId 相同，基于其中一个 mindNode 调用 `generateBasicCandidates`，期望召回另一个 mindNode candidate，evidence 包含 `cluster_peer`。
+4. 创建 user B 的 tag / collection / mindNode，并用 user A 上下文调用召回，期望返回空数组或不包含 user B candidate。
+5. 使用召回出的 candidate 调用 `createRecommendationFromBasicCandidate`，期望 recommendation.status 为 `generated`、eventType 为 `recommendation_generated`、reasonJson 保留 candidate evidence。
+6. 调用 LC-004 createCaptureToDocumentFlow、LC-006 markRecommendationShown、LC-005 recordRecommendationFeedback，期望 generated / shown / feedback 主链路和 LC-007/LC-008 一致性行为保持通过。
+
+**验收标准**:
+- 可以从 capture / document / mindNode 上下文生成基础 candidates
+- candidate 包含 candidateType / candidateId / confidenceScore / reasonJson / evidence
+- tag candidate recall 有测试覆盖
+- project / collection candidate recall 有测试覆盖
+- mindNode / cluster candidate recall 有测试覆盖
+- userId isolation 测试通过
+- 无候选时返回空数组
+- 可以将 candidate 转为 recommendation record
+- recommendation reasonJson 保留 candidate evidence
+- LC-004 / LC-005 / LC-006 / LC-007 / LC-008 回归测试通过
+- `pnpm validate` PASS
+- `pnpm build:web` PASS
+
+**已知风险或未做事项**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| project / collection candidate 目前落到 RecommendationCandidateType 的 `project` | 低 | 复用既有 candidateType，不新增 collection 枚举；reasonJson/evidence 中保留 collection source 与 collection.id |
+| confidenceScore 只是最小规则分 | 按设计 | 本卡明确不做 Top-K 精排、ranking 或 learning |
+| 召回未自动接入 UI 或每日推荐 | 按设计 | 本卡只提供基础召回 API 与 recommendation record 转换能力 |
+
+**是否可以进入下一轮**: 否（LC-009 本卡冻结，不进入下一张卡）
+
+---
+
+<!-- ============================================ -->
 <!-- 分割线：Phase 3 Round 22 (LC-008) -->
 <!-- ============================================ -->
 

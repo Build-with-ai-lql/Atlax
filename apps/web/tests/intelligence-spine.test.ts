@@ -2,19 +2,32 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { db } from '@/lib/db'
 import {
+  createCaptureToDocumentFlow,
+  createCollection,
+  createDockItem,
   createRecommendation,
+  createRecommendationFromBasicCandidate,
+  createStoredTag,
+  generateBasicCandidates,
   listRecommendations,
   updateRecommendationStatus,
   recordRecommendationEvent,
   listRecommendationEvents,
   recordUserBehaviorEvent,
   listUserBehaviorEvents,
+  updateDocument,
+  upsertMindNode,
 } from '@/lib/repository'
 
 const USER_A = 'user_test_a'
 const USER_B = 'user_test_b'
 
 async function cleanAll() {
+  await db.table('dockItems').clear()
+  await db.table('entries').clear()
+  await db.table('tags').clear()
+  await db.table('collections').clear()
+  await db.table('mindNodes').clear()
   await db.table('recommendations').clear()
   await db.table('recommendationEvents').clear()
   await db.table('userBehaviorEvents').clear()
@@ -161,6 +174,156 @@ describe('intelligence spine', () => {
     it('returns empty array for user with no recommendations', async () => {
       const recs = await listRecommendations(USER_A)
       expect(recs).toEqual([])
+    })
+  })
+
+  describe('basic candidate recall pack', () => {
+    it('recalls tag candidates from document context', async () => {
+      const flow = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'LC-009 candidate recall pack',
+      })
+      const tag = await createStoredTag(USER_A, 'Local Core')
+      await updateDocument(USER_A, flow.document.id, { tags: ['Local Core'] })
+
+      const candidates = await generateBasicCandidates({
+        userId: USER_A,
+        subjectType: 'document',
+        subjectId: flow.document.id,
+      })
+
+      const tagCandidate = candidates.find((candidate) => candidate.candidateType === 'tag')
+      expect(tagCandidate).toBeDefined()
+      expect(unwrap(tagCandidate ?? null).candidateId).toBe(unwrap(tag).id)
+      expect(unwrap(tagCandidate ?? null).confidenceScore).toBeGreaterThan(0)
+      expect(unwrap(tagCandidate ?? null).reasonJson.evidence[0].evidenceType).toBe('assigned_tag')
+    })
+
+    it('recalls project candidates from collection data', async () => {
+      const flow = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'Project Atlas delivery note',
+      })
+      const collection = await createCollection({
+        userId: USER_A,
+        name: 'Project Atlas',
+        collectionType: 'project',
+      })
+      await updateDocument(USER_A, flow.document.id, { project: 'Project Atlas' })
+
+      const candidates = await generateBasicCandidates({
+        userId: USER_A,
+        subjectType: 'document',
+        subjectId: flow.document.id,
+      })
+
+      const projectCandidate = candidates.find((candidate) => candidate.candidateType === 'project')
+      expect(projectCandidate).toBeDefined()
+      expect(unwrap(projectCandidate ?? null).candidateId).toBe(collection.id)
+      expect(unwrap(projectCandidate ?? null).reasonJson.evidence.some((item) => item.source === 'collection')).toBe(true)
+    })
+
+    it('recalls mindNode candidates from shared cluster context', async () => {
+      const contextNode = await upsertMindNode({
+        userId: USER_A,
+        nodeType: 'topic',
+        label: 'Local Core',
+        metadata: { clusterId: 'cluster_local_core' },
+      })
+      const clusterNode = await upsertMindNode({
+        userId: USER_A,
+        nodeType: 'topic',
+        label: 'Intelligence Spine',
+        clusterCenterScore: 0.8,
+        metadata: { clusterId: 'cluster_local_core' },
+      })
+
+      const candidates = await generateBasicCandidates({
+        userId: USER_A,
+        subjectType: 'mindNode',
+        subjectId: contextNode.id,
+      })
+
+      const mindNodeCandidate = candidates.find((candidate) => candidate.candidateType === 'mindNode')
+      expect(mindNodeCandidate).toBeDefined()
+      expect(unwrap(mindNodeCandidate ?? null).candidateId).toBe(clusterNode.id)
+      expect(unwrap(mindNodeCandidate ?? null).reasonJson.evidence[0].evidenceType).toBe('cluster_peer')
+    })
+
+    it('does not recall candidates owned by another user', async () => {
+      const captureId = await createDockItem(USER_A, 'Secret Tag Other Project Other Node')
+      await createStoredTag(USER_B, 'Secret Tag')
+      await createCollection({
+        userId: USER_B,
+        name: 'Other Project',
+        collectionType: 'project',
+      })
+      await upsertMindNode({
+        userId: USER_B,
+        nodeType: 'topic',
+        label: 'Other Node',
+      })
+
+      const candidates = await generateBasicCandidates({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: captureId,
+      })
+
+      expect(candidates).toEqual([])
+    })
+
+    it('returns an empty array when no local candidate is available', async () => {
+      const captureId = await createDockItem(USER_A, 'plain isolated note')
+
+      const candidates = await generateBasicCandidates({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: captureId,
+      })
+
+      expect(candidates).toEqual([])
+    })
+
+    it('creates a recommendation record from a basic candidate and preserves evidence', async () => {
+      const contextNode = await upsertMindNode({
+        userId: USER_A,
+        nodeType: 'topic',
+        label: 'Recall Context',
+        metadata: { clusterId: 'cluster_recommendation_record' },
+      })
+      const clusterNode = await upsertMindNode({
+        userId: USER_A,
+        nodeType: 'topic',
+        label: 'Recall Candidate',
+        metadata: { clusterId: 'cluster_recommendation_record' },
+      })
+      const candidates = await generateBasicCandidates({
+        userId: USER_A,
+        subjectType: 'mindNode',
+        subjectId: contextNode.id,
+      })
+      const candidate = unwrap(candidates.find((item) => item.candidateId === clusterNode.id) ?? null)
+
+      const result = await createRecommendationFromBasicCandidate({
+        userId: USER_A,
+        subjectType: 'mindNode',
+        subjectId: contextNode.id,
+        candidate,
+      })
+
+      expect(result.recommendation.status).toBe('generated')
+      expect(result.recommendation.subjectId).toBe(contextNode.id)
+      expect(result.recommendation.candidateType).toBe('mindNode')
+      expect(result.recommendation.candidateId).toBe(clusterNode.id)
+      expect(result.recommendationEvent.eventType).toBe('recommendation_generated')
+
+      const reason = JSON.parse(result.recommendation.reasonJson ?? '{}') as {
+        source?: string
+        evidence?: unknown[]
+      }
+      expect(reason.source).toBe('basic_candidate_recall')
+      expect(reason.evidence).toEqual(candidate.evidence)
     })
   })
 

@@ -315,7 +315,7 @@ export interface RecommendationRecord {
   id?: string
   userId: string
   subjectType: RecommendationSubjectType
-  subjectId: number
+  subjectId: number | string
   recommendationType: string
   candidateType: RecommendationCandidateType
   candidateId: string
