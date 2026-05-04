@@ -9,6 +9,82 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Local Core Phase 1 Round 1 (LC-001) -->
+<!-- ============================================ -->
+
+## Local Core Phase 1 Round 1 devlog -- LC-001 反馈事件骨架落地
+
+**时间戳**: 2026-05-04
+
+**任务起止时间**: 20:05 - 20:22 CST
+
+**Notion 卡片**: LC-001 Local Core 反馈事件骨架落地
+
+**任务目标**: 补齐 Local Core / Intelligence Spine 的最小反馈事件数据骨架，让系统具备记录 recommendation、recommendation_event、user_behavior_event 的本地能力。
+
+**改动文件及行数**:
+- `packages/domain/src/services/IntelligenceSpine.ts` | A | +113 行（领域类型定义 + ID 生成函数：Recommendation、RecommendationEvent、UserBehaviorEvent 类型，makeRecommendationId/makeRecommendationEventId/makeUserBehaviorEventId）
+- `packages/domain/src/services/index.ts` | M | +1 行（导出 IntelligenceSpine）
+- `apps/web/lib/db.ts` | M | +75 行（新增 3 张表 Record 类型 + v17 migration + recommendationsTable/recommendationEventsTable/userBehaviorEventsTable 导出）
+- `apps/web/lib/repository.ts` | M | +180 行（新增 7 个 repository API + 3 个 toPersisted 辅助函数 + 类型导入）
+- `apps/web/tests/intelligence-spine.test.ts` | A | +470 行（28 个 repository 集成测试）
+- `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | +80 行（本轮日志）
+
+**变更摘要**:
+- **新增 IndexedDB 表**: recommendations、recommendationEvents、userBehaviorEvents（3 张新表，34 个字段，11 个索引）
+- **新增 Repository API**: createRecommendation、listRecommendations、updateRecommendationStatus、recordRecommendationEvent、listRecommendationEvents、recordUserBehaviorEvent、listUserBehaviorEvents（7 个 API，均支持 userId 隔离）
+- **领域类型**: RecommendationStatus(6 种)、RecommendationEventType(6 种)、UserBehaviorEventType(12 种)、UserBehaviorTargetType(9 种)
+- **测试覆盖**: 28 个测试用例覆盖 CRUD + 过滤 + userId 隔离
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 | 是否解决 |
+|------|---------|---------|
+| typecheck 阶段 `UserBehaviorEventTargetType` 导入名错误（实际导出名为 `UserBehaviorTargetType`） | 修正 import 语句，`UserBehaviorEventTargetType` → `UserBehaviorTargetType` | ✅ |
+| lint 阶段 `no-non-null-assertion` 规则触发 5 处 `updated!.status` 等非空断言 | 引入 `unwrap()` 辅助函数，替换全部非空断言为 `unwrap(updated).status` | ✅ |
+| fake-indexeddb 同毫秒内两次 `createRecommendation` / `recordRecommendationEvent` / `recordUserBehaviorEvent` 触发 `ConstraintError`（ID 仅含 timestamp 无随机性） | 为 `makeRecommendationId`、`makeRecommendationEventId`、`makeUserBehaviorEventId` 分别添加 `Math.random().toString(36).slice(2,6)` 随机后缀 | ✅ |
+
+**自动验证**:
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm lint` | ✅ 0 errors（1 pre-existing warning 来自 GoldenTopNav.tsx，非本轮引入） |
+| `pnpm typecheck` | ✅ PASS（domain + web 均通过） |
+| domain tests | ✅ 312 tests / 20 files |
+| web tests | ✅ 327 tests / 15 files（含 LC-001 新增 28 tests） |
+| `pnpm build:web` | ✅ PASS（Next.js 14.2.28 构建成功，7 routes） |
+| `pnpm validate` | ✅ PASS（lint + typecheck + test + terminology 全部通过） |
+
+**手工验证方式**:
+1. IndexedDB 打开 AtlaxDB，确认 recommendations、recommendationEvents、userBehaviorEvents 三张表存在，schema 与 db.ts 定义一致
+2. 调用 `createRecommendation` 后，`listRecommendations(USER_A)` 返回 1 条记录，`listRecommendations(USER_B)` 返回 0 条（userId 隔离）
+3. 创建 2 条 recommendation 后，按 status='generated' 过滤只返回对应 1 条
+4. 调用 `updateRecommendationStatus` 将 generated→accepted/shown→rejected/generated→modified/generated→ignored，返回 status 正确
+5. `updateRecommendationStatus('non_existent_id', 'accepted')` 返回 null
+6. `recordRecommendationEvent` 写入后，`listRecommendationEvents` 按 recommendationId 过滤正确
+7. `recordUserBehaviorEvent` 写入后，`listUserBehaviorEvents` 按 eventType/targetType 过滤正确
+8. 不同 userId 之间的 recommendation、recommendationEvent、userBehaviorEvent 完全隔离，不互相污染
+
+**手工验证标准**:
+- 三张 IndexedDB 表 schema 与 db.ts version(17) 定义一致
+- 所有 repository API 返回的 Persisted 对象 userId 与请求 userId 匹配
+- 跨用户查询不返回其他用户数据
+- 过滤参数（status/subjectType/recommendationId/eventType/targetType）生效，不匹配的记录不返回
+- 对不存在的 recommendation 更新 status 返回 null 而非抛异常
+
+**是否可以进入下一轮**: 是
+
+**下一轮风险评估**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| 前端未适配 Intelligence Spine 数据层 | 低 | 当前为纯后端骨架，前端无接入需求，不影响已有功能 |
+| 事件表持续增长 | 低 | recommendationEvents / userBehaviorEvents 无自动清理策略，需后续 TTL 或归档 |
+| 更新 recommendation status 未自动同步写入 recommendationEvents | 低 | 当前保持最小实现，状态变更不自动产生事件。如需完整审计链路，可在后续轮次将 `updateRecommendationStatus` 内部同步调用 `recordRecommendationEvent` |
+
+**Review 追记（2026-05-04 21:17 CST）**:
+- 测试 `records multiple recommendation events for same recommendation` 中两个事件同毫秒 createdAt，`reverse().sortBy('createdAt')` 排序不确定，偶发断言顺序不匹配。将固定位置断言改为 `.map().sort()` 后比较，不改变测试覆盖范围。
+
+---
+
+<!-- ============================================ -->
 <!-- 分割线：Round 14 -->
 <!-- ============================================ -->
 

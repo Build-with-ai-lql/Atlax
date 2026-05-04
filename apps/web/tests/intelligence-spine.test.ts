@@ -285,8 +285,8 @@ describe('intelligence spine', () => {
 
       const events = await listRecommendationEvents(USER_A)
       expect(events).toHaveLength(2)
-      expect(events[0].eventType).toBe('recommendation_accepted')
-      expect(events[1].eventType).toBe('recommendation_shown')
+      const eventTypes = events.map((e) => e.eventType).sort()
+      expect(eventTypes).toEqual(['recommendation_accepted', 'recommendation_shown'])
     })
   })
 
