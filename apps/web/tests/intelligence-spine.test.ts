@@ -8,9 +8,12 @@ import {
   createRecommendation,
   createRecommendationFromBasicCandidate,
   createStoredTag,
+  generateRecommendationsForContext,
   generateBasicCandidates,
   listRecommendations,
+  markRecommendationShown,
   updateRecommendationStatus,
+  recordRecommendationFeedback,
   recordRecommendationEvent,
   listRecommendationEvents,
   recordUserBehaviorEvent,
@@ -36,6 +39,36 @@ async function cleanAll() {
 function unwrap<T>(value: T | null): T {
   expect(value).not.toBeNull()
   return value as T
+}
+
+interface RecommendationEngineReason {
+  source?: string
+  recall?: {
+    evidence?: unknown[]
+  }
+  score?: number
+  scoreReason?: string
+  scoreBreakdown?: {
+    recallScore?: number
+    evidenceBonus?: number
+    acceptedSignalBoost?: number
+    rejectedSignalPenalty?: number
+    ignoredSignalPenalty?: number
+    shownSignalPenalty?: number
+    signalAdjustment?: number
+    finalScore?: number
+  }
+  evidenceSummary?: {
+    evidenceCount?: number
+    evidenceTypes?: string[]
+    sources?: string[]
+  }
+  rank?: number
+  topK?: number
+}
+
+function parseEngineReason(reasonJson: string | null): RecommendationEngineReason {
+  return JSON.parse(reasonJson ?? '{}') as RecommendationEngineReason
 }
 
 describe('intelligence spine', () => {
@@ -324,6 +357,284 @@ describe('intelligence spine', () => {
       }
       expect(reason.source).toBe('basic_candidate_recall')
       expect(reason.evidence).toEqual(candidate.evidence)
+    })
+  })
+
+  describe('recommendation engine mvp pack', () => {
+    it('generates Top-K recommendations from capture context with generated events and metadata', async () => {
+      const captureId = await createDockItem(USER_A, 'Local Core Project Atlas Intelligence Spine')
+      const tag = unwrap(await createStoredTag(USER_A, 'Local Core'))
+      const collection = await createCollection({
+        userId: USER_A,
+        name: 'Project Atlas',
+        collectionType: 'project',
+      })
+      await upsertMindNode({
+        userId: USER_A,
+        nodeType: 'topic',
+        label: 'Intelligence Spine',
+      })
+
+      const result = await generateRecommendationsForContext({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: captureId,
+        topK: 2,
+      })
+
+      expect(result.recommendations).toHaveLength(2)
+      expect(result.recommendationEvents).toHaveLength(2)
+      expect(result.scoredCandidates).toHaveLength(2)
+      expect(result.recommendations.every((rec) => rec.status === 'generated')).toBe(true)
+      expect(result.recommendations.map((rec) => rec.candidateId)).toEqual(
+        expect.arrayContaining([tag.id, collection.id]),
+      )
+
+      const firstReason = parseEngineReason(result.recommendations[0].reasonJson)
+      expect(firstReason.source).toBe('recommendation_engine_mvp')
+      expect(firstReason.recall?.evidence?.length).toBeGreaterThan(0)
+      expect(firstReason.scoreBreakdown?.finalScore).toBe(result.recommendations[0].confidenceScore)
+      expect(firstReason.rank).toBe(1)
+      expect(firstReason.topK).toBe(2)
+
+      expect(result.recommendationEvents[0].eventType).toBe('recommendation_generated')
+      expect(result.recommendationEvents[0].metadata).toMatchObject({
+        source: 'recommendation_engine_mvp',
+        rank: 1,
+        score: result.recommendations[0].confidenceScore,
+        candidateType: result.recommendations[0].candidateType,
+        candidateId: result.recommendations[0].candidateId,
+      })
+      expect(result.recommendationEvents[0].metadata?.evidenceSummary).toEqual(firstReason.evidenceSummary)
+    })
+
+    it('generates recommendations from document context', async () => {
+      const flow = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'Document context for Local Core and Project Atlas',
+      })
+      const tag = unwrap(await createStoredTag(USER_A, 'Local Core'))
+      const collection = await createCollection({
+        userId: USER_A,
+        name: 'Project Atlas',
+        collectionType: 'project',
+      })
+      await updateDocument(USER_A, flow.document.id, {
+        tags: ['Local Core'],
+        project: 'Project Atlas',
+      })
+
+      const result = await generateRecommendationsForContext({
+        userId: USER_A,
+        subjectType: 'document',
+        subjectId: flow.document.id,
+        topK: 3,
+      })
+
+      expect(result.recommendations.length).toBeGreaterThanOrEqual(2)
+      expect(result.recommendations.every((rec) => rec.subjectType === 'document')).toBe(true)
+      expect(result.recommendations.map((rec) => rec.candidateId)).toEqual(
+        expect.arrayContaining([tag.id, collection.id]),
+      )
+      expect(result.recommendations.every((rec) => rec.status === 'generated')).toBe(true)
+    })
+
+    it('generates recommendations from mindNode context', async () => {
+      const contextNode = await upsertMindNode({
+        userId: USER_A,
+        nodeType: 'topic',
+        label: 'Recommendation Context',
+        metadata: { clusterId: 'cluster_engine_context' },
+      })
+      const candidateNode = await upsertMindNode({
+        userId: USER_A,
+        nodeType: 'topic',
+        label: 'Recommendation Candidate',
+        metadata: { clusterId: 'cluster_engine_context' },
+      })
+
+      const result = await generateRecommendationsForContext({
+        userId: USER_A,
+        subjectType: 'mindNode',
+        subjectId: contextNode.id,
+      })
+
+      expect(result.recommendations).toHaveLength(1)
+      expect(result.recommendations[0].subjectId).toBe(contextNode.id)
+      expect(result.recommendations[0].candidateType).toBe('mindNode')
+      expect(result.recommendations[0].candidateId).toBe(candidateNode.id)
+      expect(result.recommendationEvents[0].metadata).toMatchObject({
+        candidateType: 'mindNode',
+        candidateId: candidateNode.id,
+        rank: 1,
+      })
+    })
+
+    it('dedupes repeated candidates while preserving recall evidence', async () => {
+      const flow = await createCaptureToDocumentFlow({
+        userId: USER_A,
+        rawText: 'Local Core appears in the document content',
+      })
+      const tag = unwrap(await createStoredTag(USER_A, 'Local Core'))
+      await updateDocument(USER_A, flow.document.id, { tags: ['Local Core'] })
+
+      const result = await generateRecommendationsForContext({
+        userId: USER_A,
+        subjectType: 'document',
+        subjectId: flow.document.id,
+      })
+      const tagRecommendations = result.recommendations.filter((rec) => rec.candidateId === tag.id)
+      const tagReason = parseEngineReason(unwrap(tagRecommendations[0] ?? null).reasonJson)
+
+      expect(tagRecommendations).toHaveLength(1)
+      expect(tagReason.recall?.evidence).toHaveLength(2)
+      expect(tagReason.evidenceSummary?.evidenceTypes).toEqual(
+        expect.arrayContaining(['assigned_tag', 'text_match']),
+      )
+    })
+
+    it('uses stable candidateType and candidateId sorting when scores tie', async () => {
+      const captureId = await createDockItem(USER_A, 'Alpha Beta')
+      const beta = unwrap(await createStoredTag(USER_A, 'Beta'))
+      const alpha = unwrap(await createStoredTag(USER_A, 'Alpha'))
+
+      const result = await generateRecommendationsForContext({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: captureId,
+        topK: 2,
+      })
+
+      expect(result.recommendations).toHaveLength(2)
+      expect(result.recommendations.map((rec) => rec.confidenceScore)).toEqual([0.72, 0.72])
+      expect(result.recommendations.map((rec) => rec.candidateId)).toEqual([alpha.id, beta.id].sort())
+      expect(result.recommendations.map((rec) => parseEngineReason(rec.reasonJson).rank)).toEqual([1, 2])
+    })
+
+    it('applies deterministic accepted, rejected, ignored, and shown signal adjustments', async () => {
+      const acceptedTag = unwrap(await createStoredTag(USER_A, 'Accepted Signal'))
+      const rejectedTag = unwrap(await createStoredTag(USER_A, 'Rejected Signal'))
+      const shownTag = unwrap(await createStoredTag(USER_A, 'Shown Signal'))
+      const acceptedHistory = await createRecommendation({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: 1,
+        recommendationType: 'tag_suggestion',
+        candidateType: 'tag',
+        candidateId: acceptedTag.id,
+        confidenceScore: 0.72,
+      })
+      const rejectedHistory = await createRecommendation({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: 2,
+        recommendationType: 'tag_suggestion',
+        candidateType: 'tag',
+        candidateId: rejectedTag.id,
+        confidenceScore: 0.72,
+      })
+      const ignoredHistory = await createRecommendation({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: 3,
+        recommendationType: 'tag_suggestion',
+        candidateType: 'tag',
+        candidateId: rejectedTag.id,
+        confidenceScore: 0.72,
+      })
+      const shownHistory = await createRecommendation({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: 4,
+        recommendationType: 'tag_suggestion',
+        candidateType: 'tag',
+        candidateId: shownTag.id,
+        confidenceScore: 0.72,
+      })
+      await recordRecommendationFeedback({
+        userId: USER_A,
+        recommendationId: acceptedHistory.id,
+        feedbackType: 'accepted',
+      })
+      await recordRecommendationFeedback({
+        userId: USER_A,
+        recommendationId: rejectedHistory.id,
+        feedbackType: 'rejected',
+      })
+      await recordRecommendationFeedback({
+        userId: USER_A,
+        recommendationId: ignoredHistory.id,
+        feedbackType: 'ignored',
+      })
+      await markRecommendationShown({
+        userId: USER_A,
+        recommendationId: shownHistory.id,
+      })
+      const captureId = await createDockItem(
+        USER_A,
+        'Accepted Signal Rejected Signal Shown Signal',
+      )
+
+      const result = await generateRecommendationsForContext({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: captureId,
+        topK: 3,
+      })
+      const byCandidateId = new Map<string, RecommendationEngineReason>(
+        result.recommendations.map((rec) => [rec.candidateId, parseEngineReason(rec.reasonJson)] as const),
+      )
+
+      expect(result.recommendations[0].candidateId).toBe(acceptedTag.id)
+      expect(byCandidateId.get(acceptedTag.id)?.scoreBreakdown?.acceptedSignalBoost).toBe(0.05)
+      expect(byCandidateId.get(rejectedTag.id)?.scoreBreakdown?.rejectedSignalPenalty).toBe(-0.06)
+      expect(byCandidateId.get(rejectedTag.id)?.scoreBreakdown?.ignoredSignalPenalty).toBe(-0.03)
+      expect(byCandidateId.get(shownTag.id)?.scoreBreakdown?.shownSignalPenalty).toBe(-0.01)
+    })
+
+    it('does not use another user signal history for scoring', async () => {
+      const tag = unwrap(await createStoredTag(USER_A, 'Isolated Signal'))
+      const crossUserHistory = await createRecommendation({
+        userId: USER_B,
+        subjectType: 'dockItem',
+        subjectId: 1,
+        recommendationType: 'tag_suggestion',
+        candidateType: 'tag',
+        candidateId: tag.id,
+        confidenceScore: 0.72,
+      })
+      await recordRecommendationFeedback({
+        userId: USER_B,
+        recommendationId: crossUserHistory.id,
+        feedbackType: 'accepted',
+      })
+      const captureId = await createDockItem(USER_A, 'Isolated Signal')
+
+      const result = await generateRecommendationsForContext({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: captureId,
+      })
+      const reason = parseEngineReason(result.recommendations[0].reasonJson)
+
+      expect(result.recommendations).toHaveLength(1)
+      expect(result.recommendations[0].candidateId).toBe(tag.id)
+      expect(reason.scoreBreakdown?.acceptedSignalBoost).toBe(0)
+      expect(reason.scoreBreakdown?.finalScore).toBe(0.72)
+    })
+
+    it('returns empty recommendation result when no candidate is available', async () => {
+      const captureId = await createDockItem(USER_A, 'plain isolated recommendation engine note')
+
+      const result = await generateRecommendationsForContext({
+        userId: USER_A,
+        subjectType: 'dockItem',
+        subjectId: captureId,
+      })
+
+      expect(result.recommendations).toEqual([])
+      expect(result.recommendationEvents).toEqual([])
+      expect(result.scoredCandidates).toEqual([])
     })
   })
 

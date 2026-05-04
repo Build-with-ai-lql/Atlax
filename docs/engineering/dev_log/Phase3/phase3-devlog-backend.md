@@ -9,6 +9,111 @@
 ---
 
 <!-- ============================================ -->
+<!-- 分割线：Phase 3 Round 24 (LC-010) -->
+<!-- ============================================ -->
+
+## Phase 3 Round 24 devlog -- LC-010 Recommendation Engine MVP Pack 最小推荐引擎能力包
+
+**时间戳**: 2026-05-05
+
+**任务起止时间**: 06:38 - 06:50 CST
+
+**工时**: 12 分钟
+
+**Notion 卡片**: LC-010 Recommendation Engine MVP Pack 最小推荐引擎能力包
+
+**任务目标**: 在不接 UI、不做复杂 ML ranking、不做 preference_profiles / rhythm_profiles、不接 LLM / embedding / vector search、不引入 workspaceId 一次性补丁的前提下，基于 LC-009 BasicCandidate recall 打通最小 Recommendation Engine MVP：Recall → Score → Top-K → Batch Recommendation → Event Metadata。
+
+**改动文件及行数**:
+- `packages/domain/src/services/IntelligenceSpine.ts` | M | +216 行（新增 recommendation engine scoring 类型、candidate 去重、score breakdown、evidence summary、Top-K 稳定排序）
+- `apps/web/lib/repository.ts` | M | +210 行（新增 `generateRecommendationsForContext` orchestration、user_behavior_events 信号汇总、批量 recommendation + generated event 写入）
+- `apps/web/tests/intelligence-spine.test.ts` | M | +311 行（覆盖 capture / document / mindNode 生成、Top-K、去重、稳定排序、signal adjustment、userId isolation、空候选）
+- `docs/engineering/dev_log/Phase3/phase3-devlog-backend.md` | M | +105 行（本轮日志）
+
+**变更摘要**:
+- **最小引擎 orchestration**: 新增 `generateRecommendationsForContext({ userId, subjectType, subjectId, topK })`，复用 LC-009 `generateBasicCandidates`，支持 `dockItem` capture、`document` / `entry`、`mindNode` 三类上下文。
+- **deterministic scoring**: domain 层新增 `scoreBasicCandidatesForRecommendation`，只做规则分：recall confidence、evidence bonus、accepted / rejected / ignored / shown 历史信号调整。
+- **Top-K 与稳定排序**: 评分后按 score 降序，score 相同时按 `candidateType`、`candidateId` 升序稳定排序；默认 Top-K 为 5，显式 `topK: 0` 返回空生成结果。
+- **candidate 去重**: engine 层按 `candidateType:candidateId` 二次去重，合并 recall evidence，保留最高 recall confidence，避免重复 recommendation。
+- **batch recommendation 写入**: Top-K 结果在一个 Dexie transaction 中逐条创建 `generated` recommendation，并为每条写入 `recommendation_generated` event。
+- **reasonJson 与 metadata**: recommendation.reasonJson 保存 recall evidence、score、scoreReason、scoreBreakdown、evidenceSummary、rank、topK；generated event metadata 保存 source、rank、score、candidateType、candidateId、evidenceSummary、context。
+- **行为信号接入**: scoring 读取当前 userId 的 `user_behavior_events`，仅使用带 candidateType / candidateId metadata 的 recommendation_accepted / rejected / ignored / shown 事件；跨用户事件不会进入 score adjustment。
+- **范围控制**: 未做 UI；未做前端推荐展示；未做复杂 learning / ML ranking；未做 preference_profiles / rhythm_profiles；未做每日推荐 / 周 Review / Nudge；未做 LLM / embedding / vector search；未引入 workspaceId 一次性补丁；未重构 LC-004 ~ LC-009 主链路；未改变 recommendation_event 命名。
+
+**Recall → Score → Top-K → Batch Recommendation 流程说明**:
+1. repository 基于 `userId + subjectType + subjectId` 解析 capture / document / mindNode context，调用 LC-009 `generateBasicCandidates`。
+2. domain engine 对 BasicCandidate 按 candidate key 去重并合并 evidence。
+3. engine 读取 user-scoped signal summary，计算 deterministic score breakdown 与 evidence summary。
+4. engine 按 score 降序、candidateType / candidateId 升序稳定排序并截取 Top-K。
+5. repository 对 Top-K 结果 batch create recommendations，并为每条 recommendation 写 `recommendation_generated` event。
+
+**score breakdown / signal adjustment 规则说明**:
+- `recallScore`: LC-009 candidate confidenceScore。
+- `evidenceBonus`: 每个额外 evidence +0.02，最多 +0.06。
+- `acceptedSignalBoost`: 同 candidateType + candidateId 的 accepted 行为每条 +0.05，最多 +0.15。
+- `rejectedSignalPenalty`: 同 candidate 的 rejected 行为每条 -0.06，最多 -0.15。
+- `ignoredSignalPenalty`: 同 candidate 的 ignored 行为每条 -0.03，最多 -0.09。
+- `shownSignalPenalty`: 同 candidate 的 shown 曝光行为每条 -0.01，最多 -0.06。
+- `finalScore`: recall + evidence + signal adjustment 后 clamp 到 0~1。
+
+**recommendation.reasonJson / recommendation_event metadata 结构说明**:
+- `reasonJson.source`: `recommendation_engine_mvp`。
+- `reasonJson.recall`: 保留 LC-009 recall source、reason、confidenceScore、完整 evidence。
+- `reasonJson.scoreBreakdown`: 保留 recallScore、evidenceBonus、accepted / rejected / ignored / shown signal adjustment、finalScore。
+- `reasonJson.rank` / `reasonJson.topK`: 保留推荐批次排序信息。
+- `recommendation_event.metadata`: 保留 source、rank、score、candidateType、candidateId、evidenceSummary、context。
+
+**遇到的问题以及解决方式**:
+| 问题 | 解决方式 | 是否解决 |
+|------|---------|---------|
+| LC-009 已在 recall 阶段做过去重，但 LC-010 需要 engine 自身具备去重能力 | domain scoring 前按 candidateType:candidateId 再次去重，并合并 evidence | ✅ |
+| accepted / rejected / ignored / shown 信号不能跨 userId 污染 | scoring 只读取 `userBehaviorEventsTable.where('userId').equals(userId)`，测试用 user B 同 candidateId accepted 验证 user A 不加权 | ✅ |
+| 批量生成需要保留 LC-007 generated event 一致性 | batch create 放入 recommendations + recommendationEvents 同一 Dexie transaction，每条 recommendation 仍通过 `recordRecommendationEvent` 写 `recommendation_generated` | ✅ |
+
+**自动验证**:
+| 检查项 | 结果 |
+|--------|------|
+| `pnpm --filter @atlax/domain typecheck` | ✅ PASS |
+| `pnpm --dir apps/web typecheck` | ✅ PASS |
+| `pnpm --dir apps/web test intelligence-spine.test.ts capture-document-flow.test.ts` | ✅ PASS（2 files / 115 tests） |
+| `pnpm validate` | ✅ PASS（lint 仅保留既有 GoldenTopNav `<img>` warning；domain 20 files / 312 tests；web 17 files / 438 tests；terminology PASS） |
+| `pnpm build:web` | ✅ PASS（同一既有 `<img>` warning） |
+
+**手工验证方式**:
+1. 创建 user A capture，配置 tag / project / mindNode 本地候选，调用 `generateRecommendationsForContext({ userId: USER_A, subjectType: 'dockItem', subjectId, topK: 2 })`，期望只生成 Top-2 recommendations 且每条有 generated event。
+2. 创建 user A document 并设置 tags / project，调用 `generateRecommendationsForContext`，期望 tag / project recommendation.status 为 `generated`，reasonJson 保留 recall evidence 与 rank。
+3. 创建两个同 cluster mindNode，基于其中一个调用 engine，期望生成 mindNode recommendation，event metadata 保留 candidateType / candidateId / score / evidenceSummary。
+4. 构造同一 tag 的 assigned_tag + text_match evidence，期望只生成一条 recommendation 且 reasonJson.recall.evidence 合并两类 evidence。
+5. 构造 accepted / rejected / ignored / shown 历史 behavior signals，期望 scoreBreakdown 分别出现轻量加权或降权。
+6. 构造 user B 的 accepted signal 指向 user A candidateId，期望 user A 生成结果不使用 user B signal。
+7. 对无候选 capture 调用 engine，期望返回空 recommendations / recommendationEvents / scoredCandidates，不抛无意义异常。
+
+**验收标准**:
+- capture / document / mindNode 上下文均可生成 recommendation
+- 复用 LC-009 BasicCandidate recall
+- 每个 candidate 有 score / scoreBreakdown / scoreReason / evidenceSummary
+- Top-K、candidate 去重、score tie 稳定排序均有测试覆盖
+- batch create recommendations，每条 status 为 generated
+- 每条 recommendation 写 `recommendation_generated` event
+- reasonJson 保留 recall evidence、score breakdown、rank
+- event metadata 保留 source、rank、score、candidateType、candidateId、evidenceSummary
+- accepted / rejected / ignored / shown 行为信号参与 deterministic adjustment
+- userId isolation 与空候选返回空结果通过测试
+- LC-004 / LC-005 / LC-006 / LC-007 / LC-008 / LC-009 回归测试通过
+- `pnpm validate` PASS；`pnpm build:web` PASS
+
+**已知风险或未做事项**:
+| 风险 | 等级 | 说明 |
+|------|------|------|
+| scoring 仍是最小规则分，不代表真实偏好学习 | 按设计 | 本卡明确不做复杂 ML ranking / learning / preference profile |
+| shown 信号目前只是轻量曝光降权，不做 shown 去重策略 | 按设计 | 本卡不做自动 shown 触发或 shown 去重策略 |
+| engine 只提供 repository API，未接 UI | 按设计 | 本卡明确不做 UI 或前端推荐展示 |
+
+**是否可以进入下一轮**: 否（LC-010 本卡冻结，不进入下一张卡；未 commit，未 push）
+
+---
+
+<!-- ============================================ -->
 <!-- 分割线：Phase 3 Round 23 (LC-009) -->
 <!-- ============================================ -->
 

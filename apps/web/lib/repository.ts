@@ -23,6 +23,7 @@ import {
   makeRecommendationId,
   makeRecommendationEventId,
   generateBasicCandidates as buildBasicCandidates,
+  scoreBasicCandidatesForRecommendation,
   makeTemporalActivityId,
   makeTagId,
   makeUserBehaviorEventId,
@@ -58,6 +59,8 @@ import {
   type RecommendationStatus,
   type RecommendationEventType,
   type RecommendationEventInput,
+  type RecommendationSignalSummary,
+  type ScoredRecommendationCandidate,
   type UserBehaviorEventType,
   type UserBehaviorSubjectType,
   type UserBehaviorEventInput,
@@ -2065,6 +2068,213 @@ export async function createRecommendationFromBasicCandidate(input: {
   )
 
   return { recommendation, recommendationEvent }
+}
+
+export async function generateRecommendationsForContext(input: {
+  userId: string
+  subjectType: BasicCandidateContext['subjectType']
+  subjectId: number | string
+  topK?: number
+  source?: string
+  recommendationType?: string
+}): Promise<{
+  recommendations: PersistedRecommendation[]
+  recommendationEvents: PersistedRecommendationEvent[]
+  scoredCandidates: ScoredRecommendationCandidate[]
+}> {
+  const candidates = await generateBasicCandidates({
+    userId: input.userId,
+    subjectType: input.subjectType,
+    subjectId: input.subjectId,
+  })
+  if (candidates.length === 0) {
+    return {
+      recommendations: [],
+      recommendationEvents: [],
+      scoredCandidates: [],
+    }
+  }
+
+  const signalSummaries = await buildRecommendationSignalSummaries(input.userId)
+  const scoredCandidates = scoreBasicCandidatesForRecommendation({
+    candidates,
+    signalSummaries,
+    topK: input.topK,
+  })
+  if (scoredCandidates.length === 0) {
+    return {
+      recommendations: [],
+      recommendationEvents: [],
+      scoredCandidates,
+    }
+  }
+
+  const source = input.source ?? 'recommendation_engine_mvp'
+  const { recommendations, recommendationEvents } = await db.transaction(
+    'rw',
+    recommendationsTable,
+    recommendationEventsTable,
+    async () => {
+      const batchRecommendations: PersistedRecommendation[] = []
+      const batchEvents: PersistedRecommendationEvent[] = []
+
+      for (const scoredCandidate of scoredCandidates) {
+        const candidate = scoredCandidate.candidate
+        const recommendation = await createRecommendation({
+          userId: input.userId,
+          subjectType: input.subjectType,
+          subjectId: input.subjectId,
+          recommendationType: input.recommendationType ?? `engine_${candidate.candidateType}_candidate`,
+          candidateType: candidate.candidateType,
+          candidateId: candidate.candidateId,
+          confidenceScore: scoredCandidate.score,
+          reasonJson: JSON.stringify(buildRecommendationEngineReasonJson({
+            scoredCandidate,
+            source,
+            topK: input.topK,
+          })),
+          status: 'generated',
+        })
+
+        const recommendationEvent = await recordRecommendationEvent({
+          recommendationId: recommendation.id,
+          userId: input.userId,
+          eventType: 'recommendation_generated',
+          metadata: buildRecommendationGeneratedMetadata(scoredCandidate, source),
+        })
+
+        batchRecommendations.push(recommendation)
+        batchEvents.push(recommendationEvent)
+      }
+
+      return {
+        recommendations: batchRecommendations,
+        recommendationEvents: batchEvents,
+      }
+    },
+  )
+
+  return {
+    recommendations,
+    recommendationEvents,
+    scoredCandidates,
+  }
+}
+
+function buildRecommendationEngineReasonJson(input: {
+  scoredCandidate: ScoredRecommendationCandidate
+  source: string
+  topK?: number
+}): Record<string, unknown> {
+  const { candidate, rank, score, scoreReason, scoreBreakdown, evidenceSummary } = input.scoredCandidate
+
+  return {
+    source: input.source,
+    reason: 'deterministic local recommendation engine scoring',
+    candidate: {
+      candidateType: candidate.candidateType,
+      candidateId: candidate.candidateId,
+      recallConfidenceScore: candidate.confidenceScore,
+    },
+    context: candidate.reasonJson.context,
+    recall: {
+      source: candidate.reasonJson.source,
+      reason: candidate.reasonJson.reason,
+      confidenceScore: candidate.reasonJson.confidenceScore,
+      evidence: candidate.evidence,
+    },
+    score,
+    scoreReason,
+    scoreBreakdown,
+    evidenceSummary,
+    rank,
+    topK: input.topK ?? 5,
+  }
+}
+
+function buildRecommendationGeneratedMetadata(
+  scoredCandidate: ScoredRecommendationCandidate,
+  source: string,
+): Record<string, unknown> {
+  return {
+    source,
+    rank: scoredCandidate.rank,
+    score: scoredCandidate.score,
+    candidateType: scoredCandidate.candidate.candidateType,
+    candidateId: scoredCandidate.candidate.candidateId,
+    evidenceSummary: scoredCandidate.evidenceSummary,
+    context: scoredCandidate.candidate.reasonJson.context,
+  }
+}
+
+async function buildRecommendationSignalSummaries(userId: string): Promise<RecommendationSignalSummary[]> {
+  const events = await userBehaviorEventsTable.where('userId').equals(userId).and((event) => {
+    switch (event.eventType) {
+      case 'recommendation_accepted':
+      case 'recommendation_rejected':
+      case 'recommendation_ignored':
+      case 'recommendation_shown':
+        return true
+      default:
+        return false
+    }
+  }).toArray()
+  const summaries = new Map<string, Required<RecommendationSignalSummary>>()
+
+  for (const event of events) {
+    const signalTarget = readRecommendationSignalTarget(event.metadata ?? null)
+    if (!signalTarget) continue
+
+    const key = `${signalTarget.candidateType}:${signalTarget.candidateId}`
+    const existing = summaries.get(key) ?? {
+      candidateType: signalTarget.candidateType,
+      candidateId: signalTarget.candidateId,
+      acceptedCount: 0,
+      rejectedCount: 0,
+      ignoredCount: 0,
+      shownCount: 0,
+    }
+
+    switch (event.eventType) {
+      case 'recommendation_accepted':
+        existing.acceptedCount += 1
+        break
+      case 'recommendation_rejected':
+        existing.rejectedCount += 1
+        break
+      case 'recommendation_ignored':
+        existing.ignoredCount += 1
+        break
+      case 'recommendation_shown':
+        existing.shownCount += 1
+        break
+      default:
+        break
+    }
+
+    summaries.set(key, existing)
+  }
+
+  return Array.from(summaries.values())
+}
+
+function readRecommendationSignalTarget(
+  metadata: Record<string, unknown> | null,
+): Pick<RecommendationSignalSummary, 'candidateType' | 'candidateId'> | null {
+  const candidateType = metadata?.candidateType
+  const candidateId = metadata?.candidateId
+  if (!isBasicCandidateType(candidateType) || typeof candidateId !== 'string' || !candidateId.trim()) {
+    return null
+  }
+
+  return {
+    candidateType,
+    candidateId,
+  }
+}
+
+function isBasicCandidateType(value: unknown): value is BasicCandidate['candidateType'] {
+  return value === 'tag' || value === 'project' || value === 'mindNode'
 }
 
 async function getBasicCandidateContext(

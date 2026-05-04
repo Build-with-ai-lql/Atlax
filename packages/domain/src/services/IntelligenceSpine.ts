@@ -67,6 +67,49 @@ export interface BasicCandidate {
   reasonJson: BasicCandidateReasonJson
 }
 
+export interface RecommendationSignalSummary {
+  candidateType: BasicCandidateType
+  candidateId: string
+  acceptedCount?: number
+  rejectedCount?: number
+  ignoredCount?: number
+  shownCount?: number
+}
+
+export interface RecommendationEvidenceSummary {
+  evidenceCount: number
+  sources: BasicCandidateEvidence['source'][]
+  evidenceTypes: BasicCandidateEvidence['evidenceType'][]
+  matchedValues: string[]
+  strongestContribution: number
+}
+
+export interface RecommendationScoreBreakdown {
+  recallScore: number
+  evidenceBonus: number
+  acceptedSignalBoost: number
+  rejectedSignalPenalty: number
+  ignoredSignalPenalty: number
+  shownSignalPenalty: number
+  signalAdjustment: number
+  finalScore: number
+}
+
+export interface ScoredRecommendationCandidate {
+  candidate: BasicCandidate
+  rank: number
+  score: number
+  scoreReason: string
+  scoreBreakdown: RecommendationScoreBreakdown
+  evidenceSummary: RecommendationEvidenceSummary
+}
+
+export interface RecommendationEngineInput {
+  candidates: BasicCandidate[]
+  signalSummaries?: RecommendationSignalSummary[]
+  topK?: number
+}
+
 export interface BasicCandidateRecallInput {
   userId: string
   context: BasicCandidateContext
@@ -403,6 +446,171 @@ export function generateBasicCandidates(input: BasicCandidateRecallInput): Basic
   })
 }
 
+const DEFAULT_RECOMMENDATION_TOP_K = 5
+
+export function scoreBasicCandidatesForRecommendation(input: RecommendationEngineInput): ScoredRecommendationCandidate[] {
+  const topK = normalizeTopK(input.topK)
+  if (topK === 0 || input.candidates.length === 0) return []
+
+  const signalByCandidate = new Map(
+    (input.signalSummaries ?? []).map((summary) => [
+      makeCandidateKey(summary.candidateType, summary.candidateId),
+      summary,
+    ]),
+  )
+
+  return dedupeBasicCandidates(input.candidates)
+    .map((candidate) => scoreBasicCandidate(candidate, signalByCandidate))
+    .sort((left, right) =>
+      right.score - left.score ||
+      left.candidate.candidateType.localeCompare(right.candidate.candidateType) ||
+      left.candidate.candidateId.localeCompare(right.candidate.candidateId),
+    )
+    .slice(0, topK)
+    .map((candidate, index) => ({
+      ...candidate,
+      rank: index + 1,
+    }))
+}
+
+function scoreBasicCandidate(
+  candidate: BasicCandidate,
+  signalByCandidate: Map<string, RecommendationSignalSummary>,
+): ScoredRecommendationCandidate {
+  const signals = signalByCandidate.get(makeCandidateKey(candidate.candidateType, candidate.candidateId))
+  const recallScore = clampRecommendationScore(candidate.confidenceScore)
+  const evidenceBonus = roundScore(Math.min(0.06, Math.max(0, candidate.evidence.length - 1) * 0.02))
+  const acceptedSignalBoost = roundScore(Math.min(0.15, (signals?.acceptedCount ?? 0) * 0.05))
+  const rejectedSignalPenalty = roundScore(-Math.min(0.15, (signals?.rejectedCount ?? 0) * 0.06))
+  const ignoredSignalPenalty = roundScore(-Math.min(0.09, (signals?.ignoredCount ?? 0) * 0.03))
+  const shownSignalPenalty = roundScore(-Math.min(0.06, (signals?.shownCount ?? 0) * 0.01))
+  const signalAdjustment = roundScore(
+    acceptedSignalBoost + rejectedSignalPenalty + ignoredSignalPenalty + shownSignalPenalty,
+  )
+  const finalScore = clampRecommendationScore(recallScore + evidenceBonus + signalAdjustment)
+  const evidenceSummary = summarizeCandidateEvidence(candidate.evidence)
+  const scoreBreakdown: RecommendationScoreBreakdown = {
+    recallScore,
+    evidenceBonus,
+    acceptedSignalBoost,
+    rejectedSignalPenalty,
+    ignoredSignalPenalty,
+    shownSignalPenalty,
+    signalAdjustment,
+    finalScore,
+  }
+
+  return {
+    candidate,
+    rank: 0,
+    score: finalScore,
+    scoreReason: buildScoreReason(scoreBreakdown, evidenceSummary),
+    scoreBreakdown,
+    evidenceSummary,
+  }
+}
+
+function dedupeBasicCandidates(candidates: BasicCandidate[]): BasicCandidate[] {
+  const deduped = new Map<string, BasicCandidate>()
+
+  for (const candidate of candidates) {
+    const key = makeCandidateKey(candidate.candidateType, candidate.candidateId)
+    const existing = deduped.get(key)
+    if (!existing) {
+      deduped.set(key, candidate)
+      continue
+    }
+
+    const mergedEvidence = mergeCandidateEvidence(existing.evidence, candidate.evidence)
+    const strongestCandidate = candidate.confidenceScore > existing.confidenceScore ? candidate : existing
+    const confidenceScore = clampRecommendationScore(Math.max(existing.confidenceScore, candidate.confidenceScore))
+
+    deduped.set(key, {
+      ...strongestCandidate,
+      confidenceScore,
+      evidence: mergedEvidence,
+      reasonJson: {
+        ...strongestCandidate.reasonJson,
+        confidenceScore,
+        evidence: mergedEvidence,
+      },
+    })
+  }
+
+  return Array.from(deduped.values())
+}
+
+function mergeCandidateEvidence(
+  existing: BasicCandidateEvidence[],
+  incoming: BasicCandidateEvidence[],
+): BasicCandidateEvidence[] {
+  const seen = new Set<string>()
+  const merged: BasicCandidateEvidence[] = []
+
+  for (const evidence of [...existing, ...incoming]) {
+    const key = [
+      evidence.source,
+      evidence.evidenceType,
+      evidence.contextType,
+      String(evidence.contextId),
+      evidence.matchedField ?? '',
+      evidence.matchedValue ?? '',
+    ].join(':')
+    if (seen.has(key)) continue
+    seen.add(key)
+    merged.push(evidence)
+  }
+
+  return merged
+}
+
+function summarizeCandidateEvidence(evidence: BasicCandidateEvidence[]): RecommendationEvidenceSummary {
+  const matchedValues = evidence
+    .map((item) => item.matchedValue)
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+
+  return {
+    evidenceCount: evidence.length,
+    sources: uniqueSorted(evidence.map((item) => item.source)),
+    evidenceTypes: uniqueSorted(evidence.map((item) => item.evidenceType)),
+    matchedValues: uniqueSorted(matchedValues).slice(0, 5),
+    strongestContribution: roundScore(Math.max(0, ...evidence.map((item) => item.confidenceContribution))),
+  }
+}
+
+function buildScoreReason(
+  breakdown: RecommendationScoreBreakdown,
+  evidenceSummary: RecommendationEvidenceSummary,
+): string {
+  const signalParts = [
+    breakdown.acceptedSignalBoost > 0 ? `accepted +${breakdown.acceptedSignalBoost}` : null,
+    breakdown.rejectedSignalPenalty < 0 ? `rejected ${breakdown.rejectedSignalPenalty}` : null,
+    breakdown.ignoredSignalPenalty < 0 ? `ignored ${breakdown.ignoredSignalPenalty}` : null,
+    breakdown.shownSignalPenalty < 0 ? `shown ${breakdown.shownSignalPenalty}` : null,
+  ].filter((part): part is string => part !== null)
+
+  return [
+    `recall ${breakdown.recallScore}`,
+    `evidence ${evidenceSummary.evidenceCount} item(s) +${breakdown.evidenceBonus}`,
+    signalParts.length > 0 ? `signals ${signalParts.join(', ')}` : 'signals neutral',
+    `final ${breakdown.finalScore}`,
+  ].join('; ')
+}
+
+function normalizeTopK(topK?: number): number {
+  if (topK === undefined) return DEFAULT_RECOMMENDATION_TOP_K
+  if (!Number.isFinite(topK)) return DEFAULT_RECOMMENDATION_TOP_K
+  return Math.max(0, Math.floor(topK))
+}
+
+function makeCandidateKey(candidateType: BasicCandidateType, candidateId: string): string {
+  return `${candidateType}:${candidateId}`
+}
+
+function uniqueSorted<T extends string>(values: T[]): T[] {
+  return Array.from(new Set(values)).sort()
+}
+
 function addBasicCandidateEvidence(
   candidates: Map<string, Omit<BasicCandidate, 'reasonJson'>>,
   candidateType: BasicCandidateType,
@@ -447,6 +655,14 @@ function normalizeRecallText(value: string): string {
 function readClusterId(metadata?: Record<string, unknown> | null): string | null {
   const value = metadata?.clusterId
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function clampRecommendationScore(score: number): number {
+  return Math.max(0, Math.min(1, roundScore(score)))
+}
+
+function roundScore(score: number): number {
+  return Number(score.toFixed(4))
 }
 
 function clampConfidence(score: number): number {
